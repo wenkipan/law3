@@ -1,0 +1,105 @@
+extends RefCounted
+
+const P := Vector2i(28, 11)
+const OTHER := Vector2i(31, 11)
+
+func run(t) -> void:
+	var g = t.game
+	for kind in ["bench", "workbench", "pump", "purifier"]:
+		t.scenario("Recurring output: " + kind, 1)
+		t.station(kind, P)
+		g.workers[0].water = 4
+		if kind == "purifier":
+			t.station("pump", OTHER, 12)
+		g.adjust_production(P, 1)
+		var amount: int = g.PRODUCTS[kind].get("amount", 1)
+		g.simulate(40)
+		t.check(g.benches[P].stock == amount, "One daily batch is produced")
+		g.simulate(60)
+		t.check(g.benches[P].stock == amount, "Daily target does not repeat within the day")
+		g.simulate(g.DAY_SECONDS)
+		t.check(g.benches[P].stock == amount * 2, "Tomorrow produces again without another order")
+		g.select_entity(P)
+		t.check(g.get_node("UI").queue_count.text == "每日产出 %d%s" % [amount, g.PRODUCTS[kind].unit], "Daily setting persists in the inspector")
+		t.near(g.workers[0].bread, g.PRODUCTS[kind].hours * 2, "Wages cover actual production only")
+		g.adjust_production(P, -1)
+		g.simulate(g.DAY_SECONDS)
+		t.check(g.benches[P].stock == amount * 2, "Zero output stops production across days")
+		if kind == "purifier":
+			t.check(g.benches[OTHER].stock == 4, "Raw water is charged once per completed batch")
+
+	t.scenario("Water chain and no backlog", 1)
+	t.station("pump", P)
+	t.station("purifier", OTHER)
+	g.adjust_production(OTHER, 1)
+	g.simulate(g.DAY_SECONDS * 2)
+	g.select_entity(OTHER)
+	t.check(g.entity_details.text.contains("等待原水") and g.benches[OTHER].stock == 0, "Missing raw water waits instead of creating output")
+	t.near(g.workers[0].bread, 0, "Waiting for materials pays no wages")
+	g.adjust_production(P, 3)
+	g.simulate(45)
+	t.check(g.benches[OTHER].stock == 4 and g.benches[P].stock == 8, "Missed days do not accumulate catch-up batches")
+
+	t.scenario("Paid batch survives sleep, zero target, and midnight", 1)
+	t.station("pump", P, 4)
+	t.station("purifier", OTHER)
+	g.workers[0].fatigue = 95.0
+	g.simulate(g.DAY_SECONDS - 3)
+	g.adjust_production(OTHER, 1)
+	t.advance_until(func(): return g.benches[P].stock == 0, 2, "Batch consumes available raw water")
+	g.adjust_production(OTHER, -1)
+	g.simulate(120)
+	t.check(g.day == 2 and g.benches[OTHER].stock == 4, "Already-paid batch completes after midnight despite zero target")
+	t.near(g.workers[0].bread, 1, "Finished batch pays exactly one work hour")
+	t.check(g.report_totals(2)["睡觉"] > 0, "Exhausted operator slept before resuming the paid batch")
+	g.simulate(20)
+	t.check(g.benches[OTHER].stock == 4, "Finished batch does not restart")
+
+	t.scenario("Overnight output counts on its completion day", 1)
+	t.station("bench", P)
+	g.simulate(g.DAY_SECONDS - 5)
+	g.adjust_production(P, 1)
+	g.simulate(45)
+	t.check(g.day == 2 and g.benches[P].stock == 1, "Midnight does not duplicate an unfinished daily batch")
+	g.adjust_production(P, 1)
+	g.simulate(25)
+	t.check(g.benches[P].stock == 2, "Increasing target makes only the missing output")
+
+	t.scenario("Competing purifiers cannot spend the same water")
+	t.station("pump", P, 4)
+	t.station("purifier", OTHER)
+	var second := Vector2i(34, 11)
+	t.station("purifier", second)
+	g.adjust_production(OTHER, 1)
+	g.adjust_production(second, 1)
+	g.simulate(25)
+	t.check(g.benches[OTHER].stock + g.benches[second].stock == 4 and g.benches[P].stock == 0, "Four raw water yields only four clean water across both buildings")
+
+	t.scenario("Printing is finite, material-limited, and adds a working person")
+	t.station("printer", P)
+	t.station("printer", OTHER)
+	g.adjust_production(P, 1)
+	g.adjust_production(OTHER, 1)
+	g.simulate(8)
+	t.check(g.workers.size() == 3 and g.workers[0].bread == 0, "No ore means no new person or idle wages")
+	g.player_blocks = 10
+	t.advance_until(func(): return g.workers.size() == 4, 45, "Available ore prints one worker")
+	var born_at: float = g.day_elapsed
+	g.simulate(10)
+	t.check(g.workers.size() == 4 and g.player_blocks == 0, "Competing printer cannot reuse spent ore")
+	t.near(t.report_seconds(3), g.day_elapsed - born_at, "New worker has no report time before birth", 0.11)
+	# A second player order is already waiting; earned mining material supplies it.
+	g.designate(Vector2i(37, 11), Vector2i(37, 15))
+	g.simulate(30)
+	t.check(g.delivered > 0 and g.workers[3].bread > 0, "Printed worker joins real paid mining")
+	g.adjust_production(OTHER, -1)
+	g.adjust_production(P, -1)
+	g.simulate(g.DAY_SECONDS)
+	t.check(g.workers.size() == 4, "Printing does not automatically recur tomorrow")
+
+	t.scenario("Finite printing with enough materials for another worker", 1)
+	t.station("printer", P)
+	g.player_blocks = 20
+	g.adjust_production(P, 1)
+	g.simulate(g.DAY_SECONDS + 40)
+	t.check(g.workers.size() == 2 and g.player_blocks == 10, "One order creates only one person even with tomorrow's materials available")

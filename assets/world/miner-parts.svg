@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="64" viewBox="0 0 192 64" fill="none" stroke="#243630" stroke-width="1.5" stroke-linejoin="round">
+ <!-- 32px atlas cells: head, tunic, boot, arm, pickaxe, bread. -->
+ <path d="M6 12q10-6 20 0v13q-10 9-20 0z" fill="#e4bd92"/><path d="M8 22q5 4 10 0" stroke="#c99478"/>
+ <path d="M5 14V9Q6 1 16 1t11 8v5" fill="#d6c085"/><path d="M3 13h26v4H3z" fill="#b49f6f"/><path d="M14 2h4v11h-4z" fill="#ede0ab" stroke="none"/><rect x="12" y="7" width="8" height="7" rx="2" fill="#eff6d5"/>
+ <path d="M20 20h2" stroke="#293d37" stroke-width="2.5"/><path d="M23 26h-4" stroke="#9e6958"/>
+ <path d="M38 10q10-5 20 0l2 18H36z" fill="#e3ddc3"/><path d="M40 8v12h16V8" stroke="#5d8279" stroke-width="4"/><path d="M39 20h18v10H39z" fill="#537c71"/><path d="M43 22h10v5H43z" fill="#8eb4a1"/><path d="M36 29h24" stroke="#364c43" stroke-width="3"/>
+ <path d="M72 10h11v13l5 3v5H71z" fill="#344b46"/><path d="M72 29h15" stroke="#98a390" stroke-width="2"/>
+ <path d="m104 9 8-1 3 17-8 1z" fill="#e3ddc3"/><path d="m107 24 8-1 1 6-7 2z" fill="#e4bd92"/>
+ <path d="m135 29 17-22" stroke="#bfa47a" stroke-width="4"/><path d="M137 5q15-4 20 13l-10-8z" fill="#c2d0c4"/>
+ <path d="M166 23v-9q12-10 22 0v9z" fill="#d6a864"/><path d="m172 11-2 6m8-8-2 7m8-4-2 6" stroke="#f2d49a" stroke-width="2"/>
+ <!-- Utility frames on row two: hammer and carried ore. -->
+ <path d="m9 60 10-18" stroke="#bc9a6b" stroke-width="4"/><path d="m10 40 11-3 5 8-12 4z" fill="#bac9c4"/>
+ <path d="m39 46 10-7 10 6-2 15H40z" fill="#b2aa87"/><path d="m41 48 7-5 7 3-6 6z" fill="#e1d29f" stroke="none"/>
+</svg>

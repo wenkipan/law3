@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="40" viewBox="0 0 640 40">
+ <g transform="translate(0 0)" fill="none" stroke="#acd8cf" stroke-linecap="round"><path d="M20 20h0.01" stroke-width="24" opacity=".17"/><path d="M20 20h0.01" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(40 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M0 20H20" stroke-width="24" opacity=".17"/><path d="M0 20H20" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(80 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M20 20H40" stroke-width="24" opacity=".17"/><path d="M20 20H40" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(120 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M0 20H40" stroke-width="24" opacity=".17"/><path d="M0 20H40" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(160 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M20 0V20" stroke-width="24" opacity=".17"/><path d="M20 0V20" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(200 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M0 20H8Q20 20 20 8V0" stroke-width="24" opacity=".17"/><path d="M0 20H8Q20 20 20 8V0" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(240 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M20 0V8Q20 20 32 20H40" stroke-width="24" opacity=".17"/><path d="M20 0V8Q20 20 32 20H40" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(280 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M0 20H40M20 0V20" stroke-width="24" opacity=".17"/><path d="M0 20H40M20 0V20" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(320 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M20 20V40" stroke-width="24" opacity=".17"/><path d="M20 20V40" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(360 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M0 20H8Q20 20 20 32V40" stroke-width="24" opacity=".17"/><path d="M0 20H8Q20 20 20 32V40" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(400 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M20 40V32Q20 20 32 20H40" stroke-width="24" opacity=".17"/><path d="M20 40V32Q20 20 32 20H40" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(440 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M0 20H40M20 20V40" stroke-width="24" opacity=".17"/><path d="M0 20H40M20 20V40" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(480 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M20 0V40" stroke-width="24" opacity=".17"/><path d="M20 0V40" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(520 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M20 0V40M0 20H20" stroke-width="24" opacity=".17"/><path d="M20 0V40M0 20H20" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(560 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M20 0V40M20 20H40" stroke-width="24" opacity=".17"/><path d="M20 0V40M20 20H40" stroke-width="2" stroke-dasharray="3 3"/></g>
+ <g transform="translate(600 0)" fill="none" stroke="#acd8cf" stroke-linecap="butt"><path d="M0 20H40M20 0V40" stroke-width="24" opacity=".17"/><path d="M0 20H40M20 0V40" stroke-width="2" stroke-dasharray="3 3"/></g>
+</svg>

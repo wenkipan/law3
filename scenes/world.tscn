@@ -1,0 +1,32 @@
+[gd_scene load_steps=3 format=3]
+[ext_resource type="Script" path="res://scripts/view/world_view.gd" id="1"]
+[sub_resource type="RectangleShape2D" id="GroundShape"]
+size = Vector2(2880, 1760)
+[node name="World" type="Node2D"]
+script = ExtResource("1")
+[node name="GroundInput" type="Area2D" parent="."]
+z_index = -1
+z_as_relative = false
+collision_layer = 1
+collision_mask = 0
+monitoring = false
+monitorable = false
+[node name="PickShape" type="CollisionShape2D" parent="GroundInput"]
+position = Vector2(1440, 880)
+shape = SubResource("GroundShape")
+[node name="TerrainBackground" type="TileMapLayer" parent="."]
+z_index = 0
+[node name="WaterSources" type="Node2D" parent="."]
+z_index = 1
+[node name="Blocks" type="TileMapLayer" parent="."]
+z_index = 10
+[node name="Buildings" type="Node2D" parent="."]
+z_index = 20
+[node name="Characters" type="Node2D" parent="."]
+z_index = 30
+y_sort_enabled = true
+[node name="Fog" type="TileMapLayer" parent="."]
+z_index = 40
+[node name="Overlays" type="Node2D" parent="."]
+z_index = 50
+[node name="Orders" type="TileMapLayer" parent="Overlays"]
