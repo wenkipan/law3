@@ -23,14 +23,14 @@ func run(t) -> void:
 	t.near(g.workers[0].bread, earned, "Cancellation keeps earned wages but pays no idle wages")
 
 	# One shared construction contract, with all actual building kinds as inputs.
-	for kind in ["bed", "bench", "workbench", "pump", "purifier", "farm", "mill", "printer", "bank", "belt", "power_plant", "high_line", "low_line", "transformer", "grow_light", "drill"]:
+	for kind in ["bed", "bench", "workbench", "pump", "purifier", "printer", "bank", "belt"]:
 		t.scenario("Build and refund: " + kind, 1)
 		g.update_ui()
 		t.check(g.tool_buttons[kind].disabled, "Unaffordable building button is disabled")
 		g.set_tool(kind)
 		t.check(g.tool != kind and not g.place_building(p, kind), "Shortcut and placement cannot bypass material cost")
 		var cost: int = g.building_blocks(kind)
-		if kind in ["bed", "bench", "workbench", "farm", "mill"]:
+		if kind in ["bed", "bench", "workbench"]:
 			t.materials(cost, 3)
 			g.update_ui()
 			g.set_tool(kind)
@@ -60,11 +60,11 @@ func run(t) -> void:
 			t.near(g.resource_activity(mineral, 1).consumed, initial_materials[mineral], "Completion records actual construction consumption once")
 
 	# The same contract covers every footprint: no building may finish inside ore or charge twice.
-	for kind in ["bed", "bench", "workbench", "pump", "purifier", "farm", "mill", "printer", "bank", "belt"]:
+	for kind in ["bed", "bench", "workbench", "pump", "purifier", "printer", "bank", "belt"]:
 		for covered in [false, true]:
 			t.scenario("Excavate before building: %s / covered origin %s" % [kind, covered], 1)
 			var origin := ore if covered else ore + Vector2i.LEFT
-			if kind in ["pump", "farm"]:
+			if kind == "pump":
 				var source := origin + Vector2i.UP
 				g.water_sources[source] = true
 				g.terrain[source] = 0
@@ -140,7 +140,6 @@ func run(t) -> void:
 	t.scenario("Water placement restrictions")
 	t.materials(16)
 	t.check(not g.place_building(Vector2i(34, 11), "pump"), "Pump needs an adjacent water source")
-	t.check(not g.place_building(Vector2i(34, 11), "farm"), "A field also requires adjacent water")
 	t.check(not g.place_building(Vector2i(29, 10), "bed"), "Water source cannot be covered")
 	t.check(g.designate(Vector2i(29, 10), Vector2i(29, 10)) == 0 and g.player_blocks == 16, "Water cannot be mined and invalid placements cost nothing")
 

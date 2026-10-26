@@ -18,12 +18,11 @@ var portal: Area2D
 var hovered: Area2D
 var hover_frame: NinePatchRect
 var selection_frame: NinePatchRect
-var range_frame: NinePatchRect
 var drag_frame: NinePatchRect
 var preview: Sprite2D
 
 func _ready() -> void:
-	var tiles := Art.tile_set("res://assets/world/terrain-atlas.svg", 7)
+	var tiles := Art.tile_set("res://assets/world/terrain-atlas.svg", 5)
 	$TerrainBackground.tile_set = tiles
 	$Blocks.tile_set = tiles
 	$Fog.tile_set = Art.tile_set("res://assets/world/fog-atlas.svg", 2)
@@ -47,8 +46,6 @@ func _ready() -> void:
 	$Buildings.add_child(portal)
 	hover_frame = make_frame("Hover")
 	selection_frame = make_frame("Selection")
-	range_frame = make_frame("EffectRange")
-	range_frame.modulate = Color(0.45, 0.9, 0.8, 0.55)
 	drag_frame = make_frame("DragSelection")
 	preview = Sprite2D.new()
 	preview.name = "BedPreview"
@@ -148,10 +145,10 @@ func sync_orders() -> void:
 
 func sync_buildings() -> void:
 	for p in building_nodes.keys():
-		if not game.sites.has(p) and not game.beds.has(p) and not game.benches.has(p) and not game.banks.has(p) and not game.belts.has(p) and not game.power_lines.has(p):
+		if not game.sites.has(p) and not game.beds.has(p) and not game.benches.has(p) and not game.banks.has(p) and not game.belts.has(p):
 			building_nodes[p].free()
 			building_nodes.erase(p)
-	for p in game.sites.keys() + game.beds.keys() + game.benches.keys() + game.banks.keys() + game.belts.keys() + game.power_lines.keys():
+	for p in game.sites.keys() + game.beds.keys() + game.benches.keys() + game.banks.keys() + game.belts.keys():
 		if not building_nodes.has(p):
 			var bed := BedScene.instantiate()
 			bed.name = "Bed_%d_%d" % [p.x, p.y]
@@ -162,10 +159,7 @@ func sync_buildings() -> void:
 			building_nodes[p] = bed
 		var progress: float = game.sites[p].progress / game.sites[p].seconds if game.sites.has(p) else 1.0
 		building_nodes[p].set_progress(progress)
-		if game.building_kind(p) == "farm":
-			var growth: float = game.benches[p].growth if game.benches.has(p) else 0.0
-			building_nodes[p].set_crop_growth(1.0 - growth / (game.FARM_GROWTH_HOURS * game.HOUR_SECONDS), growth > 0)
-		if game.building_kind(p) in ["belt", "electric_belt"]:
+		if game.building_kind(p) == "belt":
 			building_nodes[p].set_belt_connections(game.belt_connections(p), game.belt_direction_at(p))
 		building_nodes[p].input_pickable = game.explored.has(p)
 
@@ -213,7 +207,6 @@ func sync_dynamic() -> void:
 	portal.modulate = Color.WHITE * (0.95 + sin(game.animation_time * 2) * 0.05)
 	var p: Vector2i = game.selected_entity
 	selection_frame.visible = true
-	range_frame.hide()
 	if game.selected_worker >= 0:
 		var bounds := pick_bounds(worker_nodes[game.selected_worker])
 		selection_frame.position = bounds.position
@@ -221,14 +214,9 @@ func sync_dynamic() -> void:
 	elif p == game.BASE:
 		selection_frame.position = portal.position - Vector2(32, 40)
 		selection_frame.size = Vector2(64, 80)
-	elif game.beds.has(p) or game.sites.has(p) or game.benches.has(p) or game.banks.has(p) or game.belts.has(p) or game.power_lines.has(p):
+	elif game.beds.has(p) or game.sites.has(p) or game.benches.has(p) or game.banks.has(p) or game.belts.has(p):
 		selection_frame.position = Vector2(p) * game.CELL
-		selection_frame.size = Vector2(80, 80) if game.building_kind(p) == "high_line" else Vector2(40, 40) if game.building_kind(p) in ["belt", "electric_belt", "low_line"] else Vector2(80, 40)
-		if game.building_kind(p) in ["grow_light", "fountain"]:
-			var radius: int = game.FOUNTAIN_RADIUS if game.building_kind(p) == "fountain" else game.GROW_LIGHT_RADIUS
-			range_frame.position = Vector2(p - Vector2i(radius, radius)) * game.CELL
-			range_frame.size = Vector2.ONE * game.CELL * (radius * 2 + 1)
-			range_frame.show()
+		selection_frame.size = Vector2(40, 40) if game.building_kind(p) == "belt" else Vector2(80, 40)
 	elif game.explored.has(game.selected_tile):
 		selection_frame.position = Vector2(game.selected_tile) * game.CELL
 		selection_frame.size = Vector2.ONE * game.CELL
@@ -249,13 +237,13 @@ func sync_dynamic() -> void:
 	preview.visible = game.tool in game.BUILDING_KINDS and game.can_afford_building(game.tool) and game.explored.has(hover) and get_viewport().gui_get_hovered_control() == null
 	if preview.visible:
 		preview.texture = Art.texture("res://assets/icons/%s-blueprint.svg" % game.tool)
-	var preview_size := Vector2(80, 80) if game.tool == "high_line" else Vector2(40, 40) if game.tool in ["belt", "electric_belt", "low_line"] else Vector2(80, 40)
+	var preview_size := Vector2(40, 40) if game.tool == "belt" else Vector2(80, 40)
 	preview.scale = preview_size / preview.texture.get_size()
 	preview.modulate = Color(1, 1, 1, 0.5) if game.building_space_valid(hover, game.tool) else Color(1, 0.4, 0.3, 0.5)
 	preview.centered = false
 	preview.rotation = 0.0
 	preview.position = Vector2(hover) * game.CELL
-	if game.belt_drawing or game.building_drawing or game.tool in ["belt", "electric_belt"]:
+	if game.belt_drawing or game.building_drawing or game.tool == "belt":
 		preview.hide()
 	sync_belt_preview()
 	sync_building_preview()
@@ -269,7 +257,7 @@ func sync_belt_preview() -> void:
 	var path: Array[Vector2i] = []
 	if game.belt_drawing:
 		path.assign(game.belt_path)
-	if not game.belt_drawing and game.tool in ["belt", "electric_belt"] and game.explored.has(game.mouse_tile()) and get_viewport().gui_get_hovered_control() == null:
+	if not game.belt_drawing and game.tool == "belt" and game.explored.has(game.mouse_tile()) and get_viewport().gui_get_hovered_control() == null:
 		path.append(game.mouse_tile())
 	var plan: Dictionary = game.belt_path_plan(path)
 	var cells: Array = plan.keys()

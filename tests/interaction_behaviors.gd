@@ -50,35 +50,6 @@ func run(t) -> void:
 	t.check(g.simulation_paused and g.entity_title.text == "床", "Toolbar click pauses without selecting the world underneath")
 	t.check(not g.world_view.hover_frame.visible, "UI suppresses world hover")
 
-	t.scenario("Clicked effect buildings reveal their operating radius", 0)
-	t.station("grow_light", P)
-	g.world_view.sync_dynamic()
-	await t.settle()
-	await t.click_world(g.tile_center(P))
-	t.check(g.entity_title.text == "培育灯" and g.world_view.range_frame.visible and g.world_view.range_frame.size == Vector2(280, 280), "A clicked grow light visibly outlines its three-tile effect range")
-	g.clear_entity_selection()
-	t.station("fountain", Vector2i(32, 11))
-	g.world_view.sync_dynamic()
-	await t.settle()
-	await t.click_world(g.tile_center(Vector2i(32, 11)))
-	t.check(g.entity_title.text == "喷泉" and g.world_view.range_frame.visible, "A clicked fountain also displays its non-stacking recovery range")
-
-	t.scenario("A drill can be repositioned without rebuilding", 0)
-	var drill := Vector2i(28, 11)
-	var new_drill_position := Vector2i(30, 11)
-	t.station("drill", drill)
-	for cell in g.building_cells(new_drill_position, "drill"):
-		g.terrain[cell] = 0
-		g.navigation.set_point_solid(cell, false)
-		g.world_view.block_changed(cell)
-	g.world_view.sync_dynamic()
-	await t.settle()
-	await t.click_world(g.tile_center(drill))
-	t.check(ui.drill_controls.visible, "A completed drill exposes its move command in the inspector")
-	await t.click(ui.drill_controls.get_child(0).get_global_rect().get_center())
-	await t.click_world(g.tile_center(new_drill_position))
-	t.check(g.benches.has(new_drill_position) and not g.benches.has(drill), "Moving relocates the existing drill without another blueprint charge")
-
 	t.scenario("Ground orders, cancellation, and rapid clicks")
 	t.materials(6, 2)
 	await t.settle()
@@ -105,7 +76,7 @@ func run(t) -> void:
 	g.simulate(30)
 	t.check(g.delivered == 1, "Press and release in one tick still orders a real excavation")
 
-	for kind in ["bench", "workbench", "bank", "farm", "mill"]:
+	for kind in ["bench", "workbench", "bank"]:
 		t.scenario("Blueprint completes without losing the inspected building: " + kind, 1)
 		t.building_materials(kind)
 		g.set_tool(kind)
@@ -120,7 +91,7 @@ func run(t) -> void:
 		await t.click_world(g.tile_center(P + Vector2i.RIGHT))
 		t.check(g.entity_title.text == g.building_name(kind), "Completed building remains clickable")
 
-	for kind in ["bench", "workbench", "pump", "purifier", "printer", "farm", "mill"]:
+	for kind in ["bench", "workbench", "pump", "purifier", "printer"]:
 		t.scenario("Production controls: " + kind)
 		t.station(kind, P)
 		await t.settle()
@@ -283,11 +254,6 @@ func check_tile_details(t) -> void:
 		g.set_tool("dig")
 		await t.click_world(g.tile_center(ore))
 		t.check(g.entity_details.text.contains("等待挖掘"), "Single click still places an excavation order while displaying the block")
-		if mineral >= 5:
-			g.create_worker(Vector2i(36, 13))
-			g.simulate(20)
-			t.check(g.mined == 0 and g.terrain[ore] == mineral, "Ordinary tools cannot excavate dense ore")
-			continue
 		for width in [1440, 960]:
 			t.root.size = Vector2i(width, 900 if width == 1440 else 640)
 			g.camera.position = g.tile_center(ore)
@@ -394,11 +360,11 @@ func check_building_rows(t) -> void:
 	t.root.size = Vector2i(1440, 900)
 
 	# All blueprints share the same drag, footprint spacing, payment and completion contract.
-	for kind in ["bed", "bench", "workbench", "pump", "purifier", "farm", "mill", "printer", "bank", "transformer", "grow_light", "fountain", "drill"]:
+	for kind in ["bed", "bench", "workbench", "pump", "purifier", "printer", "bank"]:
 		t.scenario("Mouse-only building row: " + kind)
 		for worker in g.workers:
 			worker.pos = Vector2(34 + worker.id, 15)
-		if kind in ["pump", "farm", "fountain"]:
+		if kind == "pump":
 			for source in [Vector2i(31, 10), Vector2i(33, 10)]:
 				g.water_sources[source] = true
 				g.terrain[source] = 0

@@ -27,12 +27,9 @@ godot --resolution 1440x900 --log-file /tmp/law3-native-tests.log --path . --scr
 矿道与货物截图为 `/tmp/law3-behaviors-belt-1440.png`、`/tmp/law3-behaviors-belt-960.png`，移动后的画面为 `/tmp/law3-behaviors-belt-moving.png`。
 成排建筑预览与矿道转弯截图为 `/tmp/law3-behaviors-row-preview.png`、`/tmp/law3-behaviors-belt-corners.png`。
 矿石覆盖蓝图截图为 `/tmp/law3-behaviors-ore-blueprint-1440.png`、`/tmp/law3-behaviors-ore-blueprint-960.png`。
-原料实物搬运截图为 `/tmp/law3-material-{mill,farm,purifier}-{1440,960}.png`，检查货物图标、小麦/原水详情和仓库送达结果。
-轨道连接生产建筑与通用货物截图为 `/tmp/law3-track-{mill,farm,purifier}-{1440,960}.png`，检查建筑占地端点、轨道货物图标、载货保护和本地卸货。
 物资页三列库存表与展开昨日收支的截图为 `/tmp/law3-resources-680.png`、`/tmp/law3-resources-560.png`。
 库存曲线按天分格、滚动最近五天的截图为 `/tmp/law3-resources-daily-axis.png`。
 地形方块详情截图为 `/tmp/law3-block-details-{1440,960}.png`，检查矿种、开采工时、产物和实时状态，确认未探索区域不泄露信息。
-生产行为还覆盖供电培育灯加速农田，以及矿钻解锁致密铜矿；交互行为区分普通工具无法挖掘致密矿。
 人工检查画面非空、素材正常、详情不遮挡、文字不截断、世界中只有工人姓名。
 截图不是自动图像比对。
 

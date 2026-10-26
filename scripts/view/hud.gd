@@ -10,17 +10,15 @@ var remove_order: Button
 var add_order: Button
 var belt_controls: HBoxContainer
 var remove_track: Button
-var drill_controls: HBoxContainer
 
 func update_entity_panel() -> void:
 	if not is_instance_valid(game.entity_panel):
 		return
 	var p: Vector2i = game.selected_entity
-	belt_controls.visible = game.selected_worker < 0 and game.building_kind(p) in ["belt", "electric_belt"]
+	belt_controls.visible = game.selected_worker < 0 and game.building_kind(p) == "belt"
 	if belt_controls.visible:
 		remove_track.disabled = game.belts.has(p) and not game.can_edit_belt(p)
 	production_controls.visible = game.selected_worker < 0 and game.benches.has(p) and game.PRODUCTS.has(game.building_kind(p))
-	drill_controls.visible = game.selected_worker < 0 and game.benches.has(p) and game.building_kind(p) == "drill" and not game.sites.has(p)
 	bed_assignment.visible = game.selected_worker < 0 and game.beds.has(p)
 	if bed_assignment.visible:
 		if bed_assignment.item_count != game.workers.size() + 1:
@@ -103,7 +101,7 @@ func update_entity_panel() -> void:
 		game.worker_bars["动作进度"][0].text = "动作进度  %.0f%%" % (progress * 100)
 		game.worker_bars["动作进度"][1].value = progress * 100
 		return
-	game.entity_panel.visible = p == game.BASE or game.beds.has(p) or game.sites.has(p) or game.benches.has(p) or game.banks.has(p) or game.belts.has(p) or game.power_lines.has(p)
+	game.entity_panel.visible = p == game.BASE or game.beds.has(p) or game.sites.has(p) or game.benches.has(p) or game.banks.has(p) or game.belts.has(p)
 	if not game.entity_panel.visible:
 		game.selected_entity = Vector2i(-1, -1)
 		return
@@ -122,14 +120,7 @@ func update_entity_panel() -> void:
 		if cargo_id >= 0:
 			var cargo: Dictionary = game.belt_cargo[cargo_id]
 			status += "\n%s × %s · %s" % [game.item_name(cargo.delivery.item), String.num(cargo.delivery.amount, 1), game.workers[cargo.worker].name]
-		if belt_kind == "electric_belt":
-			status += "\n" + ("运行中" if game.powered_devices.has(p) else "未接电")
 		game.entity_details.text = status + "\n\n" + game.building_effects_text(belt_kind)
-		return
-	if game.power_lines.has(p):
-		var line_kind: String = game.building_kind(p)
-		game.entity_title.text = game.building_name(line_kind)
-		game.entity_details.text = game.building_effects_text(line_kind)
 		return
 	if game.banks.has(p):
 		game.entity_title.text = game.building_name("bank")
@@ -143,8 +134,6 @@ func update_entity_panel() -> void:
 			var status := "等待值班"
 			if not bench.task.is_empty() and bench.task.owner >= 0:
 				status = game.workers[bench.task.owner].name
-			if kind in ["grow_light", "fountain", "drill"]:
-				status = "运行中" if game.powered_devices.has(p) else "未接电"
 			game.entity_details.text = status + "\n\n" + game.building_effects_text(kind) + "\n\n仓储\n" + game.storage_text(p)
 			return
 		var product: Dictionary = game.PRODUCTS[kind]
@@ -160,8 +149,6 @@ func update_entity_panel() -> void:
 				elif game.stock_at(p, item) < game.production_materials(kind)[item]:
 					missing.append(game.item_name(item))
 			status = "等待" + "、".join(missing)
-		if bench.growth > 0:
-			status = "生长  %.0f%%" % ((1.0 - bench.growth / (game.FARM_GROWTH_HOURS * game.HOUR_SECONDS)) * 100)
 		if not bench.task.is_empty():
 			status = "等待工人" if bench.task.owner < 0 else game.workers[bench.task.owner].name
 			status += "  %.0f%%" % (bench.task.progress / bench.task.seconds * 100)
@@ -374,14 +361,6 @@ func build_ui(controller: Node) -> void:
 	belt_controls.add_child(remove_track)
 	inspector.add_child(belt_controls)
 	belt_controls.hide()
-	drill_controls = HBoxContainer.new()
-	var move_drill := make_button("", "移动矿钻", func(): game.begin_drill_move(game.selected_entity))
-	move_drill.icon = game.icon_texture("res://assets/icons/move.svg")
-	move_drill.expand_icon = true
-	move_drill.add_theme_constant_override("icon_max_width", 24)
-	drill_controls.add_child(move_drill)
-	inspector.add_child(drill_controls)
-	drill_controls.hide()
 	bed_assignment = OptionButton.new()
 	bed_assignment.add_theme_font_override("font", game.font)
 	bed_assignment.add_item("自动安排", -1)

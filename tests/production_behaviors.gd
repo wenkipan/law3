@@ -3,22 +3,18 @@ extends RefCounted
 const P := Vector2i(28, 11)
 const OTHER := Vector2i(31, 11)
 const INPUT_ROUTES := [
-	{"source": "farm", "target": "mill", "item": "wheat", "amount": 4},
-	{"source": "pump", "target": "farm", "item": "raw_water", "amount": 4},
 	{"source": "pump", "target": "purifier", "item": "raw_water", "amount": 4},
 ]
 
 func run(t) -> void:
 	var g = t.game
-	for kind in ["bench", "workbench", "pump", "purifier", "farm", "mill"]:
+	for kind in ["bench", "workbench", "pump", "purifier"]:
 		t.scenario("Recurring output: " + kind, 1)
 		t.station(kind, P)
 		if kind == "bench":
 			t.materials(2, 2)
-		if kind == "mill":
-			g.add_stock(g.BASE, "wheat", 8)
 		g.workers[0].water = 4
-		if kind in ["purifier", "farm"]:
+		if kind == "purifier":
 			t.station("pump", OTHER, 12)
 		g.adjust_production(P, 1)
 		var amount: int = g.PRODUCTS[kind].get("amount", 1)
@@ -34,7 +30,7 @@ func run(t) -> void:
 		g.adjust_production(P, -1)
 		g.simulate(g.DAY_SECONDS)
 		t.check(g.benches[P].stock == amount * 2, "Zero output stops production across days")
-		if kind in ["purifier", "farm"]:
+		if kind == "purifier":
 			t.check(g.benches[OTHER].stock == 4, "Raw water is charged once per completed batch")
 		elif kind == "bench":
 			t.check(g.materials.get(2, 0) == 0, "Each produced gun consumes one copper ore")
@@ -176,118 +172,6 @@ func run(t) -> void:
 
 	check_track_deliveries(t)
 
-	# Harvest leaves a reusable field, and a second day repeats the complete chain.
-	t.scenario("Pump, renewable field, and mill supply one another", 1)
-	t.station("pump", OTHER)
-	t.station("farm", P)
-	var mill := Vector2i(34, 11)
-	t.station("mill", mill)
-	g.adjust_production(OTHER, 1)
-	g.adjust_production(P, 1)
-	g.adjust_production(mill, 1)
-	t.advance_until(func(): return g.benches[mill].produced_today == 16, 120, "Raw water is carried to the field and harvested wheat to the mill")
-	t.check(g.benches.has(P) and g.stock_at(P, "wheat") == 4, "Harvest preserves the field and remaining wheat")
-	g.simulate(g.DAY_SECONDS - g.day_elapsed + 120)
-	t.check(g.benches[P].produced_today == 8 and g.benches[mill].produced_today == 16, "The same field grows another harvest without rebuilding")
-
-	# A wired light shortens only the unattended portion of a reusable farm batch.
-	t.scenario("Powered grow light accelerates farm growth", 3)
-	var plant := Vector2i(28, 11)
-	var transformer := Vector2i(32, 11)
-	var light := Vector2i(37, 11)
-	var field := Vector2i(37, 15)
-	t.station("power_plant", plant)
-	t.station("transformer", transformer)
-	t.station("grow_light", light)
-	t.station("farm", field)
-	for origin in [plant, transformer, light, field]:
-		for cell in g.building_cells(origin, g.building_kind(origin)):
-			g.terrain[cell] = 0
-			g.navigation.set_point_solid(cell, false)
-			g.world_view.block_changed(cell)
-	g.workers[0].pos = Vector2(field)
-	g.add_stock(plant, 3, 2)
-	g.add_stock(field, "raw_water", 4)
-	g.power_lines[Vector2i(30, 10)] = {"kind": "high_line", "materials": {2: 2}}
-	for x in range(34, 37):
-		g.power_lines[Vector2i(x, 11)] = {"kind": "low_line", "materials": {2: 1}}
-	g.adjust_production(field, 1)
-	t.advance_until(func(): return g.benches[field].stock == 8, 65, "The connected light powers while the operator works and the field grows")
-	t.check(g.stock_at(plant, 3) < 2 and g.benches[field].stock == 8, "Actual crop growth is faster and coal use follows the 200W load")
-
-	t.scenario("Powered fountains restore fatigue without stacking", 3)
-	plant = Vector2i(28, 11)
-	transformer = Vector2i(32, 11)
-	t.station("power_plant", plant)
-	t.station("transformer", transformer)
-	var fountain_a := Vector2i(37, 11)
-	var fountain_b := Vector2i(39, 11)
-	t.station("fountain", fountain_a)
-	t.station("fountain", fountain_b)
-	for origin in [plant, transformer, fountain_a, fountain_b]:
-		for cell in g.building_cells(origin, g.building_kind(origin)):
-			g.terrain[cell] = 0
-			g.navigation.set_point_solid(cell, false)
-			g.world_view.block_changed(cell)
-	g.workers[2].pos = Vector2(38, 12)
-	g.workers[2].fatigue = 50.0
-	g.add_stock(plant, 3, 2)
-	g.power_lines[Vector2i(30, 10)] = {"kind": "high_line", "materials": {2: 2}}
-	for x in range(34, 39):
-		g.power_lines[Vector2i(x, 11)] = {"kind": "low_line", "materials": {2: 1}}
-	t.advance_until(func(): return g.workers[2].fatigue < 50.0, 12, "A connected fountain begins restoring fatigue")
-	var fatigue_start: float = g.workers[2].fatigue
-	g.simulate(20)
-	t.near(g.workers[2].fatigue, fatigue_start - 5.0 * 20.0 / g.HOUR_SECONDS, "Powered fountains restore five fatigue per hour even when their ranges overlap", 0.2)
-
-	t.scenario("Powered drill opens dense ore to ordinary excavation orders", 3)
-	plant = Vector2i(28, 11)
-	transformer = Vector2i(32, 11)
-	var drill := Vector2i(37, 11)
-	var dense_ore := Vector2i(37, 14)
-	t.station("power_plant", plant)
-	t.station("transformer", transformer)
-	t.station("drill", drill)
-	g.create_worker(g.BASE + Vector2i(0, 2))
-	for origin in [plant, transformer, drill]:
-		for cell in g.building_cells(origin, g.building_kind(origin)):
-			g.terrain[cell] = 0
-			g.navigation.set_point_solid(cell, false)
-			g.world_view.block_changed(cell)
-	g.add_stock(plant, 3, 4)
-	g.power_lines[Vector2i(30, 10)] = {"kind": "high_line", "materials": {2: 2}}
-	for x in range(34, 37):
-		g.power_lines[Vector2i(x, 11)] = {"kind": "low_line", "materials": {2: 1}}
-	g.workers[0].pos = Vector2(plant)
-	g.workers[1].pos = Vector2(transformer)
-	g.workers[2].pos = Vector2(drill)
-	g.workers[3].pos = Vector2(dense_ore + Vector2i.LEFT)
-	g.terrain[dense_ore + Vector2i.LEFT] = 0
-	g.navigation.set_point_solid(dense_ore + Vector2i.LEFT, false)
-	g.terrain[dense_ore] = 5
-	g.navigation.set_point_solid(dense_ore, true)
-	g.world_view.block_changed(dense_ore)
-	g.designate(dense_ore, dense_ore)
-	t.advance_until(func(): return g.stock_at(g.BASE, 5) >= 1, 150, "A powered, staffed drill lets a miner recover dense copper")
-	t.check(g.delivered == 1 and g.resource_inventory()[5] >= 1, "Dense ore becomes a real deliverable mineral, not decorative terrain")
-
-	if t.native:
-		t.scenario("Food buildings and growing field in the native viewport")
-		t.station("farm", P)
-		t.station("pump", OTHER)
-		t.station("mill", mill)
-		for position in [P, OTHER, mill]:
-			g.adjust_production(position, 1)
-		g.simulate(35)
-		for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
-			t.root.size = size
-			await t.settle()
-			await t.click_world(g.tile_center(P + Vector2i.RIGHT))
-			t.check(g.entity_title.text == "农田" and g.entity_details.text.contains("生长"), "The planted field opens live growth and storage details")
-			t.check(t.root.get_visible_rect().encloses(g.entity_panel.get_global_rect()), "Food inspector fits the viewport")
-			await RenderingServer.frame_post_draw
-			t.root.get_texture().get_image().save_png("/tmp/law3-food-%d.png" % size.x)
-
 func check_track_deliveries(t) -> void:
 	var g = t.game
 	# The same delivery contract must work for every ingredient, including a multi-unit load.
@@ -318,34 +202,6 @@ func check_track_deliveries(t) -> void:
 		t.advance_until(func(): return g.benches[OTHER].produced_today == g.PRODUCTS[entry.target].amount, 90, "The receiver consumes its track-delivered batch and produces normally")
 		t.near(g.resource_activity(entry.item, g.day).consumed, entry.amount, "Only production consumes the delivered ingredient")
 		t.near(g.stock_at(OTHER, entry.item), 0, "Track cargo cannot be delivered or consumed twice")
-
-	# A downstream rewire must never deliver an already-reserved batch to the wrong building.
-	t.scenario("In-flight ingredient retains its intended receiver after rewiring", 1)
-	t.station("farm", P, 8)
-	var receiver := Vector2i(34, 11)
-	var wrong := Vector2i(34, 13)
-	t.station("mill", receiver)
-	t.station("mill", wrong)
-	g.workers[0].pos = Vector2(P)
-	for x in range(29, 36):
-		t.belt(Vector2i(x, 12), Vector2i.RIGHT if x < 35 else Vector2i.UP)
-	g.adjust_production(receiver, 1)
-	t.advance_until(func(): return track_shows_item(g, "wheat"), 10, "Wheat is on its original route before editing")
-	var redirect: Array[Vector2i] = [Vector2i(35, 12), wrong + Vector2i.RIGHT]
-	t.check(g.place_belt_path(redirect), "An empty downstream endpoint can be rewired to a different building")
-	g.simulate(4)
-	t.near(g.stock_at(receiver, "wheat") + g.stock_at(wrong, "wheat"), 0, "Neither wrong destination nor intended destination receives blocked cargo")
-	t.near(g.resource_inventory().wheat, 8, "Blocked cargo remains visible in inventory without duplication")
-	t.near(g.stock_at(P, "wheat"), 4, "An in-flight reservation prevents dispatching a duplicate batch from the source")
-	t.near(g.benches[receiver].produced_today, 0, "The intended receiver cannot produce with goods stranded on a track")
-	var restore: Array[Vector2i] = [Vector2i(35, 12), receiver + Vector2i.RIGHT]
-	t.check(g.place_belt_path(restore), "Restoring the empty endpoint reconnects the original receiver")
-	g.adjust_production(receiver, -1)
-	t.advance_until(func(): return g.stock_at(receiver, "wheat") == 4, 5, "Reconnection delivers the retained batch once")
-	t.near(g.stock_at(wrong, "wheat"), 0, "The wrong building never receives another building's reservation")
-	t.near(g.resource_inventory().wheat, 8, "Reconnection neither destroys nor duplicates goods")
-	var first_cell: Array[Vector2i] = [Vector2i(34, 12), receiver]
-	t.check(g.place_belt_path(first_cell), "An empty approach can also connect to the receiver's first footprint cell")
 
 func track_shows_item(g, item) -> bool:
 	for p in g.belts:

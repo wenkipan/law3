@@ -48,7 +48,7 @@ func scenario(label: String, population := 3) -> void:
 	game.world_view.rebuild(game)
 
 func station(kind: String, p: Vector2i, stock := 0) -> void:
-	if kind in ["pump", "farm"] and not game.near_water_source(p):
+	if kind == "pump" and not game.near_water_source(p):
 		var source := p + Vector2i.UP
 		game.water_sources[source] = true
 		game.terrain[source] = 0
