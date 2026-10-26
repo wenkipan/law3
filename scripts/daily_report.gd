@@ -1,6 +1,10 @@
 extends Window
 
+const ResourcePanel = preload("res://scripts/view/resource_panel.gd")
 var game: Node
+var tabs := TabBar.new()
+var labor: VBoxContainer
+var resources: VBoxContainer
 var days := OptionButton.new()
 var people := OptionButton.new()
 var summary := Label.new()
@@ -19,13 +23,23 @@ func _ready() -> void:
 	for side in ["left", "right", "top", "bottom"]:
 		margin.add_theme_constant_override("margin_" + side, 24)
 	var content := VBoxContainer.new()
-	content.add_theme_constant_override("separation", 16)
+	content.add_theme_constant_override("separation", 12)
 	margin.add_child(content)
-	var title_label: Label = game.make_label("每日报告", 24)
-	content.add_child(title_label)
+	tabs.add_tab("工人")
+	tabs.add_tab("物资")
+	tabs.add_theme_font_override("font", game.font)
+	tabs.tab_changed.connect(change_tab)
+	content.add_child(tabs)
+	labor = VBoxContainer.new()
+	labor.add_theme_constant_override("separation", 12)
+	content.add_child(labor)
+	resources = ResourcePanel.new()
+	resources.game = game
+	content.add_child(resources)
+	resources.hide()
 	var filters := HBoxContainer.new()
 	filters.add_theme_constant_override("separation", 14)
-	content.add_child(filters)
+	labor.add_child(filters)
 	days.custom_minimum_size.x = 180
 	people.custom_minimum_size.x = 180
 	filters.add_child(days)
@@ -36,12 +50,12 @@ func _ready() -> void:
 	days.item_selected.connect(func(_i): refresh())
 	people.item_selected.connect(func(_i): refresh())
 	summary.add_theme_font_override("font", game.font)
-	content.add_child(summary)
-	content.add_child(HSeparator.new())
+	labor.add_child(summary)
+	labor.add_child(HSeparator.new())
 	for action in game.ACTIONS:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 14)
-		content.add_child(row)
+		labor.add_child(row)
 		var label: Label = game.make_label(action, 14)
 		label.custom_minimum_size.x = 48
 		row.add_child(label)
@@ -69,6 +83,8 @@ func _process(delta: float) -> void:
 		refresh()
 
 func refresh() -> void:
+	if is_instance_valid(resources):
+		resources.refresh()
 	if people.item_count != game.workers.size() + 1:
 		var selected_person := people.selected
 		people.clear()
@@ -94,6 +110,11 @@ func refresh() -> void:
 		rows[action][0].value = ratio
 		rows[action][1].text = format_time(totals[action])
 		rows[action][2].text = "%.1f%%" % ratio
+
+func change_tab(index: int) -> void:
+	labor.visible = index == 0
+	resources.visible = index == 1
+	refresh()
 
 func format_time(seconds: float) -> String:
 	var minutes := int(round(seconds / game.DAY_SECONDS * 1440.0))

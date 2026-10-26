@@ -34,9 +34,8 @@ func _make_custom_tooltip(_for_text: String) -> Object:
 	requirements.custom_minimum_size.x = 240
 	requirements.add_theme_font_override("normal_font", game.font)
 	requirements.add_theme_font_size_override("normal_font_size", 14)
-	var color := "#A9D9B5" if game.player_blocks >= game.building_blocks(kind) else "#ED9C89"
-	requirements.text = "[color=%s]方块  %d / %d[/color]\n工时  %s 小时\n工资  %s 面包" % [
-		color, game.player_blocks, game.building_blocks(kind), String.num(game.building_hours(kind), 2),
+	requirements.text = "%s\n工时  %s 小时\n工资  %s 面包" % [
+		game.material_requirements_text(game.building_materials(kind), true, true), String.num(game.building_hours(kind), 2),
 		String.num(game.building_hours(kind) * game.WAGE_PER_HOUR, 2)]
 	content.add_child(requirements)
 	content.add_child(HSeparator.new())

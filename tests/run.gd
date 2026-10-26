@@ -48,19 +48,42 @@ func scenario(label: String, population := 3) -> void:
 	game.world_view.rebuild(game)
 
 func station(kind: String, p: Vector2i, stock := 0) -> void:
+	if kind in ["pump", "farm"] and not game.near_water_source(p):
+		var source := p + Vector2i.UP
+		game.water_sources[source] = true
+		game.terrain[source] = 0
+		game.navigation.set_point_solid(source, true)
 	game.benches[p] = game.production_station(kind)
 	game.benches[p].stock = stock
+
+func materials(amount: int, ore := 1) -> void:
+	for mineral in range(1, game.ORES.size()):
+		game.add_stock(game.BASE, mineral, -game.stock_at(game.BASE, mineral))
+	game.add_stock(game.BASE, ore, amount)
+
+func building_materials(kind: String, count := 1) -> void:
+	materials(0)
+	for ore in game.building_materials(kind):
+		var amount: int = game.building_materials(kind)[ore] * count
+		if is_same(ore, 0):
+			game.add_stock(game.BASE, 1, maxi(0, amount - 2))
+			game.add_stock(game.BASE, 2, mini(2, amount))
+		else:
+			game.add_stock(game.BASE, ore, amount)
 
 func bed(p: Vector2i) -> void:
 	game.beds[p] = {"owner": -1, "remaining": 0.0, "assigned": -1}
 
 func bank(p: Vector2i) -> void:
 	game.banks[p] = {"interest_received": 0.0}
+	var cash: float = minf(game.LOAN_LIMIT, game.stock_at(game.BASE, "bread"))
+	game.add_stock(game.BASE, "bread", -cash)
+	game.add_stock(p, "bread", cash)
 
 func belt(p: Vector2i, direction: Vector2i) -> void:
 	var inputs: Array = game.DIRS.duplicate()
 	inputs.erase(direction)
-	game.belts[p] = {"direction": direction, "inputs": inputs, "cargo": -1, "last_input": -1}
+	game.belts[p] = {"direction": direction, "inputs": inputs, "cargo": -1, "last_input": -1, "materials": {1: game.BELT_BLOCKS}}
 
 func check(condition: bool, result: String) -> void:
 	checks += 1

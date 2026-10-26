@@ -2,6 +2,25 @@ extends RefCounted
 
 static var textures: Dictionary = {}
 
+static func item_texture(item) -> Texture2D:
+	var icons := {"wheat": "wheat", "raw_water": "raw-water", 3: "coal",
+		"clean_water": "water", "bench": "mining-gun", "workbench": "backpack"}
+	if icons.has(item):
+		return texture("res://assets/icons/%s.svg" % icons[item])
+	var key := "item:" + str(item)
+	if not textures.has(key):
+		var atlas := AtlasTexture.new()
+		if item is int:
+			atlas.atlas = texture("res://assets/world/terrain-atlas.svg")
+			atlas.region = Rect2(item * 40, 0, 40, 40)
+		elif item == "bread":
+			atlas.atlas = texture("res://assets/world/miner-parts.svg")
+			atlas.region = Rect2(160, 0, 32, 32)
+		else:
+			return texture("res://assets/icons/freight.svg")
+		textures[key] = atlas
+	return textures[key]
+
 static func texture(path: String) -> Texture2D:
 	if not textures.has(path):
 		var image := Image.new()

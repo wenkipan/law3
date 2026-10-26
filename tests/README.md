@@ -26,6 +26,13 @@ godot --resolution 1440x900 --log-file /tmp/law3-native-tests.log --path . --scr
 每日报告默认和最小尺寸截图为 `/tmp/law3-behaviors-report-680.png`、`/tmp/law3-behaviors-report-560.png`。
 矿道与货物截图为 `/tmp/law3-behaviors-belt-1440.png`、`/tmp/law3-behaviors-belt-960.png`，移动后的画面为 `/tmp/law3-behaviors-belt-moving.png`。
 成排建筑预览与矿道转弯截图为 `/tmp/law3-behaviors-row-preview.png`、`/tmp/law3-behaviors-belt-corners.png`。
+矿石覆盖蓝图截图为 `/tmp/law3-behaviors-ore-blueprint-1440.png`、`/tmp/law3-behaviors-ore-blueprint-960.png`。
+原料实物搬运截图为 `/tmp/law3-material-{mill,farm,purifier}-{1440,960}.png`，检查货物图标、小麦/原水详情和仓库送达结果。
+轨道连接生产建筑与通用货物截图为 `/tmp/law3-track-{mill,farm,purifier}-{1440,960}.png`，检查建筑占地端点、轨道货物图标、载货保护和本地卸货。
+物资页三列库存表与展开昨日收支的截图为 `/tmp/law3-resources-680.png`、`/tmp/law3-resources-560.png`。
+库存曲线按天分格、滚动最近五天的截图为 `/tmp/law3-resources-daily-axis.png`。
+地形方块详情截图为 `/tmp/law3-block-details-{1440,960}.png`，检查矿种、开采工时、产物和实时状态，确认未探索区域不泄露信息。
+生产行为还覆盖供电培育灯加速农田，以及矿钻解锁致密铜矿；交互行为区分普通工具无法挖掘致密矿。
 人工检查画面非空、素材正常、详情不遮挡、文字不截断、世界中只有工人姓名。
 截图不是自动图像比对。
 
@@ -33,8 +40,8 @@ godot --resolution 1440x900 --log-file /tmp/law3-native-tests.log --path . --scr
 
 | 文件 | 结果契约 |
 | --- | --- |
-| `world_behaviors.gd` | 采矿交付与取消；全部建筑一次扣料、退款、完成；矿道直接卸货、汇流、断线恢复、归属和运费；生活需求与床位；借款差额、还款和本金/利息收支；跨日报告、暂停、速度与重置 |
-| `production_behaviors.gd` | 四类日产量跨天保留、停产与缺料；睡眠和午夜中断接续；原料竞争；打印有限订单和新人工作 |
+| `world_behaviors.gd` | 采矿交付与取消；全部建筑一次扣料、退款、先挖后建、等待通路及取消附带挖掘；矿道直接卸货、汇流、断线恢复、归属和运费；生活需求与床位；借款差额、还款和本金/利息收支；跨日报告、暂停、速度与重置 |
+| `production_behaviors.gd` | 七类日产量跨天保留、停产与缺料；睡眠和午夜中断接续；本地原料竞争、人工与轨道运输；改线等待原接收建筑、库存守恒；有限面包支付；泵-农田-磨房循环；打印有限订单和新人工作 |
 | `equipment_behaviors.gd` | 交易不能超卖；卖出不补当日配额；矿枪确实更快、饮水确实减疲劳；背包双块交付、耗尽、半载返回 |
 | `interaction_behaviors.gd` | 真实点击、缩放和遮挡；UI 拦截；蓝图完成后详情连续；全部建筑成排拖动、占地间距、轴向锁定与鼠标取消；矿道拖动、转弯、反向重连、拆除及载货保护；日产量控件、新人选择与窗口布局 |
 
