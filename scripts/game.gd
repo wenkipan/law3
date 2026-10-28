@@ -1988,7 +1988,7 @@ func bed_effects_text() -> String:
 
 func product_recipe_text(kind: String, p = null) -> String:
 	var product: Dictionary = PRODUCTS[kind]
-	var recipe := "%s  %d %s / %.0fh\n工资  %s 面包 / h" % [product.name, product.get("amount", 1), product.unit, product.hours, String.num(station_wage(p), 1)]
+	var recipe := "%s  %d %s / %.0fh\n工资  %s 面包" % [product.name, product.get("amount", 1), product.unit, product.hours, String.num(product.hours * station_wage(p), 1)]
 	if kind == "printer":
 		recipe += "\n原料  %d 矿石方块" % PRINT_WORKER_BLOCKS
 	elif not production_materials(kind).is_empty():
@@ -1999,23 +1999,23 @@ func product_recipe_text(kind: String, p = null) -> String:
 
 func building_effects_text(kind: String, p = null) -> String:
 	match kind:
-		"power_plant": return "一人操作 · 最高 3200W\n满负荷耗煤 2 / h\n工资 %s 面包 / h" % String.num(station_wage(p), 1)
-		"manual_generator": return "一人操作 · 最高 400W\n工资 %s 面包 / h" % String.num(station_wage(p), 1)
+		"power_plant": return "一人操作 · 最高 3200W\n满负荷耗煤 2 / h\n按实际输出耗煤"
+		"manual_generator": return "一人操作 · 最高 400W\n无需燃料"
 		"high_line": return "输电容量 3200W\n可横穿传送带"
 		"low_line": return "输电容量 800W"
-		"transformer": return "一人值班 · 最高 800W\n左侧输入 · 右侧输出\n工资 %s 面包 / h" % String.num(station_wage(p), 1)
+		"transformer": return "一人值班 · 最高 800W\n左侧输入 · 右侧输出"
 		"grow_light": return "耗电 200W\n三格内农田生长速度 ×2\n多灯不叠加"
-		"spotlight": return "耗电 200W\n三格内商品售价 +20%\n多灯不叠加"
-		"daylight": return "耗电 200W\n三格内建筑工资 +20%\n多灯不叠加"
-		"canteen": return "座位 2\n每餐疲劳恢复 10"
+		"spotlight": return "耗电 200W\n%d 格内商品售价 +%.0f%%\n多灯不叠加" % [EFFECT_RADIUS, LIGHT_BONUS * 100]
+		"daylight": return "耗电 200W\n%d 格内建筑工资 +%.0f%%\n多灯不叠加" % [EFFECT_RADIUS, LIGHT_BONUS * 100]
+		"canteen": return "座位 2\n每餐疲劳恢复 %.0f" % CANTEEN_RECOVERY
 		"fountain": return "耗电 200W · 每日原水 ×10\n三格内疲劳恢复 5 / h\n多喷泉不叠加"
 		"electric_belt": return "每件货物耗电 25W\n速度 +20% · 断电暂停"
-		"drill": return "一人操作 · 耗电 400W\n三格内致密矿 1 块 / 2h\n工资 %s 面包 / h\n可移动 · 需重新接电" % String.num(station_wage(p), 1)
+		"drill": return "一人操作 · 耗电 400W\n三格内致密矿 1 块 / 2h\n可移动 · 需重新接电"
 	if kind == "belt":
 		return "采矿运费  %.1f 面包 / 块\n单格容量  1 批" % BELT_FEE
 	if kind == "bank":
 		return "借款上限  %.0f 面包\n一次性利息  %.0f%%\n收入还款  %.0f%%\n每日最多一笔 · 还清后再借" % [LOAN_LIMIT, LOAN_INTEREST_RATE * 100, LOAN_REPAYMENT_RATE * 100]
-	var effects := product_recipe_text(kind) if PRODUCTS.has(kind) else bed_effects_text()
+	var effects := product_recipe_text(kind, p) if PRODUCTS.has(kind) else bed_effects_text()
 	if kind == "pump":
 		effects += "\n建于水源旁"
 	return effects

@@ -15,9 +15,10 @@ Original, editable SVG game assets. No remote assets or runtime downloads.
   marks the outgoing edge. Persistent sprites share these textures in both
   construction previews and completed tracks.
 - `power-line-atlas.svg`, `power-line-blueprint-atlas.svg`: the same sixteen
-  connection shapes in gold high-voltage and mint low-voltage rows. Power lines
+  connection shapes in gold 3200W and mint 800W rows. Power lines
   reuse the track sprites and construction reveal, including connected previews;
-  high-voltage corridors retain two parallel conductors and their full footprint.
+  thick-wire corridors retain two parallel conductors and their full footprint.
+  Both types connect to each other and to any power device.
 - `construction.gdshader`: complementary bottom-up reveal masks for solid and
   blueprint sprites, relative to each atlas row. No custom draw calls or
   frame-by-frame image creation.

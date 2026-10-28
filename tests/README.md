@@ -34,6 +34,10 @@ godot --resolution 1440x900 --log-file /tmp/law3-native-tests.log --path . --scr
 电网交叉与选中范围截图为 `/tmp/law3-power-crossing.png`、`/tmp/law3-power-{grow_light,fountain,drill}-{1440,960}.png`，检查走廊、原生拾取、三格范围与矿钻移动。
 截图不是自动图像比对。
 
+电力范围场景同时保存 `/tmp/law3-power-{manual_generator,spotlight,daylight,canteen}-{1440,960}.png`，检查新增设施图标、两种灯的选中范围、食堂详情及双尺寸布局。新增建筑继续参加全部建筑共用的扣料、退款、先挖后建和原生拖动场景。
+
+生产组覆盖任意电线直连、混线容量瓶颈、人力发电实际工资与断路、日光灯工资和还款守恒，以及食堂抢座、不可达、距离、跨日、不同食量与座位释放。装备组对矿枪、背包、清水使用同一价格契约，验证溢价、不叠加、断电、范围、便宜店铺与挣取差价，不断言内部预算或任务状态。
+
 电线沿用交互组的成排建造场景，另存 `/tmp/law3-power-{high_line,low_line}-{horizontal,vertical}-{preview,building,branch}.png`
 及同名前缀的 `-{1440,960}.png`。检查金色高压双线、青色低压细线、转角与分支连接、蓝图逐步显形、双尺寸缩放和工具栏图标；拆除分支不能误拆主线。
 

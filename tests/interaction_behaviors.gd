@@ -339,6 +339,8 @@ func check_power_interactions(t) -> void:
 	g.navigation.set_point_solid(Vector2i(39, 11), true)
 	g.world_view.rebuild(g)
 	g.simulate(3)
+	if g.build_tray.visible:
+		await t.click(g.furniture_button.get_global_rect().get_center())
 	for width in [1440, 960]:
 		t.root.size = Vector2i(width, 900 if width == 1440 else 640)
 		g.camera.position = g.tile_center(Vector2i(34, 10))
@@ -346,9 +348,9 @@ func check_power_interactions(t) -> void:
 		for p in [Vector2i(32, 9), Vector2i(35, 9), drill] + additions.keys():
 			await t.settle()
 			await t.click_world(g.tile_center(p))
-			t.check(g.entity_title.text == g.building_name(g.building_kind(p)), "Powered facilities open their own live details")
+			t.check(g.entity_title.text == g.building_name(g.building_kind(p)), "Facility %s at width %d opens its live details, got %s" % [g.building_kind(p), width, g.entity_title.text])
 			t.check(g.world_view.effect_frame.visible == (g.building_kind(p) not in ["manual_generator", "canteen"]), "Only area-effect facilities reveal a range when clicked")
-			t.check(t.root.get_visible_rect().encloses(g.entity_panel.get_global_rect()), "Power inspector fits the viewport")
+			t.check(t.root.get_visible_rect().encloses(g.entity_panel.get_global_rect()), "Inspector %s at width %d fits the viewport: %s" % [g.building_kind(p), width, g.entity_panel.get_global_rect()])
 			if t.native:
 				await RenderingServer.frame_post_draw
 				t.root.get_texture().get_image().save_png("/tmp/law3-power-%s-%d.png" % [g.building_kind(p), width])
