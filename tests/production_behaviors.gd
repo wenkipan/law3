@@ -4,17 +4,19 @@ const P := Vector2i(28, 11)
 const OTHER := Vector2i(31, 11)
 const INPUT_ROUTES := [
 	{"source": "pump", "target": "purifier", "item": "raw_water", "amount": 4},
+	{"source": "pump", "target": "farm", "item": "raw_water", "amount": 4},
 ]
 
 func run(t) -> void:
 	var g = t.game
-	for kind in ["bench", "workbench", "pump", "purifier"]:
+	for kind in ["bench", "workbench", "pump", "purifier", "farm"]:
 		t.scenario("Recurring output: " + kind, 1)
 		t.station(kind, P)
 		if kind == "bench":
 			t.materials(2, 2)
+			g.terrain[Vector2i(27, 13)] = 2
 		g.workers[0].water = 4
-		if kind == "purifier":
+		if kind in ["purifier", "farm"]:
 			t.station("pump", OTHER, 12)
 		g.adjust_production(P, 1)
 		var amount: int = g.PRODUCTS[kind].get("amount", 1)
@@ -30,7 +32,7 @@ func run(t) -> void:
 		g.adjust_production(P, -1)
 		g.simulate(g.DAY_SECONDS)
 		t.check(g.benches[P].stock == amount * 2, "Zero output stops production across days")
-		if kind == "purifier":
+		if kind in ["purifier", "farm"]:
 			t.check(g.benches[OTHER].stock == 4, "Raw water is charged once per completed batch")
 		elif kind == "bench":
 			t.check(g.materials.get(2, 0) == 0, "Each produced gun consumes one copper ore")
@@ -171,6 +173,545 @@ func run(t) -> void:
 		t.near(g.resource_activity(entry.item, g.day).consumed, 0, "The new day starts with no phantom material use")
 
 	check_track_deliveries(t)
+	check_farming(t)
+	check_power(t)
+	check_local_services(t)
+	check_drilling(t)
+	check_electric_freight(t)
+	check_mood_experiences(t)
+	check_machine_environment(t)
+
+func check_machine_environment(t) -> void:
+	var g = t.game
+	# Shared contract: only real operation disturbs nearby sleep, never an idle shell or lost supply.
+	for kind in ["power_plant", "drill", "electric_belt"]:
+		for condition in ["running", "idle", "unpowered", "no_fuel", "outside", "blocked"]:
+			if condition == "blocked" and kind != "electric_belt": continue
+			t.scenario("Machine environment: %s / %s" % [kind, condition], 1)
+			var facilities := noise_facilities(t, kind, condition != "idle")
+			var sleeper: Dictionary = g.workers[0]
+			sleeper.pos = Vector2(facilities.near) + (Vector2(0, 4) if condition == "outside" else Vector2.ZERO)
+			if condition == "blocked": sleeper.pos = Vector2(33, 10)
+			sleeper.fatigue = 100
+			if condition == "no_fuel":
+				g.add_stock(facilities.plant, 3, -10)
+			if condition == "unpowered":
+				g.remove_power_line(Vector2i(31, 8))
+			if condition != "idle":
+				if kind == "drill": g.designate(facilities.deposit, facilities.deposit)
+				if kind == "electric_belt": g.adjust_production(facilities.target, 1)
+			var setup_seconds := 0.0
+			if condition == "blocked":
+				setup_seconds = t.advance_until(func(): return track_shows_item(g, "raw_water"), 15, "Actual goods reach the belt before the route is disconnected")
+				t.check(g.remove_belt(Vector2i(34, 9)), "Removing an empty downstream segment leaves the existing shipment waiting")
+			var elapsed := 25.0 + setup_seconds
+			if condition == "running":
+				elapsed = t.advance_until(func(): return sleeper.mood.value < -0.01, 25, "Actual machinery disturbs a sleeping non-operator")
+			else:
+				g.simulate(25)
+				t.near(sleeper.mood.value, 0, "Idle, blocked, unpowered, unfueled or distant machinery cannot disturb sleep")
+			if condition in ["running", "outside"]:
+				t.check(g.resource_activity(3, 1).consumed > 0, "The source circuit has really delivered power")
+			t.near(sleeper.fatigue, 100 - elapsed / g.HOUR_SECONDS * g.SLEEP_RECOVERY_PER_HOUR, "Environmental mood does not reduce physical sleep recovery", 0.02)
+			t.near(sleeper.earned_today, 0, "A nearby sleeper is affected without operating or earning from the machine")
+			if condition == "running":
+				var before: float = sleeper.mood.value
+				g.remove_power_line(Vector2i(31, 8))
+				g.simulate(2)
+				t.check(sleeper.mood.value > before, "Stopping real operation clears the disturbance on the next simulation step")
+
+	# Beds still recover the same fatigue; a busy industrial location changes the experience, not rent.
+	var bed_moods: Array[float] = []
+	var fatigue_after_sleep: Array[float] = []
+	for running in [false, true]:
+		t.scenario("A bed near generation is physically useful but less pleasant: " + str(running), 1)
+		var facilities := noise_facilities(t, "power_plant", running)
+		var sleeper: Dictionary = g.workers[0]
+		sleeper.pos = Vector2(facilities.near)
+		sleeper.bread = 5
+		sleeper.fatigue = 100
+		t.bed(facilities.near)
+		g.assign_bed(facilities.near, sleeper.id)
+		g.simulate(g.HOUR_SECONDS * 2)
+		bed_moods.append(sleeper.mood.value)
+		fatigue_after_sleep.append(sleeper.fatigue)
+		t.near(sleeper.bed_spent_today, 5, "Noise neither refunds nor repeats the bed rent")
+	t.check(bed_moods[0] > 0 and bed_moods[1] < 0, "Quiet bed sleep improves mood while strong ongoing noise spoils the experience (quiet %.3f, noisy %.3f)" % [bed_moods[0], bed_moods[1]])
+	t.near(fatigue_after_sleep[0], fatigue_after_sleep[1], "Quiet and noisy beds retain identical fatigue recovery")
+
+	# A pleasant environment cannot erase industrial disturbance; both are part of the same meal.
+	t.scenario("Two diners share a fountain but only one is beside generation", 0)
+	t.power_facilities(1, 0)
+	t.station("fountain", Vector2i(30, 10))
+	g.add_stock(Vector2i(30, 10), "raw_water", 10)
+	t.cable(Vector2i(31, 9))
+	g.simulate(4)
+	var noisy: Dictionary = g.create_worker(Vector2i(27, 10))
+	var quiet: Dictionary = g.create_worker(Vector2i(33, 10))
+	noisy.bread = 10
+	quiet.bread = 10
+	g.simulate(g.MEAL_SECONDS + 0.5)
+	t.check(noisy.eaten_today == 10 and quiet.eaten_today == 10, "Both diners consume the same real meal")
+	t.near(noisy.hunger, quiet.hunger, "Noise does not change the food's nutritional effect")
+	t.check(quiet.mood.value > 15 and noisy.mood.value > 0, "An operating fountain still contributes comfort to both meals")
+	t.near(quiet.mood.value - noisy.mood.value, 12, "Only the diner's actual noisy meal time receives the penalty", 0.03)
+
+	# Dense machine placement must not multiply penalties or depend on the sleeper's iteration order.
+	var changes: Array[float] = []
+	for count in [1, 2]:
+		t.scenario("Overlapping operating drills do not stack disturbance: " + str(count), 1)
+		t.power_facilities(1, 0)
+		var sleeper: Dictionary = g.workers[0]
+		sleeper.pos = Vector2(36, 12)
+		sleeper.fatigue = 100
+		var drills: Array[Vector2i] = []
+		var deposits: Array[Vector2i] = []
+		for i in count:
+			var drill := Vector2i(34 + i * 3, 9)
+			var deposit := Vector2i(35 + i * 3, 11)
+			t.station("drill", drill)
+			g.add_stock(drill, "bread", 30)
+			g.create_worker(drill)
+			g.terrain[deposit] = 5
+			g.navigation.set_point_solid(deposit, true)
+			drills.append(drill)
+			deposits.append(deposit)
+		for deposit in deposits: g.designate(deposit, deposit)
+		t.advance_until(func():
+			for drill in drills:
+				if g.stock_at(drill, 2) < 1: return false
+			return true, 35, "Every nearby drill produces actual ore before the comparison")
+		var before: float = sleeper.mood.value
+		g.simulate(g.HOUR_SECONDS)
+		changes.append(sleeper.mood.value - before)
+	t.near(changes[0], -6.5, "Strong running machinery offsets natural mood recovery during sleep", 0.08)
+	t.near(changes[0], changes[1], "Two noisy machines do not double one sleeper's mood penalty", 0.08)
+
+func noise_facilities(t, kind: String, running: bool) -> Dictionary:
+	var g = t.game
+	var plant: Vector2i = t.power_facilities(1, 1 if kind == "power_plant" and running else 0)
+	var result := {"plant": plant, "near": Vector2i(24, 10)}
+	if kind == "drill":
+		var drill := Vector2i(34, 9)
+		result.near = Vector2i(34, 12)
+		result.deposit = Vector2i(35, 11)
+		t.station("drill", drill)
+		g.add_stock(drill, "bread", 30)
+		g.create_worker(drill)
+		g.terrain[result.deposit] = 5
+		g.navigation.set_point_solid(result.deposit, true)
+	elif kind == "electric_belt":
+		var source := Vector2i(32, 11)
+		result.target = Vector2i(39, 9)
+		result.near = Vector2i(35, 10)
+		t.station("pump", source, 4)
+		t.station("purifier", result.target)
+		g.create_worker(source)
+		for x in range(33, 39):
+			t.belt(Vector2i(x, 9), Vector2i.RIGHT)
+			g.belts[Vector2i(x, 9)].kind = "electric_belt"
+	return result
+
+func check_mood_experiences(t) -> void:
+	var g = t.game
+	# Ordinary proximity, empty water tanks and unpowered fountains are not pleasant meals.
+	var meal_moods: Array[float] = []
+	for setting in ["absent", "dry", "unpowered", "one", "two"]:
+		t.scenario("Comfort comes from eating at an operating fountain: " + setting, 0)
+		t.power_facilities(1, 1)
+		for i in (2 if setting == "two" else 1):
+			if setting == "absent": break
+			var p := Vector2i(35 + i * 3, 9)
+			t.station("fountain", p)
+			if setting != "dry": g.add_stock(p, "raw_water", 10)
+		if setting == "unpowered":
+			g.power_lines.erase(Vector2i(31, 8))
+		g.simulate(4)
+		var person: Dictionary = g.create_worker(Vector2i(36, 10))
+		person.bread = 10
+		g.simulate(g.MEAL_SECONDS + 0.5)
+		t.check(person.eaten_today == 10 and person.hunger > 90, "The same real meal is consumed in every environment")
+		meal_moods.append(person.mood.value)
+		var before: float = person.mood.value
+		g.simulate(2)
+		t.check(person.mood.value <= before, "Standing or wandering near a fountain cannot farm more mood")
+	for i in 3:
+		t.near(meal_moods[i], 0, "Only a powered, watered fountain improves the meal")
+	t.check(meal_moods[3] > 15, "A pleasant meal leaves positive mood after eating ends")
+	t.near(meal_moods[3], meal_moods[4], "Overlapping fountains cannot multiply one meal's emotional reward")
+
+	# Sustained mechanical work must lead to a reversible refusal, not lost cargo or permanent unemployment.
+	t.scenario("Mechanical stress, duty handoff, alternative work, and recovery", 0)
+	var plant: Vector2i = t.power_facilities(1, 1)
+	var person: Dictionary = g.workers[0]
+	var ore := Vector2i(36, 13)
+	g.terrain[ore] = 1
+	g.navigation.set_point_solid(ore, true)
+	t.advance_until(func(): return g.resource_activity(3, 1).consumed > 0, 15, "Neutral workers take mechanical duty normally")
+	g.simulate(g.HOUR_SECONDS * 9.3)
+	var earned: float = person.earned_today
+	var coal: float = g.stock_at(plant, 3)
+	t.check(person.mood.value < -45 and person.fatigue < 100, "Real mechanical work causes distress before physical exhaustion")
+	g.simulate(g.HOUR_SECONDS * 0.5)
+	t.near(person.earned_today, earned, "Distressed operator hands off duty instead of restarting it forever")
+	t.near(g.stock_at(plant, 3), coal, "Unstaffed generation burns no fuel during a mood-related break")
+	g.designate(ore, ore)
+	t.advance_until(func(): return g.delivered == 1, 35, "A worker avoiding machinery can still mine and deliver ordinary ore")
+	t.check(g.report_mined(1, person.id) == 1, "Refusal is specific to mechanical work, not a blanket strike")
+	t.advance_until(func(): return g.stock_at(plant, 3) < coal - 0.01, g.DAY_SECONDS * 2, "Free recovery eventually restores staffed generation without purchases")
+
+	# A single bad moment must not instantly abandon a working circuit.
+	for operator in [0, 1]:
+		t.scenario("Low mood needs sustained time before refusing duty: " + str(operator), 0)
+		t.power_facilities(1, 1)
+		g.workers[operator].mood.value = -46
+		g.simulate(g.HOUR_SECONDS)
+		t.check(g.resource_activity(3, 1).consumed > 0 and g.workers[operator].earned_today > 0, "A newly distressed operator still starts paid duty")
+		t.near(g.workers[operator].earned_today, g.report_totals(1, operator)["工作"] / g.HOUR_SECONDS, "Mood does not speed up or underpay attendance hours", 0.01)
+
+	# Drilling yields at a delivered batch, not the middle of a paid extraction.
+	t.scenario("Distressed driller completes one extraction before declining the next", 0)
+	t.power_facilities(1, 0)
+	var drill := Vector2i(34, 9)
+	var deposit := Vector2i(35, 11)
+	t.station("drill", drill)
+	g.add_stock(drill, "bread", 30)
+	g.terrain[deposit] = 5
+	g.navigation.set_point_solid(deposit, true)
+	var miner: Dictionary = g.create_worker(drill)
+	miner.mood.value = -60
+	g.designate(deposit, deposit)
+	t.advance_until(func(): return g.stock_at(drill, 2) == 1, 35, "Already-started drilling finishes despite sustained distress")
+	t.check(miner.earned_today > g.DRILL_HOURS, "Slow drilling pays its full actual labor cost")
+	var drilling_wages: float = miner.earned_today
+	g.simulate(g.HOUR_SECONDS * 3)
+	t.near(g.stock_at(drill, 2), 1, "A distressed driller does not automatically start the next extraction")
+	t.near(miner.earned_today, drilling_wages, "Declining the next extraction leaves no phantom paid labor")
+	t.near(g.resource_activity(2, 1).produced, 1, "Handoff preserves the completed ore exactly once")
+
+func check_farming(t) -> void:
+	var g = t.game
+	# No worker may be held for growth, and ripe wheat still requires harvesting labor.
+	t.scenario("Unattended growth followed by paid harvest", 1)
+	t.station("farm", P)
+	t.station("workbench", OTHER)
+	g.add_stock(P, "raw_water", 8)
+	g.adjust_production(P, 2)
+	t.advance_until(func():
+		g.select_entity(P)
+		return g.entity_details.text.contains("生长中"), 25, "One watering hour starts growth")
+	t.near(g.workers[0].earned_today, 1, "Watering is one paid hour, not both labor phases")
+	g.adjust_production(OTHER, 1)
+	t.advance_until(func(): return g.stock_at(OTHER, "workbench") == 1, 25, "The same worker makes a backpack while crops grow")
+	t.check(g.stock_at(P, "wheat") == 0, "Growing crops do not produce premature wheat")
+	g.adjust_production(P, -2)
+	t.advance_until(func(): return g.stock_at(P, "wheat") == 8, 65, "Stopping future batches still harvests the already-watered crop")
+	t.near(g.workers[0].earned_today, 4, "Harvest pays its separate hour; growth pays no wages")
+	t.near(g.stock_at(P, "raw_water"), 4, "A stopped farm uses only one batch of water")
+	g.adjust_production(P, 2)
+	t.advance_until(func(): return g.stock_at(P, "wheat") == 16, 85, "The same farmland can be watered and harvested again")
+
+	var harvest_times: Array[float] = []
+	for lamps in [0, 1, 2]:
+		t.scenario("Powered growth rate without stacking: %d lamps" % lamps, 0)
+		t.power_facilities(1, lamps)
+		var farm := Vector2i(34, 10)
+		t.station("farm", farm)
+		g.add_stock(farm, "raw_water", 4)
+		g.add_stock(farm, "bread", 8)
+		g.create_worker(farm)
+		g.adjust_production(farm, 1)
+		t.advance_until(func():
+			g.select_entity(farm)
+			return g.entity_details.text.contains("生长中"), 20, "Crop is watered")
+		var seconds: float = t.advance_until(func(): return g.stock_at(farm, "wheat") == 8, 65, "Ripe crop is harvested")
+		harvest_times.append(seconds)
+	t.check(harvest_times[0] - harvest_times[1] > 2.5 * g.HOUR_SECONDS, "A powered light halves the six-hour growth phase")
+	t.near(harvest_times[1], harvest_times[2], "Overlapping lights do not accelerate growth again", 0.3)
+
+func check_power(t) -> void:
+	var g = t.game
+	# Capacity applies per transformer, per shared wire and per plant, not per consumer.
+	for entry in [[1, 1, 200.0], [1, 5, 800.0], [5, 4, 3200.0]]:
+		t.scenario("Metered coal and circuit limits: %s" % str(entry), 0)
+		var plant: Vector2i = t.power_facilities(entry[0], entry[1])
+		t.advance_until(func():
+			g.select_entity(plant)
+			return g.entity_details.text.contains("输出  %.0fW" % entry[2]), 15, "Operators bring the circuit up to its allowed output")
+		var coal: float = g.resource_activity(3, 1).consumed
+		g.simulate(g.HOUR_SECONDS * 0.5)
+		t.near(g.resource_activity(3, 1).consumed - coal, entry[2] / 1600.0 * 0.5, "Coal follows actual output rather than nameplate capacity", 0.003)
+		g.remove_power_line(plant + Vector2i(2, 0))
+		coal = g.resource_activity(3, 1).consumed
+		g.simulate(g.HOUR_SECONDS)
+		t.near(g.resource_activity(3, 1).consumed, coal, "Disconnecting the high-voltage supply stops fuel consumption")
+
+	t.scenario("Independent generators keep independent output limits", 0)
+	var first: Vector2i = t.power_facilities(3, 4)
+	var second: Vector2i = t.power_facilities(3, 4, Vector2i(30, 0))
+	t.advance_until(func():
+		for p in [first, second]:
+			g.select_entity(p)
+			if not g.entity_details.text.contains("输出  2400W"): return false
+		return true, 15, "Separate circuits can jointly exceed one generator's 3200W rating")
+	var fuel_used: float = g.resource_activity(3, 1).consumed
+	g.simulate(g.HOUR_SECONDS * 0.5)
+	t.near(g.resource_activity(3, 1).consumed - fuel_used, 1.5, "Each generator pays only for the load it actually supplies", 0.003)
+
+	t.scenario("Low-voltage trunk shared by two transformers", 0)
+	var plant: Vector2i = t.power_facilities(2, 0)
+	# Both feeds meet before one 800W trunk, so their ratings cannot be added downstream.
+	for y in range(8, 13):
+		t.cable(Vector2i(31, y))
+	for x in range(32, 45):
+		g.power_lines.erase(Vector2i(x, 12))
+	t.clear_area(Rect2i(32, 8, 19, 4))
+	for x in range(32, 50):
+		t.cable(Vector2i(x, 8))
+	for i in 5:
+		t.station("grow_light", Vector2i(35 + i * 3, 9))
+	t.advance_until(func():
+		g.select_entity(plant)
+		return g.entity_details.text.contains("输出  800W"), 15, "Shared trunk carries at most 800W even with two staffed feeders")
+	var coal: float = g.resource_activity(3, 1).consumed
+	g.simulate(g.HOUR_SECONDS)
+	t.near(g.resource_activity(3, 1).consumed - coal, 0.5, "An extra transformer does not bypass a line bottleneck", 0.003)
+
+	# Attendance and fuel remain necessary; neither wire type requires voltage conversion.
+	for missing in ["operator", "coal", "transformer", "low_line"]:
+		t.scenario("Disconnected or unavailable supply: " + missing, 0)
+		plant = t.power_facilities(1, 1)
+		if missing == "operator": g.workers.clear()
+		if missing == "coal": g.add_stock(plant, 3, -10)
+		if missing == "transformer":
+			g.benches.erase(Vector2i(29, 8))
+			t.cable(Vector2i(29, 8), "high_line")
+			t.cable(Vector2i(30, 8), "high_line")
+		if missing == "low_line":
+			for x in range(31, 45):
+				g.power_lines[Vector2i(x, 8)].kind = "high_line"
+		g.simulate(20)
+		g.select_entity(Vector2i(32, 9))
+		if missing in ["operator", "coal"]:
+			t.check(g.entity_details.text.contains("未供电"), "Lights still require staffed and fueled generation")
+			t.near(g.resource_activity(3, 1).consumed, 0, "An unavailable circuit burns no coal")
+		else:
+			t.check(g.entity_details.text.contains("运行中"), "Either wire connects consumers, including mixed wires without a transformer")
+			t.check(g.resource_activity(3, 1).consumed > 0, "Directly connected consumers use real fuel")
+
+	# A shared narrow segment limits the circuit even when the rest uses thick cable.
+	for generator in ["manual_generator", "power_plant"]:
+		for wire in ["low_line", "high_line", "mixed"]:
+			t.scenario("Direct generation and per-wire limits: " + generator + " / " + wire, 0)
+			t.clear_area(Rect2i(23, 5, 25, 7))
+			plant = Vector2i(24, 8)
+			t.station(generator, plant)
+			g.add_stock(plant, "bread", 30)
+			g.add_stock(plant, 3, 10)
+			var operator: Dictionary = g.create_worker(plant)
+			for x in range(26, 46):
+				t.cable(Vector2i(x, 8), "low_line" if wire == "low_line" or (wire == "mixed" and x == 29) else "high_line")
+			for i in 5:
+				t.station("grow_light", Vector2i(32 + i * 3, 7))
+			var expected := 400 if generator == "manual_generator" else (1000 if wire == "high_line" else 800)
+			t.advance_until(func():
+				g.select_entity(plant)
+				return g.entity_details.text.contains("输出  %dW" % expected), 15, "Generator powers loads directly up to the smallest shared capacity")
+			var fuel: float = g.resource_activity(3, 1).consumed
+			var wages: float = operator.earned_today
+			g.simulate(g.HOUR_SECONDS * 0.5)
+			t.near(g.resource_activity(3, 1).consumed - fuel, 0 if generator == "manual_generator" else expected / 1600.0 * 0.5, "Only coal generation consumes coal", 0.003)
+			t.near(operator.earned_today - wages, 0.5, "Generation pays for actual attendance, not power capacity", 0.01)
+			g.remove_power_line(Vector2i(29, 8))
+			g.simulate(0.1)
+			wages = operator.earned_today
+			g.simulate(g.HOUR_SECONDS)
+			t.near(operator.earned_today, wages, "A disconnected manual or coal generator releases its operator")
+			g.select_entity(Vector2i(32, 7))
+			t.check(g.entity_details.text.contains("未供电"), "Breaking either cable type disables downstream loads")
+
+	var fatigue_results: Array[float] = []
+	for fountains in [1, 2]:
+		t.scenario("Fountain water, fatigue and non-stacking: %d" % fountains, 0)
+		t.power_facilities(1, 0)
+		for i in fountains:
+			var p := Vector2i(32 + i * 3, 9)
+			t.station("fountain", p)
+			g.add_stock(p, "raw_water", 10)
+		var person: Dictionary = g.create_worker(Vector2i(34, 10))
+		person.fatigue = 100
+		# Exhaustion naturally starts ground sleep, keeping the observer within range.
+		t.advance_until(func():
+			g.select_entity(Vector2i(32, 9))
+			return g.entity_details.text.begins_with("运行中"), 15, "Delivered daily water enables the fountain")
+		var before: float = person.fatigue
+		g.simulate(g.HOUR_SECONDS)
+		fatigue_results.append(before - person.fatigue - g.SLEEP_RECOVERY_PER_HOUR)
+		t.near(g.resource_activity("raw_water", 1).consumed, fountains * 10, "Each fountain consumes one daily refill, not water every frame")
+		g.simulate(g.DAY_SECONDS - g.day_elapsed + 0.1)
+		g.select_entity(Vector2i(32, 9))
+		t.check(g.entity_details.text.contains("等待原水"), "A new day without water disables recovery")
+		t.near(g.resource_activity("raw_water", 2).produced, 0, "Fountains do not create free raw water at midnight")
+	t.near(fatigue_results[0], 5, "One powered fountain restores five fatigue per hour", 0.05)
+	t.near(fatigue_results[1], 5, "Overlapping fountains restore the same five fatigue", 0.05)
+
+func check_local_services(t) -> void:
+	var g = t.game
+	# Equivalent labor uses the same real-money wage rule; overlapping lamps cannot mint wages.
+	for setting in ["absent", "one", "two", "outside", "disconnect", "debt", "short_cash"]:
+		t.scenario("Local wage light: " + setting, 0)
+		t.power_facilities(1, 1 if setting == "absent" else 0)
+		var station := Vector2i(34, 10) if setting != "outside" else Vector2i(40, 10)
+		if setting != "absent":
+			t.station("daylight", Vector2i(32, 9))
+			if setting == "two": t.station("daylight", Vector2i(35, 9))
+		t.advance_until(func():
+			g.select_entity(Vector2i(32, 9))
+			return g.entity_details.text.contains("运行中"), 15, "A real staffed supply is running before the production order")
+		t.station("workbench", station)
+		g.add_stock(station, "bread", 8)
+		var worker: Dictionary = g.create_worker(station)
+		worker.payroll = 0.1 if setting == "short_cash" else 0.0
+		if setting == "debt": worker.loan_principal = 2
+		var bread: float = g.resource_inventory().bread
+		g.adjust_production(station, 1)
+		var expected := 2.0 if setting in ["absent", "outside"] else 2.4
+		if setting == "disconnect":
+			t.advance_until(func(): return worker.earned_today > 0.4, 10, "The first part of the batch is paid at the lit rate")
+			var paid: float = worker.earned_today
+			expected = paid + 2.0 - paid / 1.2
+			g.remove_power_line(Vector2i(31, 8))
+		t.advance_until(func(): return g.stock_at(station, "workbench") == 1, 30, "The same paid batch finishes without losing progress")
+		t.near(worker.earned_today, expected, "Actual wages follow powered coverage without stacking", 0.01)
+		t.near(worker.bread, expected * (0.75 if setting == "debt" else 1.0), "The raised wage preserves normal repayment")
+		t.near(g.resource_inventory().bread, bread, "Wage bonuses transfer existing bread rather than creating it")
+		if setting == "debt": t.near(worker.loan_principal, 2 - expected * 0.25, "Repayment uses the actual raised wage")
+
+	# Diners must travel, reserve distinct seats, and keep a fallback when seats cannot be used.
+	for setting in ["near", "full", "unreachable", "far", "none", "small_meal", "midnight"]:
+		t.scenario("Canteen meals: " + setting, 0)
+		t.clear_area(Rect2i(26, 10, 28, 6))
+		var canteen := Vector2i(28, 11) if setting != "far" else Vector2i(50, 11)
+		if setting != "none": t.station("canteen", canteen)
+		if setting == "unreachable":
+			for cell in [Vector2i(27, 11), Vector2i(30, 11), Vector2i(28, 10), Vector2i(29, 10), Vector2i(28, 12), Vector2i(29, 12)]:
+				g.terrain[cell] = 1
+				g.navigation.set_point_solid(cell, true)
+		if setting == "midnight": g.simulate(g.DAY_SECONDS - 1)
+		var diners: Array = []
+		for i in (3 if setting == "full" else 1):
+			var diner: Dictionary = g.create_worker(Vector2i(32 + i, 13))
+			diner.bread = 10
+			diner.fatigue = 50
+			if setting == "small_meal": diner.hunger = 175
+			diners.append(diner)
+		var bread: float = g.resource_inventory().bread
+		t.advance_until(func(): return diners.all(func(w): return w.eaten_today > 0), 12, "Every diner eats, including overflow or unreachable seats")
+		var restored := 0.0
+		var eaten := 0.0
+		for diner in diners:
+			restored += 50 - diner.fatigue
+			eaten += diner.eaten_today
+		var expected := 0 if setting in ["none", "far", "unreachable"] else (20 if setting == "full" else 10)
+		t.near(restored, expected, "Only actual seated meals restore fatigue; two seats cannot serve three concurrent diners")
+		t.near(g.resource_inventory().bread, bread - eaten, "The canteen consumes personal food once and charges no fee")
+		g.simulate(4)
+		t.near(diners[0].fatigue, 50 if expected == 0 else 40, "Remaining nearby after eating cannot farm recovery")
+		if setting == "near":
+			var later: Dictionary = g.create_worker(Vector2i(32, 13))
+			later.bread = 10
+			later.fatigue = 50
+			t.advance_until(func(): return later.eaten_today > 0, 12, "A later diner can use a released seat")
+			t.near(later.fatigue, 40, "Completed meals release their seats")
+
+func check_drilling(t) -> void:
+	var g = t.game
+	# A powered operator produces normal ore repeatedly without erasing the dense deposit.
+	t.scenario("Dense mining, outage, cancellation and relocation", 0)
+	t.power_facilities(1, 0)
+	var drill := Vector2i(34, 9)
+	var deposit := Vector2i(35, 11)
+	t.station("drill", drill)
+	g.add_stock(drill, "bread", 30)
+	g.terrain[deposit] = 5
+	g.navigation.set_point_solid(deposit, true)
+	var miner: Dictionary = g.create_worker(drill)
+	miner.gun_uses = 10
+	g.designate(deposit, deposit)
+	t.advance_until(func(): return g.stock_at(drill, 2) >= 2, 65, "A single drilling operator repeatedly extracts copper")
+	t.check(g.terrain[deposit] == 5 and miner.gun_uses == 10, "Dense deposits remain and do not consume ordinary mining tools")
+	g.remove_power_line(Vector2i(31, 8))
+	var stock: float = g.stock_at(drill, 2)
+	g.simulate(20)
+	t.near(g.stock_at(drill, 2), stock, "Drilling pauses without electricity rather than mining by hand")
+	g.designate(deposit, deposit, true)
+	g.add_stock(g.BASE, 2, 1)
+	g.place_building(Vector2i(31, 8), "low_line")
+	t.advance_until(func(): return not g.sites.has(Vector2i(31, 8)), 30, "Player repairs the cut power cable")
+	g.simulate(20)
+	t.near(g.stock_at(drill, 2), stock, "Canceled dense mining does not resume when power returns")
+	g.begin_drill_move(drill)
+	var destination := Vector2i(40, 14)
+	t.check(g.move_drill_to(destination), "Drill can relocate to reachable clear ground without new building materials")
+	t.near(g.stock_at(destination, 2), stock, "Moving carries its extracted stock exactly once")
+	var next_deposit := destination + Vector2i(1, 2)
+	g.terrain[next_deposit] = 6
+	g.navigation.set_point_solid(next_deposit, true)
+	g.designate(next_deposit, next_deposit)
+	g.simulate(20)
+	t.near(g.stock_at(destination, 3), 0, "A moved drill does not retain its previous electrical connection")
+	var cable_path: Array[Vector2i] = []
+	for y in range(9, 14): cable_path.append(Vector2i(40, y))
+	g.add_stock(g.BASE, 2, cable_path.size())
+	t.check(g.place_building_batch(cable_path, "low_line"), "A new low-voltage branch can reach the moved drill")
+	t.advance_until(func(): return g.stock_at(destination, 3) > 0, 180, "Reconnecting resumes repeatable coal extraction at the new location")
+	t.near(g.resource_activity(2, 1).produced, stock + 1, "Copper output includes mining and the one recovered cable, not movement")
+
+	t.scenario("Ordinary tools cannot excavate dense deposits", 1)
+	var p := Vector2i(37, 13)
+	g.terrain[p] = 5
+	g.workers[0].gun_uses = 10
+	g.designate(p, p)
+	g.simulate(50)
+	t.check(g.terrain[p] == 5 and g.mined == 0 and g.workers[0].earned_today == 0, "Hand mining and a mining gun cannot consume or get paid for dense ore")
+
+func check_electric_freight(t) -> void:
+	var g = t.game
+	# Electricity is charged for all four physical items, not one shipment icon.
+	t.scenario("Powered freight pauses and survives a cable repair", 0)
+	var plant: Vector2i = t.power_facilities(1, 0)
+	var source := Vector2i(32, 11)
+	var target := Vector2i(39, 9)
+	t.station("pump", source, 4)
+	t.station("purifier", target)
+	g.create_worker(source)
+	var sleeper: Dictionary = g.create_worker(Vector2i(35, 10))
+	sleeper.fatigue = 100
+	for x in range(33, 39):
+		t.belt(Vector2i(x, 9), Vector2i.RIGHT)
+		g.belts[Vector2i(x, 9)].kind = "electric_belt"
+	g.adjust_production(target, 1)
+	t.advance_until(func(): return track_shows_item(g, "raw_water"), 15, "Carrier loads a batch onto electric belts")
+	g.adjust_production(target, -1)
+	t.advance_until(func():
+		g.select_entity(plant)
+		return g.entity_details.text.contains("输出  100W"), 10, "Four water items draw 100W, not 25W")
+	g.remove_power_line(Vector2i(31, 8))
+	var before_outage: float = sleeper.mood.value
+	g.simulate(5)
+	t.check(sleeper.mood.value >= before_outage, "A powered belt's outage does not keep disturbing a nearby sleeper")
+	t.near(g.stock_at(target, "raw_water"), 0, "An outage stops the in-flight shipment")
+	t.near(g.resource_inventory().raw_water, 4, "Paused freight remains in inventory without loss or duplication")
+	g.add_stock(g.BASE, 2, 1)
+	g.place_building(Vector2i(31, 8), "low_line")
+	var lowest_mood := [sleeper.mood.value]
+	t.advance_until(func():
+		lowest_mood[0] = minf(lowest_mood[0], sleeper.mood.value)
+		return g.stock_at(target, "raw_water") == 4, 50, "Repairing power lets all four items reach their original warehouse")
+	t.check(lowest_mood[0] < -0.01, "Resumed automatic cargo movement disturbs sleep without a belt operator")
+	t.near(g.resource_inventory().raw_water, 4, "Delivery preserves the same four items")
+	g.simulate(6)
+	t.near(sleeper.mood.value, 0, "An empty belt stops disturbing sleep after the shipment arrives")
 
 func check_track_deliveries(t) -> void:
 	var g = t.game

@@ -14,8 +14,13 @@ Original, editable SVG game assets. No remote assets or runtime downloads.
   for points, ends, straight tracks, corners, and junctions. `belt-arrow.svg`
   marks the outgoing edge. Persistent sprites share these textures in both
   construction previews and completed tracks.
+- `power-line-atlas.svg`, `power-line-blueprint-atlas.svg`: the same sixteen
+  connection shapes in gold high-voltage and mint low-voltage rows. Power lines
+  reuse the track sprites and construction reveal, including connected previews;
+  high-voltage corridors retain two parallel conductors and their full footprint.
 - `construction.gdshader`: complementary bottom-up reveal masks for solid and
-  blueprint bed sprites. No custom draw calls or frame-by-frame image creation.
+  blueprint sprites, relative to each atlas row. No custom draw calls or
+  frame-by-frame image creation.
 
 Bed and toolbar illustrations remain under `assets/icons/`. Textures are loaded
 once through `scripts/view/art.gd` and shared by all instances.

@@ -1,0 +1,212 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="640" height="80" viewBox="0 0 640 80">
+ <defs>
+  <path id="c0" d="M20 20h.01"/>
+  <path id="c1" d="M0 20H20"/>
+  <path id="c2" d="M20 20H40"/>
+  <path id="c3" d="M0 20H40"/>
+  <path id="c4" d="M20 0V20"/>
+  <path id="c5" d="M0 20H8Q20 20 20 8V0"/>
+  <path id="c6" d="M20 0V8Q20 20 32 20H40"/>
+  <path id="c7" d="M0 20H40M20 0V20"/>
+  <path id="c8" d="M20 20V40"/>
+  <path id="c9" d="M0 20H8Q20 20 20 32V40"/>
+  <path id="c10" d="M20 40V32Q20 20 32 20H40"/>
+  <path id="c11" d="M0 20H40M20 20V40"/>
+  <path id="c12" d="M20 0V40"/>
+  <path id="c13" d="M20 0V40M0 20H20"/>
+  <path id="c14" d="M20 0V40M20 20H40"/>
+  <path id="c15" d="M0 20H40M20 0V40"/>
+ </defs>
+ <g transform="translate(0 0)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <use xlink:href="#c0" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c0" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c0" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c0" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(40 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c1" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c1" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c1" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c1" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(80 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c2" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c2" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c2" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c2" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(120 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c3" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c3" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c3" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c3" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(160 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c4" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c4" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c4" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c4" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(200 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c5" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c5" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c5" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c5" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(240 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c6" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c6" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c6" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c6" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(280 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c7" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c7" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c7" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c7" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(320 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c8" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c8" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c8" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c8" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(360 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c9" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c9" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c9" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c9" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(400 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c10" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c10" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c10" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c10" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(440 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c11" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c11" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c11" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c11" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(480 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c12" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c12" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c12" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c12" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(520 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c13" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c13" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c13" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c13" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(560 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c14" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c14" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c14" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c14" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(600 0)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c15" stroke="#77877e" stroke-width="20"/>
+  <use xlink:href="#c15" stroke="#293a36" stroke-width="16"/>
+  <use xlink:href="#c15" stroke="#d5b561" stroke-width="10"/>
+  <use xlink:href="#c15" stroke="#65542e" stroke-width="3"/>
+ </g>
+ <g transform="translate(0 40)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <use xlink:href="#c0" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c0" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c0" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c0" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(40 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c1" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c1" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c1" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c1" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(80 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c2" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c2" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c2" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c2" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(120 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c3" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c3" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c3" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c3" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(160 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c4" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c4" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c4" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c4" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(200 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c5" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c5" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c5" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c5" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(240 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c6" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c6" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c6" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c6" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(280 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c7" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c7" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c7" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c7" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(320 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c8" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c8" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c8" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c8" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(360 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c9" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c9" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c9" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c9" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(400 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c10" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c10" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c10" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c10" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(440 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c11" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c11" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c11" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c11" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(480 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c12" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c12" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c12" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c12" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(520 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c13" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c13" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c13" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c13" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(560 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c14" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c14" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c14" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c14" stroke="#caefe1" stroke-width="1"/>
+ </g>
+ <g transform="translate(600 40)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+  <use xlink:href="#c15" stroke="#91aaa4" stroke-width="12"/>
+  <use xlink:href="#c15" stroke="#233e3b" stroke-width="9"/>
+  <use xlink:href="#c15" stroke="#75cbbd" stroke-width="4"/>
+  <use xlink:href="#c15" stroke="#caefe1" stroke-width="1"/>
+ </g>
+</svg>

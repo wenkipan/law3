@@ -97,3 +97,88 @@ func run(t) -> void:
 		t.station("purifier", P, 4 if available else 0)
 		g.designate(ORE, ORE)
 		t.advance_until(func(): return g.delivered == 1, 30, "Worker mines without money or available water")
+
+	check_mood_shopping(t)
+	check_local_prices(t)
+
+func check_local_prices(t) -> void:
+	var g = t.game
+	# All saleable goods share local pricing, arrival-time checks and physical payment.
+	for kind in ["bench", "workbench", "purifier"]:
+		for setting in ["one", "two", "disconnect", "outside", "cheaper", "earn_difference"]:
+			t.scenario("Local sale price: " + kind + " / " + setting, 0)
+			t.power_facilities(1, 0)
+			t.station("spotlight", Vector2i(32, 9))
+			if setting == "two": t.station("spotlight", Vector2i(35, 9))
+			t.advance_until(func():
+				g.select_entity(Vector2i(32, 9))
+				return g.entity_details.text.contains("运行中"), 15, "A staffed circuit supplies the sale light")
+			var shop := Vector2i(34, 10) if setting != "outside" else Vector2i(40, 10)
+			t.station(kind, shop, 4 if kind == "purifier" else 1)
+			var cheaper := Vector2i(40, 10)
+			if setting == "cheaper": t.station(kind, cheaper, 4 if kind == "purifier" else 1)
+			var buyer: Dictionary = g.create_worker(Vector2i(35, 13))
+			buyer.bread = (30 if kind == "purifier" else 20) if setting != "earn_difference" else 10 + g.PRODUCTS[kind].price
+			buyer.mood.value = 60 if kind == "purifier" else 0
+			if setting == "earn_difference":
+				# A real order funds the shortfall; planning must not stop at the old list price.
+				t.station("pump", Vector2i(38, 12))
+				g.adjust_production(Vector2i(38, 12), 6)
+			if setting == "disconnect":
+				g.simulate(0.25)
+				g.remove_power_line(Vector2i(31, 8))
+			var destination: Vector2i = cheaper if setting == "cheaper" else shop
+			t.advance_until(func(): return g.stock_at(destination, "bread") > 0, 50, "Buyer reaches a stocked shop and pays its effective price")
+			var unit_price: float = g.PRODUCTS[kind].price * (1.0 if setting in ["disconnect", "outside", "cheaper"] else 1.2)
+			var quantity: int = 4 - g.benches[destination].stock if kind == "purifier" else 1
+			t.check(quantity > 0, "A completed sale transfers at least one item")
+			t.near(g.stock_at(destination, "bread"), unit_price * quantity, "Stock transfer and payment use the same current price")
+			t.near(buyer.shop_spent_today, unit_price * quantity, "Actual spending reports include the local premium exactly once")
+			t.check(buyer.bread >= 0, "A price premium cannot overdraw personal funds")
+			if setting == "cheaper": t.near(g.stock_at(shop, "bread"), 0, "An equally usable cheaper shop wins over insertion order")
+			if setting == "earn_difference" and kind != "purifier":
+				t.check(buyer.earned_today > 0, "The worker earns the missing premium instead of resting forever")
+
+func check_mood_shopping(t) -> void:
+	var g = t.game
+	# Low spirits reduce optional quantities, not tool purchases or the ability to work.
+	for initial_mood in [-60.0, 0.0]:
+		t.scenario("Mood changes optional water, not equipment: " + str(initial_mood), 1)
+		t.station("purifier", P, 10)
+		t.station("bench", Vector2i(31, 11), 1)
+		var w: Dictionary = g.workers[0]
+		w.mood.value = initial_mood
+		w.bread = 9
+		g.designate(ORE, ORE)
+		t.advance_until(func(): return g.stock_at(P, "bread") > 0, 15, "Worker buys optional water after the necessary tool")
+		t.near(g.stock_at(P, "bread"), 1 if initial_mood < 0 else 4, "Low mood limits a water purchase to one portion")
+		t.check(w.gun_uses == g.GUN_USES, "Low mood does not suppress a necessary mining tool")
+		t.advance_until(func(): return g.delivered == 1, 30, "Optional shopping does not prevent paid mining and delivery")
+
+	# Happy people can work for optional water, but unavailable shops and debt must not trap them.
+	for access in ["stocked", "empty", "unreachable", "debt"]:
+		t.scenario("Optional desire without compulsory borrowing: " + access, 1)
+		var shop := P if access != "unreachable" else Vector2i(1, 1)
+		t.station("purifier", shop, 0 if access == "empty" else 4)
+		t.bank(Vector2i(31, 11))
+		var w: Dictionary = g.workers[0]
+		w.bread = 10
+		w.mood.value = 60
+		if access == "debt":
+			w.loan_principal = 1
+			w.loan_bank = Vector2i(31, 11)
+		g.designate(ORE, Vector2i(40, 13))
+		g.simulate(4)
+		t.check(w.eaten_today == 10 and w.hunger > 90, "Food takes priority over optional desires")
+		t.near(g.portal.lent_bread, 0, "A shopping desire cannot trigger a bank advance")
+		if access == "stocked":
+			t.advance_until(func(): return g.stock_at(shop, "bread") > 0, 55, "Happy worker earns and spends extra wages on available water")
+			t.check(w.earned_today > 0 and w.water > 0, "Optional consumption is funded by real labor")
+		elif access == "debt":
+			g.simulate(12)
+			t.near(g.stock_at(shop, "bread"), 0, "Unpaid debt takes precedence over happy optional spending")
+		else:
+			g.simulate(20)
+			t.near(w.earned_today, 0, "An unavailable optional purchase does not manufacture a work requirement")
+			t.near(g.stock_at(shop, "bread"), 0, "An unavailable shop cannot receive phantom payments")
+		t.near(g.portal.lent_bread, 0, "Optional shopping never becomes loan principal")

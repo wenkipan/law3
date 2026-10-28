@@ -1,3 +1,6 @@
+# Design
+read file README.md,扩大系统设计.md, they are how game iterated
+
 # UI conventions
 
 - Simulation changes do not authorize new UI fields. Keep internal budgets,

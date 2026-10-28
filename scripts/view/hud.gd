@@ -10,14 +10,17 @@ var remove_order: Button
 var add_order: Button
 var belt_controls: HBoxContainer
 var remove_track: Button
+var move_drill: Button
 
 func update_entity_panel() -> void:
 	if not is_instance_valid(game.entity_panel):
 		return
-	var p: Vector2i = game.selected_entity
-	belt_controls.visible = game.selected_worker < 0 and game.building_kind(p) == "belt"
+	var p = game.selected_entity
+	move_drill.visible = game.selected_worker < 0 and game.benches.has(p) and game.building_kind(p) == "drill"
+	belt_controls.visible = game.selected_worker < 0 and (game.selected_line or game.building_kind(p) in game.BELT_KINDS)
 	if belt_controls.visible:
-		remove_track.disabled = game.belts.has(p) and not game.can_edit_belt(p)
+		remove_track.disabled = not game.selected_line and game.belts.has(p) and not game.can_edit_belt(p)
+		remove_track.tooltip_text = "拆除线路" if game.selected_line else "拆除传送带"
 	production_controls.visible = game.selected_worker < 0 and game.benches.has(p) and game.PRODUCTS.has(game.building_kind(p))
 	bed_assignment.visible = game.selected_worker < 0 and game.beds.has(p)
 	if bed_assignment.visible:
@@ -31,7 +34,7 @@ func update_entity_panel() -> void:
 	game.entity_panel.offset_top = -370 if game.worker_attributes.visible else -350
 	if production_controls.visible:
 		game.entity_panel.offset_top = -480
-	if game.selected_tile != Vector2i(-1, -1):
+	if game.selected_tile != null:
 		var details: Dictionary = game.tile_details(game.selected_tile)
 		game.entity_panel.visible = not details.is_empty()
 		if not details.is_empty():
@@ -59,6 +62,8 @@ func update_entity_panel() -> void:
 			state_name = "购买" + game.PRODUCTS[game.building_kind(w.station)].name
 		elif w.state == "drink":
 			state_name = "饮水"
+		elif w.state == "to_meal":
+			state_name = "前往食堂"
 		game.entity_details.text = "%s\n面包  %.1f" % [state_name, w.bread]
 		if not w.freight.is_empty() and w.freight.picked:
 			game.entity_details.text += "\n搬运  %s × %s" % [game.item_name(w.freight.item), String.num(w.freight.amount, 1)]
@@ -101,26 +106,33 @@ func update_entity_panel() -> void:
 		game.worker_bars["动作进度"][0].text = "动作进度  %.0f%%" % (progress * 100)
 		game.worker_bars["动作进度"][1].value = progress * 100
 		return
-	game.entity_panel.visible = p == game.BASE or game.beds.has(p) or game.sites.has(p) or game.benches.has(p) or game.banks.has(p) or game.belts.has(p)
+	game.entity_panel.visible = p == game.BASE or game.beds.has(p) or game.sites.has(p) or game.benches.has(p) or game.banks.has(p) or game.belts.has(p) or game.power_lines.has(p)
 	if not game.entity_panel.visible:
-		game.selected_entity = Vector2i(-1, -1)
+		game.selected_entity = null
 		return
 	if p == game.BASE:
 		game.entity_title.text = "基地传送门"
 		game.entity_details.text = "仓储\n" + game.storage_text(p)
 		return
-	if game.belts.has(p):
+	if game.selected_line and game.power_lines.has(p) and not game.sites.has(p):
+		var kind: String = game.power_lines[p].kind
+		game.entity_title.text = game.building_name(kind)
+		game.entity_details.text = game.building_effects_text(kind)
+		return
+	if game.belts.has(p) and not game.sites.has(p):
 		var belt_kind: String = game.building_kind(p)
 		game.entity_title.text = game.building_name(belt_kind)
-		var destination: Vector2i = game.belt_destination(p)
+		var destination = game.belt_destination(p)
 		var status := "未连接传送门或建筑"
-		if destination != Vector2i(-1, -1):
+		if destination != null:
 			status = "通往" + ("传送门" if destination == game.BASE else game.building_name(game.building_kind(destination)))
 		var cargo_id: int = game.belts[p].cargo
 		if cargo_id >= 0:
 			var cargo: Dictionary = game.belt_cargo[cargo_id]
 			status += "\n%s × %s · %s" % [game.item_name(cargo.delivery.item), String.num(cargo.delivery.amount, 1), game.workers[cargo.worker].name]
 		game.entity_details.text = status + "\n\n" + game.building_effects_text(belt_kind)
+		if belt_kind == "electric_belt":
+			game.entity_details.text += "\n" + ("运行中" if game.powered_devices.has(p) else "待机 / 未供电")
 		return
 	if game.banks.has(p):
 		game.entity_title.text = game.building_name("bank")
@@ -134,7 +146,15 @@ func update_entity_panel() -> void:
 			var status := "等待值班"
 			if not bench.task.is_empty() and bench.task.owner >= 0:
 				status = game.workers[bench.task.owner].name
-			game.entity_details.text = status + "\n\n" + game.building_effects_text(kind) + "\n\n仓储\n" + game.storage_text(p)
+			if kind in ["grow_light", "fountain", "drill", "spotlight", "daylight"]:
+				status = "运行中" if game.powered_devices.has(p) else "未供电"
+				if kind == "fountain" and bench.water_day != game.day:
+					status = "等待原水"
+			elif kind in ["power_plant", "manual_generator", "transformer"]:
+				status += "\n输出  %.0fW" % game.power_output.get(p, 0.0)
+			elif kind == "canteen":
+				status = "用餐中" if game.workers.any(func(w): return w.canteen == p) else "空闲"
+			game.entity_details.text = status + "\n\n" + game.building_effects_text(kind, p) + "\n\n仓储\n" + game.storage_text(p)
 			return
 		var product: Dictionary = game.PRODUCTS[kind]
 		game.entity_title.text = game.building_name(kind)
@@ -152,8 +172,13 @@ func update_entity_panel() -> void:
 		if not bench.task.is_empty():
 			status = "等待工人" if bench.task.owner < 0 else game.workers[bench.task.owner].name
 			status += "  %.0f%%" % (bench.task.progress / bench.task.seconds * 100)
-		game.entity_details.text = "%s\n仓储\n%s\n\n%s" % [status, game.storage_text(p), game.product_recipe_text(kind)]
-		var effects: String = game.product_effects_text(kind)
+		if kind == "farm":
+			if bench.growth > 0:
+				status = "生长中  %.1fh" % (bench.growth / game.HOUR_SECONDS)
+			elif not bench.task.is_empty():
+				status = ("收割 · " if bench.harvest else "浇水 · ") + status
+		game.entity_details.text = "%s\n仓储\n%s\n\n%s" % [status, game.storage_text(p), game.product_recipe_text(kind, p)]
+		var effects: String = game.product_effects_text(kind, p)
 		if effects != "":
 			game.entity_details.text += "\n\n" + effects
 		if game.uses_daily_output(kind):
@@ -290,7 +315,7 @@ func build_ui(controller: Node) -> void:
 	game.furniture_button.toggle_mode = true
 	game.furniture_button.custom_minimum_size.x = 56
 	categories.add_child(game.furniture_button)
-	var choice_panel := panel(root, Rect2(20, -430, 350, 360), false, true)
+	var choice_panel := panel(root, Rect2(20, -474, 350, 404), false, true)
 	game.build_tray = choice_panel.get_parent()
 	var choices := GridContainer.new()
 	choices.columns = 4
@@ -356,11 +381,19 @@ func build_ui(controller: Node) -> void:
 	remove_track = make_button("×", "拆除矿道", func():
 		if game.sites.has(game.selected_entity):
 			game.cancel_site(game.selected_entity)
+		elif game.selected_line:
+			game.remove_power_line(game.selected_entity)
 		else:
 			game.remove_belt(game.selected_entity))
 	belt_controls.add_child(remove_track)
 	inspector.add_child(belt_controls)
 	belt_controls.hide()
+	move_drill = make_button("", "移动矿钻", func(): game.begin_drill_move(game.selected_entity))
+	move_drill.icon = game.icon_texture("res://assets/icons/move.svg")
+	move_drill.expand_icon = true
+	move_drill.add_theme_constant_override("icon_max_width", 24)
+	inspector.add_child(move_drill)
+	move_drill.hide()
 	bed_assignment = OptionButton.new()
 	bed_assignment.add_theme_font_override("font", game.font)
 	bed_assignment.add_item("自动安排", -1)

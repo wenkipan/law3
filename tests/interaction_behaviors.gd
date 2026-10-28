@@ -9,6 +9,10 @@ func run(t) -> void:
 		await t.settle()
 		await RenderingServer.frame_post_draw
 		t.root.get_texture().get_image().save_png("/tmp/law3-resource-start.png")
+	await check_generated_map(t)
+	if "--generated-map" in OS.get_cmdline_user_args():
+		return
+	await check_unbounded_picking(t)
 	t.scenario("Real viewport clicks select the displayed object")
 	t.bed(P)
 	t.bank(Vector2i(31, 11))
@@ -91,7 +95,7 @@ func run(t) -> void:
 		await t.click_world(g.tile_center(P + Vector2i.RIGHT))
 		t.check(g.entity_title.text == g.building_name(kind), "Completed building remains clickable")
 
-	for kind in ["bench", "workbench", "pump", "purifier", "printer"]:
+	for kind in ["bench", "workbench", "pump", "purifier", "printer", "farm"]:
 		t.scenario("Production controls: " + kind)
 		t.station(kind, P)
 		await t.settle()
@@ -235,12 +239,244 @@ func run(t) -> void:
 	await check_tracks(t)
 	await check_track_receivers(t)
 	await check_tile_details(t)
+	await check_power_interactions(t)
+
+func check_power_interactions(t) -> void:
+	var g = t.game
+	t.root.size = Vector2i(1440, 900)
+	# Line blueprints retain the same clicked inspector through completion and crossings.
+	for kind in g.LINE_KINDS:
+		for axis in [Vector2i.RIGHT, Vector2i.DOWN]:
+			t.scenario("Cable row, completion and live inspection: %s %s" % [kind, axis], 1)
+			t.clear_area(Rect2i(27, 10, 10, 6))
+			t.building_materials(kind, 3)
+			g.world_view.rebuild(g)
+			await choose_building(t, kind)
+			var stroke: Array[Vector2i] = [P, P + axis * 2]
+			var orientation := "horizontal" if axis == Vector2i.RIGHT else "vertical"
+			await t.drag_world(stroke, false, false, "/tmp/law3-power-%s-%s-preview.png" % [kind, orientation])
+			t.check(g.player_blocks == 0, "Each of three cable lengths charges exactly once")
+			var far_cell: Vector2i = P + (Vector2i(axis.y, axis.x) if kind == "high_line" else Vector2i.ZERO)
+			await t.click_world(g.tile_center(far_cell))
+			t.check(g.entity_title.text == g.building_name(kind) + " · 建造中", "Cable footprint opens its construction details")
+			# Capture the reveal mid-build using the work hours shown in the inspector.
+			t.advance_until(func():
+				g.update_ui()
+				var hours: float = g.entity_details.text.get_slice("工时  ", 1).get_slice(" /", 0).to_float()
+				return g.entity_details.text.contains("工时  ") and hours >= g.building_hours(kind) * 0.4,
+				30, "Selected cable reports real construction underway")
+			await t.settle()
+			if t.native:
+				await RenderingServer.frame_post_draw
+				t.root.get_texture().get_image().save_png("/tmp/law3-power-%s-%s-building.png" % [kind, orientation])
+			t.advance_until(func(): return g.power_lines.size() == 3, 45, "Cable row completes through normal material transport and labor")
+			await t.settle()
+			t.check(g.entity_title.text == g.building_name(kind), "Selected cable details survive blueprint completion")
+			for width in [1440, 960]:
+				t.root.size = Vector2i(width, 900 if width == 1440 else 640)
+				g.camera.zoom = Vector2.ONE * (1.4 if width == 1440 else 0.8)
+				await t.settle()
+				await t.click_world(g.tile_center(P + axis))
+				t.check(g.entity_title.text == g.building_name(kind), "Finished cable remains inspectable at both zooms and window sizes")
+				if t.native:
+					await RenderingServer.frame_post_draw
+					t.root.get_texture().get_image().save_png("/tmp/law3-power-%s-%s-%d.png" % [kind, orientation, width])
+			g.camera.zoom = Vector2.ONE
+			t.root.size = Vector2i(1440, 900)
+			t.building_materials(kind)
+			await choose_building(t, kind)
+			stroke = [P, P + axis * 3]
+			await t.drag_world(stroke)
+			t.check(g.player_blocks == 0, "Extending a same-type line charges only its new length")
+			if t.native and kind == "high_line" and axis == Vector2i.DOWN:
+				await RenderingServer.frame_post_draw
+				t.root.get_texture().get_image().save_png("/tmp/law3-power-vertical.png")
+			# A turn/branch must stay clickable, and removing it must not remove the trunk.
+			var branch: Vector2i = P + axis + Vector2i(axis.y, axis.x) * (2 if kind == "high_line" else 1)
+			t.building_materials(kind)
+			await choose_building(t, kind)
+			await t.click_world(g.tile_center(branch))
+			t.advance_until(func(): return g.power_lines.has(branch), 30, "Perpendicular cable branch completes normally")
+			g.set_tool("dig")
+			await t.click_world(g.tile_center(branch) + Vector2(0, 17))
+			t.check(g.entity_title.text == g.building_name(kind), "Cable branch opens its own details")
+			if t.native:
+				await RenderingServer.frame_post_draw
+				t.root.get_texture().get_image().save_png("/tmp/law3-power-%s-%s-branch.png" % [kind, orientation])
+			g.set_tool("cancel")
+			await t.click_world(g.tile_center(branch) + Vector2(0, 17))
+			t.check(not g.power_lines.has(branch) and g.power_lines.has(P + axis), "Dismantling a branch preserves the neighboring trunk")
+
+	t.scenario("High-voltage corridor permits belt crossing but blocks buildings", 0)
+	t.clear_area(Rect2i(27, 9, 10, 7))
+	for x in range(28, 33): t.cable(Vector2i(x, 11), "high_line")
+	t.materials(5)
+	g.world_view.rebuild(g)
+	await choose_building(t, "belt")
+	var crossing: Array[Vector2i] = [Vector2i(30, 10), Vector2i(30, 14)]
+	await t.drag_world(crossing)
+	t.check(g.player_blocks == 0, "A belt can cross both corridor cells without duplicating cable cost")
+	t.building_materials("bed")
+	t.check(not g.place_building(Vector2i(28, 12), "bed"), "The full two-cell corridor rejects buildings")
+	t.check(not g.route(Vector2i(29, 10), Vector2i(29, 14)).is_empty(), "People can walk across the corridor")
+	await t.click_world(g.tile_center(Vector2i(30, 11)))
+	t.check(g.entity_title.text.begins_with("矿道"), "The visible belt wins native picking over the cable beneath it")
+	if t.native:
+		await RenderingServer.frame_post_draw
+		t.root.get_texture().get_image().save_png("/tmp/law3-power-crossing.png")
+
+	# Selected ranges and relocation must use real viewport events, including zoom and UI interception.
+	t.scenario("Power effects, dense ore and drill movement", 0)
+	t.power_facilities(1, 1)
+	t.station("fountain", Vector2i(35, 9))
+	g.add_stock(Vector2i(35, 9), "raw_water", 10)
+	var drill := Vector2i(38, 9)
+	t.station("drill", drill)
+	var additions := {Vector2i(32, 12): "spotlight", Vector2i(35, 12): "daylight", Vector2i(28, 12): "canteen", Vector2i(25, 11): "manual_generator"}
+	for p in additions:
+		t.station(additions[p], p)
+	g.terrain[Vector2i(39, 11)] = 5
+	g.navigation.set_point_solid(Vector2i(39, 11), true)
+	g.world_view.rebuild(g)
+	g.simulate(3)
+	for width in [1440, 960]:
+		t.root.size = Vector2i(width, 900 if width == 1440 else 640)
+		g.camera.position = g.tile_center(Vector2i(34, 10))
+		g.camera.zoom = Vector2.ONE * (1.1 if width == 1440 else 0.8)
+		for p in [Vector2i(32, 9), Vector2i(35, 9), drill] + additions.keys():
+			await t.settle()
+			await t.click_world(g.tile_center(p))
+			t.check(g.entity_title.text == g.building_name(g.building_kind(p)), "Powered facilities open their own live details")
+			t.check(g.world_view.effect_frame.visible == (g.building_kind(p) not in ["manual_generator", "canteen"]), "Only area-effect facilities reveal a range when clicked")
+			t.check(t.root.get_visible_rect().encloses(g.entity_panel.get_global_rect()), "Power inspector fits the viewport")
+			if t.native:
+				await RenderingServer.frame_post_draw
+				t.root.get_texture().get_image().save_png("/tmp/law3-power-%s-%d.png" % [g.building_kind(p), width])
+	await t.click_world(g.tile_center(Vector2i(39, 11)))
+	t.check(g.entity_title.text == "致密铜矿" and g.entity_details.text.contains("矿钻"), "Dense terrain shows its distinct repeatable extraction rule")
+	t.check(not g.world_view.effect_frame.visible, "Selecting terrain clears the previous building range")
+	await t.click_world(g.tile_center(drill))
+	await t.click(g.get_node("UI").move_drill.get_global_rect().get_center())
+	var destination := Vector2i(38, 13)
+	await t.click_world(g.tile_center(destination))
+	t.check(g.entity_title.text == "矿钻" and g.selected_entity == destination, "Move icon relocates the drill through native ground input")
+	t.check(g.entity_details.text.contains("未供电"), "Moved drill immediately reports its lost power connection")
+	await t.click(g.pause_button.get_global_rect().get_center())
+	t.check(g.selected_entity == destination, "Toolbar click does not place or select through the HUD")
+	t.root.size = Vector2i(1440, 900)
+
+func check_generated_map(t) -> void:
+	for seed_value in [0, 1020, 4294967295]:
+		await check_generated_map_seed(t, seed_value)
+
+func check_generated_map_seed(t, seed_value: int) -> void:
+	var g = t.game
+	# An already explored generated world catches rendering/picking mismatches for every material.
+	t.scenario("Generated materials retain their rendered and clicked identity: %d" % seed_value, 0, true, seed_value)
+	var overview := Rect2i(-64, -64, 256, 192)
+	g.ensure_region(overview)
+	g.world_view.rebuild(g)
+	var samples: Dictionary = {}
+	for cell in g.terrain:
+		if not overview.has_point(cell):
+			continue
+		g.explored[cell] = true
+		g.visible_tiles[cell] = true
+		if cell.x < 10 or cell.y < 10 or Vector2(cell).distance_to(Vector2(g.BASE)) < 10:
+			continue
+		var material: int = g.MapGenerator.WATER if g.water_sources.has(cell) else g.terrain[cell]
+		if material > 0 and not samples.has(material):
+			samples[material] = cell
+	g.world_view.sync_fog()
+	for width in [1440, 960]:
+		t.root.size = Vector2i(width, 900 if width == 1440 else 640)
+		g.camera.position = g.tile_corner(overview.position) + Vector2(overview.size) * g.CELL / 2.0
+		g.camera.zoom = Vector2.ONE * minf((width - 80.0) / (overview.size.x * g.CELL), (t.root.size.y - 160.0) / (overview.size.y * g.CELL))
+		await t.settle()
+		if t.native:
+			await RenderingServer.frame_post_draw
+			t.root.get_texture().get_image().save_png("/tmp/law3-generated-map-%d-%d.png" % [seed_value, width])
+			if seed_value == 1020:
+				t.root.get_texture().get_image().save_png("/tmp/law3-generated-map-%d.png" % width)
+	t.root.size = Vector2i(1440, 900)
+	g.camera.zoom = Vector2.ONE
+	g.set_tool("cancel")
+	for material in range(1, 8):
+		t.check(samples.has(material), "Map preview includes material category %d" % material)
+	for material in samples:
+		g.camera.position = g.tile_center(samples[material])
+		await t.settle()
+		await t.click_world(g.tile_center(samples[material]))
+		var title: String = "水源" if material == g.MapGenerator.WATER else g.ORES[material].name
+		t.check(g.entity_panel.visible and g.entity_title.text == title, "Clicking generated terrain identifies " + title)
+		if material == g.MapGenerator.WATER:
+			t.check(g.designate(samples[material], samples[material]) == 0, "Generated water remains unmineable rather than behaving as empty ground")
+
+func check_unbounded_picking(t) -> void:
+	var g = t.game
+	# Prevent negative cells being treated as no selection and distant tiles wrapping.
+	for cell in [Vector2i(-1, -1), Vector2i(-33, -32), Vector2i(160, 96), Vector2i(65536, -65536)]:
+		t.scenario("Native picking in streamed regions: " + str(cell), 0, true)
+		g.ensure_region(Rect2i(cell - Vector2i.ONE * 5, Vector2i.ONE * 12))
+		t.clear_area(Rect2i(cell - Vector2i.ONE * 4, Vector2i.ONE * 10))
+		g.terrain[cell] = 2
+		g.navigation.set_point_solid(cell, true)
+		var bed: Vector2i = cell + Vector2i(2, 0)
+		t.bed(bed)
+		var worker: Dictionary = g.create_worker(cell + Vector2i(-2, 0))
+		t.building_materials("bed", 2)
+		g.simulation_paused = true
+		g.set_tool("cancel")
+		g.world_view.rebuild(g)
+		for width in [1440, 960]:
+			t.root.size = Vector2i(width, 900 if width == 1440 else 640)
+			for zoom in [0.65, 1.6]:
+				g.camera.zoom = Vector2.ONE * zoom
+				g.camera.position = g.tile_center(cell)
+				g._process(0.0)
+				await t.settle()
+				await t.click_world(g.tile_center(cell))
+				t.check(g.entity_panel.visible and g.selected_tile == cell and g.entity_title.text == "铜矿", "Streamed ground selects its actual world cell at both zoom levels and viewport sizes")
+				if t.native:
+					t.check(g.world_view.hover_frame.visible, "Native stationary hover survives display-origin shifts")
+				await t.click_world(g.tile_center(bed))
+				t.check(g.selected_entity == bed and g.entity_title.text == "床", "Building picking uses the same shifted coordinates as its visible artwork")
+				await t.click_world(g.tile_center(worker.pos) + Vector2(0, -7))
+				t.check(g.selected_worker == worker.id, "Worker picking survives a distant display origin")
+			await t.click(g.pause_button.get_global_rect().get_center())
+			t.check(g.selected_worker == worker.id, "HUD still intercepts clicks over distant terrain")
+			g.simulation_paused = true
+			if t.native and cell.x == 65536:
+				await RenderingServer.frame_post_draw
+				t.root.get_texture().get_image().save_png("/tmp/law3-streamed-map-%d.png" % width)
+		g.camera.position = g.tile_center(g.BASE)
+		g._process(0.0)
+		await t.settle()
+		g.camera.position = g.tile_center(cell)
+		g._process(0.0)
+		await t.settle()
+		g.set_tool("dig")
+		var stroke: Array[Vector2i] = [cell, cell + Vector2i.RIGHT]
+		await t.drag_world(stroke)
+		g.select_tile(cell)
+		t.check(g.entity_details.text.contains("等待挖掘"), "Returning to an unloaded view preserves terrain and allows a real mining drag")
+		g.set_tool("bed")
+		await t.click_world(g.tile_center(cell + Vector2i(0, 2)))
+		t.check(g.building_at(cell + Vector2i(0, 2)), "Blueprint placement uses world coordinates after rebasing")
+		var hidden: Vector2i = cell + Vector2i(80, 0)
+		g.camera.position = g.tile_center(hidden)
+		g._process(0.0)
+		await t.settle()
+		await t.click_world(g.tile_center(hidden))
+		t.check(g.tile_details(hidden).is_empty() and not g.building_at(hidden), "Panning into fog neither reveals geology nor permits building")
+	t.root.size = Vector2i(1440, 900)
+	g.camera.zoom = Vector2.ONE
 
 func check_tile_details(t) -> void:
 	var g = t.game
 	var ore := Vector2i(37, 13)
 	# Inspecting terrain must retain both single-cell orders and live excavation results.
-	for mineral in range(1, g.ORES.size()):
+	for mineral in range(1, 5):
 		t.scenario("Click terrain information: " + g.ORES[mineral].name, 0)
 		g.terrain[ore] = mineral
 		g.world_view.block_changed(ore)
@@ -360,7 +596,9 @@ func check_building_rows(t) -> void:
 	t.root.size = Vector2i(1440, 900)
 
 	# All blueprints share the same drag, footprint spacing, payment and completion contract.
-	for kind in ["bed", "bench", "workbench", "pump", "purifier", "printer", "bank"]:
+	for kind in g.BUILDING_KINDS:
+		if kind in g.BELT_KINDS or kind in g.LINE_KINDS:
+			continue
 		t.scenario("Mouse-only building row: " + kind)
 		for worker in g.workers:
 			worker.pos = Vector2(34 + worker.id, 15)
@@ -378,7 +616,7 @@ func check_building_rows(t) -> void:
 		for i in 3:
 			await t.click_world(g.tile_center(P + Vector2i(i * 2 + 1, 0)))
 			t.check(g.entity_title.text == g.building_name(kind) + " · 建造中", "Every building's far footprint cell opens its blueprint")
-		g.simulate(70)
+		g.simulate(150)
 		await t.settle()
 		for i in 3:
 			await t.click_world(g.tile_center(P + Vector2i(i * 2 + 1, 0)) + Vector2(0, 16))

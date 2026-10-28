@@ -12,6 +12,8 @@ var last_in_bed := false
 var last_gun := false
 var last_backpack := false
 var last_cargo_item = null
+var last_work_active := true
+var last_origin := Vector2i.ZERO
 
 func _ready() -> void:
 	$Shadow.texture = Art.texture("res://assets/world/shadow.svg")
@@ -39,15 +41,17 @@ func configure(w: Dictionary, font: Font) -> void:
 	$Puppet/LeftArm.modulate = w.color.lightened(0.2)
 	$Puppet/RightArm.modulate = w.color.lightened(0.2)
 
-func sync(w: Dictionary, clock: float, cell_size: float) -> void:
-	var walking: bool = w.state in ["walk", "haul", "to_build", "to_bed", "to_work", "to_shop", "freight_pickup", "freight_dropoff", "to_payroll", "to_bank"] or (w.state == "rest" and not w.path.is_empty())
+func sync(w: Dictionary, clock: float, cell_size: float, work_active := true, origin := Vector2i.ZERO) -> void:
+	var walking: bool = w.state in ["walk", "haul", "to_build", "to_bed", "to_meal", "to_work", "to_shop", "freight_pickup", "freight_dropoff", "to_payroll", "to_bank"] or (w.state == "rest" and not w.path.is_empty())
 	var gun: bool = w.state == "dig" and w.gun_uses > 0
 	var backpack: bool = w.backpack_uses > 0
-	var in_bed: bool = w.state == "sleep" and w.bed != Vector2i(-1, -1)
+	var in_bed: bool = w.state == "sleep" and w.bed != null
 	var freight: bool = not w.freight.is_empty() and w.freight.picked
 	var cargo_item = w.freight.item if freight else (w.carry if w.carry > 0 else null)
-	if last_clock == clock and last_position == w.pos and last_state == w.state and last_carry == w.carry and last_facing == w.facing and last_walking == walking and last_in_bed == in_bed and last_gun == gun and last_backpack == backpack and is_same(last_cargo_item, cargo_item):
+	if last_origin == origin and last_clock == clock and last_position == w.pos and last_state == w.state and last_carry == w.carry and last_facing == w.facing and last_walking == walking and last_in_bed == in_bed and last_gun == gun and last_backpack == backpack and last_work_active == work_active and is_same(last_cargo_item, cargo_item):
 		return
+	last_origin = origin
+	last_work_active = work_active
 	last_clock = clock
 	if last_state != w.state or last_in_bed != in_bed:
 		$PickShape.shape.size = Vector2(46, 24) if w.state == "sleep" else Vector2(28, 42)
@@ -59,7 +63,7 @@ func sync(w: Dictionary, clock: float, cell_size: float) -> void:
 	last_in_bed = in_bed
 	last_backpack = backpack
 	$Puppet/Backpack.visible = backpack and not in_bed
-	position = (w.pos + Vector2(0.5, 0.5)) * cell_size
+	position = (w.pos - Vector2(origin) + Vector2(0.5, 0.5)) * cell_size
 	var phase: float = clock * (5.0 if w.state == "rest" else 11.0) + w.id
 	var stride := sin(phase) if walking else 0.0
 	$Puppet.position = Vector2(0, absf(stride) * -1.6)
@@ -77,7 +81,7 @@ func sync(w: Dictionary, clock: float, cell_size: float) -> void:
 	$Puppet/RightBoot.rotation = -stride * 0.25
 	$Puppet/LeftArm.rotation = -stride * 0.3
 	$Puppet/RightArm.rotation = stride * 0.3
-	$Puppet/Tool.visible = w.state in ["dig", "build", "work", "eat", "drink"]
+	$Puppet/Tool.visible = w.state in ["dig", "build", "work", "eat", "drink"] and (w.state != "work" or work_active)
 	$Puppet/Cargo.visible = (w.carry > 0 or freight) and not in_bed
 	if not is_same(last_cargo_item, cargo_item):
 		last_cargo_item = cargo_item
@@ -98,7 +102,7 @@ func sync(w: Dictionary, clock: float, cell_size: float) -> void:
 		set_part($Puppet/Tool, Vector2i(5, 0) if w.state == "eat" else (Vector2i(4, 0) if w.state == "dig" else Vector2i(0, 1)))
 	$Puppet/Tool.position = Vector2(17, -5)
 	$Puppet/Tool.rotation = 0.0
-	if w.state in ["dig", "build", "work"]:
+	if w.state in ["dig", "build"] or (w.state == "work" and work_active):
 		var swing := sin(clock * 9) * 0.65
 		$Puppet/RightArm.rotation = swing - 0.5
 		$Puppet/Tool.rotation = swing

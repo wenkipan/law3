@@ -3,7 +3,7 @@ extends RefCounted
 static var textures: Dictionary = {}
 
 static func item_texture(item) -> Texture2D:
-	var icons := {"raw_water": "raw-water", 3: "coal",
+	var icons := {"raw_water": "raw-water", "wheat": "wheat", 3: "coal",
 		"clean_water": "water", "bench": "mining-gun", "workbench": "backpack"}
 	if icons.has(item):
 		return texture("res://assets/icons/%s.svg" % icons[item])

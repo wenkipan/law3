@@ -1,6 +1,7 @@
 extends RefCounted
 
 func run(t) -> void:
+	check_generated_terrain(t)
 	var g = t.game
 	var ore := Vector2i(37, 13)
 	var p := Vector2i(28, 11)
@@ -23,7 +24,7 @@ func run(t) -> void:
 	t.near(g.workers[0].bread, earned, "Cancellation keeps earned wages but pays no idle wages")
 
 	# One shared construction contract, with all actual building kinds as inputs.
-	for kind in ["bed", "bench", "workbench", "pump", "purifier", "printer", "bank", "belt"]:
+	for kind in g.BUILDING_KINDS:
 		t.scenario("Build and refund: " + kind, 1)
 		g.update_ui()
 		t.check(g.tool_buttons[kind].disabled, "Unaffordable building button is disabled")
@@ -37,16 +38,17 @@ func run(t) -> void:
 			t.check(g.tool_buttons[kind].disabled and g.tool != kind and not g.place_building(p, kind), "Enough blocks of the wrong mineral cannot pay a specific recipe")
 		t.building_materials(kind)
 		var initial_materials: Dictionary = g.materials.duplicate()
+		var initial_water: float = g.total_stock("raw_water")
 		g.workers[0].pos = Vector2(p)
 		t.check(not g.place_building(g.BASE, kind) and g.player_blocks == cost, "Rejected placement costs nothing")
 		t.check(g.place_building(p, kind) and g.player_blocks == 0, "Blueprint charges materials once")
 		t.near(g.resource_inventory().get(1, 0), initial_materials.get(1, 0), "Blueprint reservation keeps physical material in inventory until construction consumes it")
-		t.advance_until(func(): return g.workers[0].earned_today > 0, 30, "Materials reach the site before construction starts")
+		t.advance_until(func(): return g.workers[0].earned_today > 0, 60, "Materials reach the site before construction starts")
 		earned = g.workers[0].bread
 		t.check(earned > 0, "Construction continues with empty inventory and pays labor")
 		var footprint_end: Vector2i = g.building_cells(p, kind).back()
 		t.check(g.cancel_site(footprint_end), "Occupied footprint cell cancels construction")
-		t.advance_until(func(): return g.player_blocks == cost, 30, "Delivered materials are physically recovered after cancellation")
+		t.advance_until(func(): return g.player_blocks == cost and g.total_stock("raw_water") == initial_water, 60, "All delivered materials, including water, are physically recovered after cancellation")
 		t.check(g.materials == initial_materials, "Cancel returns the actual mineral types, not generic replacement blocks")
 		for mineral in initial_materials:
 			t.near(g.resource_activity(mineral, 1).produced + g.resource_activity(mineral, 1).consumed, 0, "Canceling a blueprint creates neither production nor consumption")
@@ -56,11 +58,12 @@ func run(t) -> void:
 		g.select_entity(footprint_end)
 		t.check(g.entity_title.text == g.building_name(kind), "Building completes and can be inspected")
 		t.check(g.player_blocks == 0, "No second charge during construction or completion")
+		t.near(g.resource_activity("raw_water", 1).consumed, initial_water, "Construction water is charged once, not invented as daily output")
 		for mineral in initial_materials:
 			t.near(g.resource_activity(mineral, 1).consumed, initial_materials[mineral], "Completion records actual construction consumption once")
 
 	# The same contract covers every footprint: no building may finish inside ore or charge twice.
-	for kind in ["bed", "bench", "workbench", "pump", "purifier", "printer", "bank", "belt"]:
+	for kind in g.BUILDING_KINDS:
 		for covered in [false, true]:
 			t.scenario("Excavate before building: %s / covered origin %s" % [kind, covered], 1)
 			var origin := ore if covered else ore + Vector2i.LEFT
@@ -308,6 +311,73 @@ func run(t) -> void:
 	t.near(g.stock_at(Vector2i(30, 11), "bread") + g.stock_at(Vector2i(34, 11), "bread"), g.BED_PRICE + g.GUN_PRICE, "Loan-funded services transfer their normal sale prices")
 	t.check(g.benches[Vector2i(34, 11)].stock == 0, "Loan-funded purchase consumes stock once")
 	check_tracks(t)
+	check_mood(t)
+
+func check_mood(t) -> void:
+	var g = t.game
+	var ore := Vector2i(37, 13)
+	var p := Vector2i(28, 11)
+	# The same output must cost actual paid time, including work slower than its nominal hours.
+	for activity in ["mining", "building", "production"]:
+		var times: Array[float] = []
+		var wages: Array[float] = []
+		for initial_mood in [-80.0, 0.0, 80.0]:
+			t.scenario("Mood changes paid output speed: %s / %s" % [activity, initial_mood], 1)
+			var w: Dictionary = g.workers[0]
+			w.mood.value = initial_mood
+			var complete: Callable
+			if activity == "mining":
+				g.designate(ore, ore)
+				complete = func(): return g.mined == 1
+			elif activity == "building":
+				t.building_materials("bed")
+				g.place_building(p, "bed")
+				complete = func(): return g.beds.has(p)
+			else:
+				t.station("bench", p)
+				g.add_stock(p, 2, 1)
+				g.adjust_production(p, 1)
+				complete = func(): return g.benches[p].stock == 1
+			times.append(t.advance_until(complete, 60, "The ordered output completes at every mood level"))
+			wages.append(w.earned_today)
+			var labor: float = g.report_totals(1, 0)["挖掘" if activity == "mining" else "工作"]
+			t.near(w.earned_today, labor / g.HOUR_SECONDS * g.WAGE_PER_HOUR, "Every actual labor hour is paid, even beyond nominal job cost", 0.01)
+			t.near(g.player_bread + w.bread, g.STARTING_BREAD, "Mood changes neither wage ownership nor total bread")
+			t.near(g.resource_activity("bread", 1).consumed, 0, "Wages are transfers rather than consumption")
+		t.check(times[0] > times[1] and times[1] > times[2], "Low mood slows output and high mood accelerates it")
+		t.check(wages[0] > wages[1] and wages[1] > wages[2], "Hourly pay follows time rather than a fixed per-job ceiling")
+
+	# A real night's sleep must carry into tomorrow's work, not reward entering a bed.
+	var excavation_times: Array[float] = []
+	for comfort in [false, true]:
+		t.scenario("Sleep experience carries into later work: " + str(comfort), 1)
+		var w: Dictionary = g.workers[0]
+		w.pos = Vector2(35, 13)
+		w.bread = 5
+		w.fatigue = 100
+		if comfort:
+			t.bed(Vector2i(35, 13))
+		t.advance_until(func(): return w.fatigue == 0, 90, "Sleep restores physical fatigue without requiring a bed")
+		t.check(w.mood.value > 25 if comfort else is_zero_approx(w.mood.value), "Only time actually asleep in bed creates positive mood")
+		g.designate(ore, ore)
+		excavation_times.append(t.advance_until(func(): return g.mined == 1, 20, "Rested worker returns to actual mining"))
+		if comfort:
+			t.near(w.bed_spent_today, g.BED_PRICE, "Mood recovery does not charge extra rent")
+		t.check(w.fatigue > 0, "Good mood does not remove the need for physical rest")
+	t.check(excavation_times[1] < excavation_times[0], "Good sleep leaves a useful memory after leaving the bed")
+
+	t.scenario("Free recovery, independent newborns, and reset", 1)
+	var w: Dictionary = g.workers[0]
+	t.near(w.mood.value, 0, "New workers start emotionally neutral")
+	w.mood.value = -60
+	g.simulate(g.HOUR_SECONDS * 4)
+	t.check(w.mood.value > -60 and w.mood.value < 0, "Waiting without money gradually recovers mood, not instantly")
+	t.near(w.bread, 0, "Free recovery needs neither purchases nor loans")
+	var newcomer: Dictionary = g.create_worker(g.BASE)
+	t.near(newcomer.mood.value, 0, "A newcomer does not inherit another worker's experiences")
+	g.reset_world()
+	for person in g.workers:
+		t.near(person.mood.value, 0, "Reset discards old emotional history")
 
 func check_tracks(t) -> void:
 	var g = t.game
@@ -469,3 +539,139 @@ func check_tracks(t) -> void:
 	t.near(g.portal.freight_bread, 0.2, "Transport fee is separate from uncollected loan interest")
 	g.reset_world()
 	t.check(g.belts.is_empty() and g.belt_cargo.is_empty() and g.player_bread == g.STARTING_BREAD, "Reset clears tracks and restores only the finite starting supply")
+
+func check_generated_terrain(t) -> void:
+	var g = t.game
+	# Prevent seeds being ignored or old water/mining edits leaking into a new world.
+	t.scenario("Seeded material fields reproduce the same world", 1, true)
+	var previous: Dictionary = {}
+	for seed_value in [0, 1020, 4294967295]:
+		g.reset_world(seed_value)
+		var blocks: Dictionary = g.terrain.duplicate()
+		var water: Dictionary = g.water_sources.duplicate()
+		if not previous.is_empty():
+			t.check(blocks != previous, "Different seeds change the actual mineral layout")
+		g.reset_world(seed_value + 1)
+		g.reset_world(seed_value)
+		t.check(g.terrain == blocks and g.water_sources == water, "Recreating a seed restores exactly its minerals and water, without remnants of another map")
+		previous = blocks
+
+	# Measure the delivered map, including water and the camp, not noise internals.
+	for seed_value in [0, 1020, 4294967295]:
+		g.reset_world(seed_value)
+		var sample_area := Rect2i(-64, -64, 256, 192)
+		g.ensure_region(sample_area)
+		var sample := map_snapshot(g, sample_area)
+		var sandstone := 0
+		for material in sample.values():
+			if material == 1:
+				sandstone += 1
+		var share := float(sandstone) / sample.size()
+		print("MAP seed=%d sandstone=%.2f%% other=%.2f%% ratio=%.2f:1" % [seed_value, share * 100.0, (1.0 - share) * 100.0, share / (1.0 - share)])
+		t.check(share >= 0.75 and share <= 0.8, "Representative maps keep sandstone at 75-80 percent, including all minerals and caves in the remainder")
+
+	# Exercise actual generated resources, rather than just the hand-arranged quarry.
+	t.scenario("Mine and inspect the generated world", 1, true)
+	var ore := Vector2i(-1, -1)
+	var camp := Rect2i(g.BASE - Vector2i(4, 2), Vector2i(9, 5))
+	for cell in g.explored:
+		if g.terrain[cell] < 1 or g.terrain[cell] > 4:
+			continue
+		for direction in g.DIRS:
+			if camp.has_point(cell + direction):
+				ore = cell
+				break
+		if ore.x >= 0:
+			break
+	t.check(ore.x >= 0, "The chosen seed provides an ordinary block adjacent to the camp for this mining scenario")
+	if ore.x < 0:
+		return
+	var mineral: int = g.terrain[ore]
+	g.select_tile(ore)
+	t.check(g.entity_title.text == g.ORES[mineral].name, "Generated material is shown correctly in the inspector")
+	t.check(g.designate(ore, ore) == 1, "A generated ordinary block accepts a mining command")
+	t.advance_until(func(): return g.delivered == 1, 30, "Generated ore is mined and delivered through normal gameplay")
+	t.check(g.terrain[ore] == 0 and g.stock_at(g.BASE, mineral) == 1, "Mining clears the generated block and delivers its actual material once")
+	g.reset_world(1020)
+	t.check(g.terrain[ore] == mineral and g.player_blocks == 0, "Restarting the same seed restores the original deposit and clears previous inventory")
+	check_unbounded_world(t)
+
+func map_snapshot(g, area: Rect2i) -> Dictionary:
+	var result: Dictionary = {}
+	for y in range(area.position.y, area.end.y):
+		for x in range(area.position.x, area.end.x):
+			var cell := Vector2i(x, y)
+			result[cell] = g.MapGenerator.WATER if g.water_sources.has(cell) else g.terrain[cell]
+	return result
+
+func check_unbounded_world(t) -> void:
+	var g = t.game
+	# Exploration order must not move deposits, truncate caves, or duplicate water.
+	t.scenario("Distant geology is independent of exploration order", 0, true)
+	var areas := [Rect2i(-160, -96, 64, 64), Rect2i(160, 96, 64, 64), Rect2i(-32, -32, 64, 64)]
+	var snapshots: Array[Dictionary] = []
+	var counts: Dictionary = {}
+	for area in areas:
+		g.ensure_region(area)
+		var snapshot := map_snapshot(g, area)
+		snapshots.append(snapshot)
+		# Prevent overlapping spots from consuming the sandstone or forming giant fields.
+		var sandstone := 0
+		for material in snapshot.values():
+			if material == 1:
+				sandstone += 1
+		t.check(sandstone >= snapshot.size() * 0.65, "Sandstone remains the dominant ground throughout sampled regions")
+		var visited: Dictionary = {}
+		var largest := 0
+		for start in snapshot:
+			if visited.has(start) or snapshot[start] == 1 or snapshot[start] >= 5:
+				continue
+			var frontier: Array[Vector2i] = [start]
+			visited[start] = true
+			var size := 0
+			while not frontier.is_empty():
+				var current: Vector2i = frontier.pop_back()
+				size += 1
+				for direction in g.DIRS:
+					var neighbor: Vector2i = current + direction
+					if snapshot.get(neighbor, -1) == snapshot[start] and not visited.has(neighbor):
+						visited[neighbor] = true
+						frontier.append(neighbor)
+			largest = maxi(largest, size)
+		t.check(largest <= 512, "Varied mineral deposits and caves stay compact instead of merging into region-wide fields")
+		for cell in snapshot:
+			counts[snapshot[cell]] = counts.get(snapshot[cell], 0) + 1
+			if snapshot[cell] >= 5:
+				var isolated := true
+				for direction in g.DIRS:
+					var neighbor: Vector2i = cell + direction
+					if area.has_point(neighbor) and snapshot[neighbor] >= 5:
+						isolated = false
+				t.check(isolated, "Special sources occupy isolated single cells rather than ordinary mineral fields")
+	for material in range(8):
+		t.check(counts.get(material, 0) > 0, "Exploration finds terrain category %d, including natural caves and scarce sources" % material)
+	g.reset_world(1021)
+	g.reset_world(1020)
+	for i in range(areas.size() - 1, -1, -1):
+		g.ensure_region(areas[i])
+		t.check(map_snapshot(g, areas[i]) == snapshots[i], "Reversing discovery preserves the complete mineral, cave and water layout")
+
+	# Negative coordinates, the former sentinel and the old right edge must all work.
+	for target in [Vector2i(-33, -1), Vector2i(-1, -1), Vector2i(160, 13)]:
+		t.scenario("Excavate and deliver beyond old map limits: " + str(target), 1)
+		var left: int = mini(target.x, g.BASE.x) - 1
+		var right: int = maxi(target.x, g.BASE.x) + 2
+		var top: int = mini(target.y, g.BASE.y) - 1
+		g.ensure_region(Rect2i(left, top, right - left, g.BASE.y - top + 3))
+		t.clear_area(Rect2i(left, target.y + 1, right - left, 1))
+		t.clear_area(Rect2i(g.BASE.x, top, 1, g.BASE.y - top + 3))
+		g.terrain[target] = 2
+		g.water_sources.erase(target)
+		g.navigation.set_point_solid(target, true)
+		g.explored[target] = true
+		g.select_tile(target)
+		t.check(g.entity_panel.visible and g.entity_title.text == "铜矿", "Negative and distant cells retain their clicked details")
+		t.check(g.designate(target, target) == 1, "Mining commands accept cells outside the old rectangle")
+		t.advance_until(func(): return g.stock_at(g.BASE, 2) == 1, 600, "Workers cross region boundaries and deliver the real material to the portal")
+		g.ensure_region(Rect2i(target - Vector2i.ONE * 2, Vector2i.ONE * 5))
+		t.check(g.terrain[target] == 0 and g.delivered == 1, "Revisiting generated terrain never respawns an excavated deposit")
