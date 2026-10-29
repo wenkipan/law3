@@ -332,7 +332,7 @@ func sync_dynamic() -> void:
 			worker.configure(w, game.font)
 			connect_pick(worker, w.id, null)
 			worker_nodes[w.id] = worker
-		worker_nodes[w.id].sync(w, game.animation_time, game.CELL, game.action_for(w) != "等待", game.view_origin)
+		worker_nodes[w.id].sync(game.worker_display(w), game.animation_time, game.CELL, game.action_for(w) != "等待", game.view_origin)
 		worker_nodes[w.id].input_pickable = game.explored.has(Vector2i(w.pos.round()))
 	# Native picking uses tree order for equal Z; match the workers' Y-sort order.
 	var ordered: Array = worker_nodes.keys()

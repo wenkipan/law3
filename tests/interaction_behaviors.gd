@@ -137,7 +137,9 @@ func run(t) -> void:
 	# Bank terms and receipts must fit without exposing internal spending forecasts.
 	t.scenario("Bank toolbar, receipts, and compact layout", 1)
 	t.bank(P)
-	g.workers[0].bread = 9.03
+	g.workers[0].loan_principal = 0.97
+	g.workers[0].loan_interest = 0.194
+	g.workers[0].loan_bank = P
 	g.designate(Vector2i(37, 11), Vector2i(37, 15))
 	t.advance_until(func(): return g.banks[P].interest_received >= 0.194 - 0.000001, 90, "Bank has an actual collected interest receipt")
 	for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
@@ -618,7 +620,7 @@ func check_building_rows(t) -> void:
 		for i in 3:
 			await t.click_world(g.tile_center(P + Vector2i(i * 2 + 1, 0)))
 			t.check(g.entity_title.text == g.building_name(kind) + " · 建造中", "Every building's far footprint cell opens its blueprint")
-		g.simulate(150)
+		t.advance_until(func(): return g.sites.is_empty(), 600, "Row construction completes across autonomous meals and rest")
 		await t.settle()
 		for i in 3:
 			await t.click_world(g.tile_center(P + Vector2i(i * 2 + 1, 0)) + Vector2(0, 16))

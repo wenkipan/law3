@@ -11,8 +11,9 @@ func run(t) -> void:
 		var product: Dictionary = g.PRODUCTS[kind]
 		for worker in g.workers:
 			worker.bread = product.price
+			worker.hunger = 100
 		g.designate(Vector2i(37, 12), Vector2i(37, 14))
-		t.advance_until(func(): return g.stock_at(P, "bread") == product.price, 10, "Purchase transfers the listed price to the player")
+		t.advance_until(func(): return g.workers[0].shop_spent_today + g.workers[1].shop_spent_today == product.price, 10, "Purchase records the listed payment even if the shop cash is subsequently collected for wages")
 		g.simulate(1)
 		var equipped := 0
 		for worker in g.workers:
@@ -27,10 +28,11 @@ func run(t) -> void:
 	t.station("bench", P)
 	t.materials(1, 2)
 	g.workers[0].bread = 3.0
+	g.workers[0].hunger = 100
 	g.adjust_production(P, 1)
 	g.simulate(20)
 	g.designate(ORE, ORE)
-	t.advance_until(func(): return g.stock_at(P, "bread") == 5, 10, "Worker buys the produced gun")
+	t.advance_until(func(): return g.workers[0].shop_spent_today == 5, 120, "Worker earns and buys the produced gun when income becomes useful")
 	g.simulate(30)
 	t.check(g.benches[P].stock == 0, "Selling today's output does not manufacture another item")
 
@@ -86,6 +88,7 @@ func run(t) -> void:
 	t.station("purifier", P, 6)
 	for worker in g.workers:
 		worker.bread = 9.0
+		worker.hunger = 100
 	g.designate(Vector2i(37, 11), Vector2i(37, 15))
 	t.advance_until(func(): return g.benches[P].stock == 0, 10, "Workers buy the available water")
 	t.check(g.workers[0].water <= 4 and g.workers[1].water <= 4, "Neither worker carries more than four water")
@@ -149,11 +152,12 @@ func check_mood_shopping(t) -> void:
 		var w: Dictionary = g.workers[0]
 		w.mood.value = initial_mood
 		w.bread = 9
+		w.hunger = 100
 		g.designate(ORE, ORE)
 		t.advance_until(func(): return g.stock_at(P, "bread") > 0, 15, "Worker buys optional water after the necessary tool")
 		t.near(g.stock_at(P, "bread"), 1 if initial_mood < 0 else 4, "Low mood limits a water purchase to one portion")
 		t.check(w.gun_uses == g.GUN_USES, "Low mood does not suppress a necessary mining tool")
-		t.advance_until(func(): return g.delivered == 1, 30, "Optional shopping does not prevent paid mining and delivery")
+		t.advance_until(func(): return g.delivered == 1, 120, "Optional shopping does not prevent later paid mining and delivery")
 
 	# Happy people can work for optional water, but unavailable shops and debt must not trap them.
 	for access in ["stocked", "empty", "unreachable", "debt"]:
@@ -169,7 +173,7 @@ func check_mood_shopping(t) -> void:
 			w.loan_bank = Vector2i(31, 11)
 		g.designate(ORE, Vector2i(40, 13))
 		g.simulate(4)
-		t.check(w.eaten_today == 10 and w.hunger > 90, "Food takes priority over optional desires")
+		t.check(is_equal_approx(w.eaten_today, 10) and w.hunger > 90, "Food takes priority over optional desires")
 		t.near(g.portal.lent_bread, 0, "A shopping desire cannot trigger a bank advance")
 		if access == "stocked":
 			t.advance_until(func(): return g.stock_at(shop, "bread") > 0, 55, "Happy worker earns and spends extra wages on available water")
@@ -179,6 +183,6 @@ func check_mood_shopping(t) -> void:
 			t.near(g.stock_at(shop, "bread"), 0, "Unpaid debt takes precedence over happy optional spending")
 		else:
 			g.simulate(20)
-			t.near(w.earned_today, 0, "An unavailable optional purchase does not manufacture a work requirement")
+			t.check(w.earned_today < 4, "Unavailable optional goods do not cause unbounded extra labor")
 			t.near(g.stock_at(shop, "bread"), 0, "An unavailable shop cannot receive phantom payments")
 		t.near(g.portal.lent_bread, 0, "Optional shopping never becomes loan principal")

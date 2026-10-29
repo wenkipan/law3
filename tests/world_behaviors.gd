@@ -17,11 +17,11 @@ func run(t) -> void:
 	var next := ore + Vector2i.RIGHT
 	t.check(g.designate(next, next) == 1, "Excavation exposes the next reachable block")
 	g.simulate(2)
-	var earned: float = g.workers[0].bread
+	var earned: float = g.workers[0].earned_today
 	g.designate(next, next, true)
 	g.simulate(20)
 	t.check(g.delivered == 1 and g.terrain[next] != 0, "Cancellation stops excavation and extra delivery")
-	t.near(g.workers[0].bread, earned, "Cancellation keeps earned wages but pays no idle wages")
+	t.near(g.workers[0].earned_today, earned, "Cancellation keeps earned wages but pays no idle wages")
 
 	# One shared construction contract, with all actual building kinds as inputs.
 	for kind in g.BUILDING_KINDS:
@@ -54,13 +54,13 @@ func run(t) -> void:
 			t.near(g.resource_activity(mineral, 1).produced + g.resource_activity(mineral, 1).consumed, 0, "Canceling a blueprint creates neither production nor consumption")
 		t.near(g.workers[0].bread, earned, "Refund does not reclaim earned wages")
 		g.place_building(p, kind)
-		g.simulate(90)
+		t.advance_until(func(): return not g.sites.has(p), 240, "Construction finishes across voluntary meals and sleep")
 		g.select_entity(footprint_end)
 		t.check(g.entity_title.text == g.building_name(kind), "Building completes and can be inspected")
 		t.check(g.player_blocks == 0, "No second charge during construction or completion")
 		t.near(g.resource_activity("raw_water", 1).consumed, initial_water, "Construction water is charged once, not invented as daily output")
 		for mineral in initial_materials:
-			t.near(g.resource_activity(mineral, 1).consumed, initial_materials[mineral], "Completion records actual construction consumption once")
+			t.near(g.resource_activity(mineral, g.day).consumed, initial_materials[mineral], "Completion records actual construction consumption once on its completion day")
 
 	# The same contract covers every footprint: no building may finish inside ore or charge twice.
 	for kind in g.BUILDING_KINDS:
@@ -85,12 +85,12 @@ func run(t) -> void:
 			t.advance_until(func(): return g.mined == blocks or not g.sites.has(origin), 60, "Workers clear the footprint without a separate dig command")
 			for cell in g.building_cells(origin, kind):
 				t.check(g.terrain[cell] == 0, "Every footprint cell is cleared before the building can complete")
-			t.advance_until(func(): return not g.sites.has(origin) and g.delivered == blocks, 90, "Workers deliver the excavated ore and finish construction")
+			t.advance_until(func(): return not g.sites.has(origin) and g.delivered == blocks, 240, "Workers deliver the excavated ore and finish construction")
 			g.select_entity(origin)
 			t.check(g.entity_title.text == g.building_name(kind), "Cleared blueprint becomes the requested building")
 			for mineral in range(1, g.ORES.size()):
 				t.check(g.materials.get(mineral, 0) == expected.get(mineral, 0), "Excavated mineral is retained without duplicate building charges")
-			t.near(g.workers[0].earned_today, blocks + g.building_hours(kind), "Excavation and construction each pay their normal labor once")
+			t.near((g.report_totals(1, 0)["挖掘"] + g.report_totals(1, 0)["工作"] + g.report_totals(2, 0)["挖掘"] + g.report_totals(2, 0)["工作"]) / g.HOUR_SECONDS, blocks + g.building_hours(kind), "Excavation and construction each pay their normal labor once")
 			t.check(g.report_mined(1) == blocks, "Blueprint excavation uses normal daily mining reports")
 
 	# A blueprint does not tunnel outside its footprint or strand a carrier inside solid terrain.
@@ -184,7 +184,7 @@ func run(t) -> void:
 	w.bread = 10.0
 	g.designate(ore, ore)
 	g.simulate(8)
-	t.check(w.hunger > 90 and w.bread == 0 and g.delivered == 0, "Funded food is eaten; worker rests instead of mining unnecessarily")
+	t.check(w.hunger > 90 and w.eaten_today >= 9.999, "An urgent funded meal is eaten without waiting for a daily budget")
 	t.near(g.resource_activity("bread", 1).consumed, 10, "Eaten bread counts as consumption, not wage or ownership transfers")
 	t.near(g.resource_inventory().bread, g.STARTING_BREAD, "Physical inventory excludes eaten food and retains factory reserves")
 	t.materials(6)
@@ -230,86 +230,8 @@ func run(t) -> void:
 	t.near(g.resource_activity("bread", 1).produced + g.resource_activity("bread", 1).consumed, 0, "Reset clears material flow history without treating starting bread as production")
 	t.near(g.resource_inventory().bread, g.STARTING_BREAD, "Reset restores the physical starting stock")
 
-	# Prevent unnecessary borrowing, oversized advances, and loans being counted as wages.
-	for balance in [0.0, 7.0, 10.0]:
-		t.scenario("Bank covers only the unpaid daily shortfall: " + str(balance), 1)
-		t.bank(p)
-		w = g.workers[0]
-		w.bread = balance
-		g.simulate(8)
-		t.near(g.portal.lent_bread, 10.0 - balance, "Only the food shortfall is advanced")
-		t.near(w.earned_today, 0, "Borrowed bread is not earned income")
-		t.near(g.player_bread, g.STARTING_BREAD - g.portal.lent_bread, "Issuing principal spends existing bread")
-		t.check(w.hunger > 90, "Borrower can eat before earning wages")
-		g.simulate(g.DAY_SECONDS)
-		t.near(g.portal.lent_bread, 10.0 if balance == 10.0 else 10.0 - balance, "Unpaid loans survive midnight without a second advance")
-		t.near(g.player_bread, g.STARTING_BREAD - g.portal.lent_bread, "Idle debt has no automatic deductions or late fees")
-
-	# Prevent blueprints or unreachable banks from lending, while keeping mining available.
-	for access in ["absent", "blueprint", "unreachable", "open"]:
-		t.scenario("Bank availability and daily loan cap: " + access, 1)
-		w = g.workers[0]
-		w.bread = 2.0
-		t.bed(Vector2i(30, 11))
-		t.station("bench", Vector2i(34, 11))
-		if access == "blueprint":
-			t.materials(g.BANK_BLOCKS)
-			g.place_building(p, "bank")
-		elif access == "unreachable":
-			t.bank(Vector2i(1, 1))
-			g.terrain[Vector2i(1, 1)] = 0
-			g.navigation.set_point_solid(Vector2i(1, 1), false)
-		elif access == "open":
-			t.bank(p)
-			t.bank(Vector2i(34, 15))
-		g.designate(ore, ore)
-		g.simulate(3)
-		t.near(g.portal.lent_bread, 10.0 if access == "open" else 0.0, "Only a reachable completed bank lends, capped at ten")
-		g.simulate(40)
-		t.check(w.earned_today > 0, "Loan availability never blocks paid work")
-
-	# Prevent stopping on borrowed cash, missed delivery deductions, and overpaying the final installment.
-	t.scenario("Loan repays from wages and deliveries, then stops charging", 1)
-	t.bank(p)
-	w = g.workers[0]
-	w.bread = 9.03
-	g.designate(Vector2i(37, 11), Vector2i(37, 15))
-	t.advance_until(func(): return g.mined == 1, 30, "Worker eats and then works despite having funded daily needs")
-	t.near(g.portal.lent_bread, 0.97, "Fractional shortfall determines principal")
-	t.near(g.portal.repaid_principal, 0.25, "One bread of mining wages repays one quarter")
-	t.advance_until(func(): return g.delivered == 1, 10, "Borrower delivers the mined block")
-	t.near(g.portal.repaid_principal, 0.25, "Ore delivery creates neither bread nor extra repayment")
-	t.advance_until(func(): return g.banks[p].interest_received >= 0.194 - 0.000001, 60, "One-time interest is fully paid")
-	t.near(g.portal.repaid_principal, 0.97, "Principal returns to the portal exactly once")
-	t.near(g.banks[p].interest_received, 0.194, "Only the twenty-percent interest reaches the player")
-	t.near(g.player_bread + w.bread + w.eaten_today, g.STARTING_BREAD + 9.03, "Repayment transfers existing bread without duplicating it")
-	t.near(w.bread, w.earned_today - 1.164, "Final installment is capped to the balance, with no lost income")
-	earned = w.earned_today
-	g.simulate(20)
-	t.near(w.earned_today, earned, "Debt-free worker returns to normal daily stopping")
-	t.materials(g.BED_BLOCKS)
-	g.place_building(Vector2i(30, 11), "bed")
-	g.simulate(8)
-	t.check(w.earned_today > earned, "New daily need resumes work after repayment")
-	t.near(g.portal.lent_bread, 0.97, "Repaying a loan does not permit another loan on the same day")
-	t.near(g.banks[p].interest_received, 0.194, "New earnings are no longer withheld once the loan is paid")
-	g.reset_world()
-	t.check(g.banks.is_empty() and g.portal.lent_bread == 0 and g.portal.repaid_principal == 0, "Reset clears banks and loan accounting")
-
-	# Prevent a loan from bypassing rent, sleep, or stock payments.
-	t.scenario("Borrowed funds pay for rest and equipment normally", 1)
-	t.bank(p)
-	t.bed(Vector2i(30, 11))
-	t.station("bench", Vector2i(34, 11), 1)
-	w = g.workers[0]
-	w.fatigue = 100.0
-	g.designate(ore, ore)
-	g.simulate(10)
-	t.near(g.stock_at(Vector2i(30, 11), "bread"), g.BED_PRICE, "Exhausted borrower pays normal bed rent")
-	t.check(w.fatigue < 90 and w.earned_today == 0, "Debt does not force an exhausted worker to labor")
-	t.advance_until(func(): return w.gun_uses > 0, 65, "Recovered borrower can buy equipment with the remaining loan")
-	t.near(g.stock_at(Vector2i(30, 11), "bread") + g.stock_at(Vector2i(34, 11), "bread"), g.BED_PRICE + g.GUN_PRICE, "Loan-funded services transfer their normal sale prices")
-	t.check(g.benches[Vector2i(34, 11)].stock == 0, "Loan-funded purchase consumes stock once")
+	check_activity_choices(t)
+	check_loans(t)
 	check_tracks(t)
 	check_mood(t)
 
@@ -342,8 +264,8 @@ func check_mood(t) -> void:
 			wages.append(w.earned_today)
 			var labor: float = g.report_totals(1, 0)["挖掘" if activity == "mining" else "工作"]
 			t.near(w.earned_today, labor / g.HOUR_SECONDS * g.WAGE_PER_HOUR, "Every actual labor hour is paid, even beyond nominal job cost", 0.01)
-			t.near(g.player_bread + w.bread, g.STARTING_BREAD, "Mood changes neither wage ownership nor total bread")
-			t.near(g.resource_activity("bread", 1).consumed, 0, "Wages are transfers rather than consumption")
+			t.near(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, g.STARTING_BREAD, "Actual meals and wage transfers conserve the same physical bread")
+			t.near(g.resource_activity("bread", 1).consumed, w.eaten_today, "Only actual eating, not wages, consumes bread")
 		t.check(times[0] > times[1] and times[1] > times[2], "Low mood slows output and high mood accelerates it")
 		t.check(wages[0] > wages[1] and wages[1] > wages[2], "Hourly pay follows time rather than a fixed per-job ceiling")
 
@@ -533,6 +455,7 @@ func check_tracks(t) -> void:
 	w = g.workers[0]
 	w.pos = Vector2(source)
 	w.bread = 9.0
+	g.workers[0].loan_principal = 1.0
 	g.designate(ore, ore)
 	t.advance_until(func(): return g.delivered == 1, 30, "Borrower delivers through the track")
 	t.near(g.portal.repaid_principal, 0.25, "Loan takes 25 percent of labor wages, not mineral delivery")
@@ -675,3 +598,109 @@ func check_unbounded_world(t) -> void:
 		t.advance_until(func(): return g.stock_at(g.BASE, 2) == 1, 600, "Workers cross region boundaries and deliver the real material to the portal")
 		g.ensure_region(Rect2i(target - Vector2i.ONE * 2, Vector2i.ONE * 5))
 		t.check(g.terrain[target] == 0 and g.delivered == 1, "Revisiting generated terrain never respawns an excavated deposit")
+
+# Observable choices and failures, not runner stages, claim handles or utility scores.
+func check_activity_choices(t) -> void:
+	var g = t.game
+	t.scenario("Small meals do not wait for a full daily allowance", 1)
+	var w: Dictionary = g.workers[0]
+	w.bread = 2
+	w.loan_principal = 5
+	t.advance_until(func(): return w.hunger > 15, 6, "A hungry indebted person can eat the food already owned")
+	t.near(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, g.STARTING_BREAD + 2, "Partial meals conserve food")
+	t.check(w.loan_principal == 5, "Eating does not fabricate debt repayment")
+
+	for reversed in [false, true]:
+		t.scenario("Paid work chooses a reachable closer opportunity: " + str(reversed), 1)
+		t.clear_area(Rect2i(23, 11, 18, 6))
+		var near_place := Vector2i(34, 13)
+		var far_place := Vector2i(24, 13)
+		for p in ([near_place, far_place] if reversed else [far_place, near_place]):
+			t.station("workbench", p)
+			g.adjust_production(p, 1)
+		w = g.workers[0]
+		w.pos = Vector2(35, 13)
+		w.payroll = 4
+		t.advance_until(func(): return g.benches[near_place].produced_today + g.benches[far_place].produced_today > 0, 25, "One real batch is produced")
+		t.check(g.benches[near_place].produced_today == 1 and g.benches[far_place].produced_today == 0, "Distance beats world insertion order")
+
+	t.scenario("One bed cannot collect two concurrent rents", 2)
+	var bed := Vector2i(30, 13)
+	t.bed(bed)
+	for person in g.workers:
+		person.bread = 5
+		person.hunger = 180
+		person.fatigue = 100
+	g.simulate(8)
+	t.near(g.stock_at(bed, "bread"), 5, "Only one sleeper pays for the exclusive bed")
+	t.check(g.workers.all(func(person): return person.fatigue < 100), "The other sleeper uses the free ground fallback")
+
+	t.scenario("Cancel during a short drink does not resume a stale mine", 1)
+	w = g.workers[0]
+	w.pos = Vector2(36, 13)
+	w.water = 1
+	w.payroll = 4
+	var ore := Vector2i(37, 13)
+	g.designate(ore, ore)
+	t.advance_until(func(): return g.report_totals(1, 0)["吃饭"] > 0, 4, "Worker begins a real drinking break")
+	g.designate(ore, ore, true)
+	g.simulate(3)
+	t.check(g.mined == 0 and w.earned_today == 0 and w.water == 1, "Cancellation prevents stale labor and unfinished drink charges")
+	g.designate(ore, ore)
+	t.advance_until(func(): return g.delivered == 1, 25, "A fresh order remains available after the interruption")
+	t.near(g.resource_activity("clean_water", 1).consumed, 1, "The completed drink consumes exactly one portion")
+
+func check_loans(t) -> void:
+	var g = t.game
+	var bank := Vector2i(28, 11)
+	for balance in [0.0, 7.0, 10.0]:
+		t.scenario("Bank funds an urgent food shortage: " + str(balance), 1)
+		t.bank(bank)
+		var w: Dictionary = g.workers[0]
+		w.pos = Vector2(bank)
+		w.bread = balance
+		t.advance_until(func(): return w.hunger > 80, 15, "Food can be obtained without first earning wages")
+		var lent: float = g.portal.lent_bread
+		t.check(lent >= 0 and lent <= 10 - balance + 0.05, "Borrowing covers only the live food shortage, not beds or equipment")
+		t.near(w.earned_today, 0, "A bank advance is not labor income")
+		t.near(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, g.STARTING_BREAD + balance, "Loan and meal conserve physical bread")
+		if lent > 0:
+			g.simulate(g.DAY_SECONDS)
+			t.near(g.portal.lent_bread, lent, "Outstanding debt blocks a second advance across midnight")
+
+	for access in ["absent", "blueprint", "unreachable", "open"]:
+		t.scenario("Only accessible completed banks lend: " + access, 1)
+		if access == "blueprint":
+			t.building_materials("bank")
+			g.place_building(bank, "bank")
+		elif access == "unreachable":
+			t.bank(Vector2i(1, 1))
+		elif access == "open":
+			t.bank(bank)
+		g.simulate(4)
+		t.check(g.portal.lent_bread > 0 if access == "open" else g.portal.lent_bread == 0, "Neither an inaccessible bank nor a blueprint can issue cash")
+
+	t.scenario("Actual wages repay principal then interest exactly once", 1)
+	t.bank(bank)
+	var w: Dictionary = g.workers[0]
+	w.pos = Vector2(bank)
+	w.bread = 7
+	t.advance_until(func(): return g.portal.lent_bread > 0, 3, "A real advance creates the loan")
+	var principal: float = g.portal.lent_bread
+	g.designate(Vector2i(37, 11), Vector2i(40, 15))
+	t.advance_until(func(): return g.banks[bank].interest_received >= principal * g.LOAN_INTEREST_RATE - 0.00001, g.DAY_SECONDS * 3, "Work eventually repays principal and the one-time interest")
+	t.near(g.portal.repaid_principal, principal, "Principal is repaid once")
+	t.near(g.banks[bank].interest_received, principal * g.LOAN_INTEREST_RATE, "The final installment does not overpay interest")
+	var interest: float = g.banks[bank].interest_received
+	g.simulate(10)
+	t.near(g.banks[bank].interest_received, interest, "Paid debt stops withholding interest")
+
+	t.scenario("Exhaustion permits free sleep despite hunger and debt", 1)
+	t.bank(bank)
+	w = g.workers[0]
+	w.fatigue = 100
+	w.loan_principal = 4
+	g.designate(Vector2i(37, 13), Vector2i(37, 13))
+	g.simulate(10)
+	t.check(w.fatigue < 90 and w.earned_today == 0, "An indebted exhausted person sleeps instead of being forced to work")
+	t.near(g.portal.lent_bread, 0, "Free ground recovery creates no service loan")

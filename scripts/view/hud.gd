@@ -42,7 +42,7 @@ func update_entity_panel() -> void:
 			game.entity_details.text = details.text
 		return
 	if game.worker_attributes.visible:
-		var w: Dictionary = game.workers[game.selected_worker]
+		var w: Dictionary = game.worker_display(game.workers[game.selected_worker])
 		game.entity_panel.show()
 		game.entity_title.text = w.name
 		var state_name: String = game.action_for(w)
@@ -144,8 +144,8 @@ func update_entity_panel() -> void:
 		if not game.PRODUCTS.has(kind):
 			game.entity_title.text = game.building_name(kind)
 			var status := "等待值班"
-			if not bench.task.is_empty() and bench.task.owner >= 0:
-				status = game.workers[bench.task.owner].name
+			if not bench.task.is_empty() and game.slot_owner("work", p) >= 0:
+				status = game.workers[game.slot_owner("work", p)].name
 			if kind in ["grow_light", "fountain", "drill", "spotlight", "daylight"]:
 				status = "运行中" if game.powered_devices.has(p) else "未供电"
 				if kind == "fountain" and bench.water_day != game.day:
@@ -153,7 +153,7 @@ func update_entity_panel() -> void:
 			elif kind in ["power_plant", "manual_generator", "transformer"]:
 				status += "\n输出  %.0fW" % game.power_output.get(p, 0.0)
 			elif kind == "canteen":
-				status = "用餐中" if game.workers.any(func(w): return w.canteen == p) else "空闲"
+				status = "用餐中" if game.workers.any(func(w): return game.worker_display(w).canteen == p) else "空闲"
 			game.entity_details.text = status + "\n\n" + game.building_effects_text(kind, p) + "\n\n仓储\n" + game.storage_text(p)
 			return
 		var product: Dictionary = game.PRODUCTS[kind]
@@ -170,7 +170,7 @@ func update_entity_panel() -> void:
 					missing.append(game.item_name(item))
 			status = "等待" + "、".join(missing)
 		if not bench.task.is_empty():
-			status = "等待工人" if bench.task.owner < 0 else game.workers[bench.task.owner].name
+			status = "等待工人" if game.slot_owner("work", p) < 0 else game.workers[game.slot_owner("work", p)].name
 			status += "  %.0f%%" % (bench.task.progress / bench.task.seconds * 100)
 		if kind == "farm":
 			if bench.growth > 0:
@@ -197,7 +197,7 @@ func update_entity_panel() -> void:
 	var details := ""
 	if game.sites.has(p):
 		var task: Dictionary = game.sites[p]
-		var worker: String = game.workers[task.owner].name if task.owner >= 0 else ("等待工人" if game.site_supplied(p) else "等待材料送达")
+		var worker: String = game.workers[game.slot_owner("build", p)].name if game.slot_owner("build", p) >= 0 else ("等待工人" if game.site_supplied(p) else "等待材料送达")
 		if task.get("cancelled", false):
 			worker = "回收材料"
 		details = "仓储\n" + game.storage_text(p) + "\n\n"
@@ -206,8 +206,8 @@ func update_entity_panel() -> void:
 	else:
 		var bed: Dictionary = game.beds[p]
 		details = "状态  空闲\n\n"
-		if bed.owner >= 0:
-			var occupant: Dictionary = game.workers[bed.owner]
+		if game.slot_owner("bed", p) >= 0:
+			var occupant: Dictionary = game.worker_display(game.workers[game.slot_owner("bed", p)])
 			details = "使用者  %s\n%s\n疲劳  %.1f / 100\n\n" % [
 				occupant.name,
 				"前往床位中" if occupant.state == "to_bed" else "剩余时间  %.1fh" % (bed.remaining / game.HOUR_SECONDS),

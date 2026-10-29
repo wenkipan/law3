@@ -82,7 +82,7 @@ func building_materials(kind: String, count := 1) -> void:
 			game.add_stock(game.BASE, ore, amount)
 
 func bed(p: Vector2i) -> void:
-	game.beds[p] = {"owner": -1, "remaining": 0.0, "assigned": -1}
+	game.beds[p] = {"remaining": 0.0, "assigned": -1}
 
 func bank(p: Vector2i) -> void:
 	game.banks[p] = {"interest_received": 0.0}
