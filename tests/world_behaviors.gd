@@ -1,6 +1,9 @@
 extends RefCounted
 
 func run(t) -> void:
+	if "--hungry-audit" in OS.get_cmdline_user_args():
+		audit_hungry_workers(t)
+		return
 	check_generated_terrain(t)
 	var g = t.game
 	var ore := Vector2i(37, 13)
@@ -19,35 +22,44 @@ func run(t) -> void:
 	g.simulate(2)
 	var earned: float = g.workers[0].earned_today
 	g.designate(next, next, true)
+	t.check(g.workers[0].earned_today > earned, "Cancellation settles the unfinished block's actual labor once")
+	earned = g.workers[0].earned_today
 	g.simulate(20)
 	t.check(g.delivered == 1 and g.terrain[next] != 0, "Cancellation stops excavation and extra delivery")
 	t.near(g.workers[0].earned_today, earned, "Cancellation keeps earned wages but pays no idle wages")
 
 	# One shared construction contract, with all actual building kinds as inputs.
 	for kind in g.BUILDING_KINDS:
-		t.scenario("Build and refund: " + kind, 1)
+		t.scenario("Plan, supply, build and recover: " + kind, 1)
+		g.workers[0].hunger = 120
 		g.update_ui()
-		t.check(g.tool_buttons[kind].disabled, "Unaffordable building button is disabled")
 		g.set_tool(kind)
-		t.check(g.tool != kind and not g.place_building(p, kind), "Shortcut and placement cannot bypass material cost")
+		t.check(not g.tool_buttons[kind].disabled and g.tool == kind, "Empty inventory does not block blueprint tools")
+		t.check(g.place_building(p, kind), "A legal blueprint can be planned without materials")
+		g.simulate(3)
+		t.check(g.building_kind(p) == kind and g.workers[0].earned_today == 0, "Missing materials cannot create construction or wages")
+		g.cancel_site(p)
+		t.check(g.player_blocks == 0, "Canceling an unfunded blueprint cannot invent a refund")
 		var cost: int = g.building_blocks(kind)
-		if kind in ["bed", "bench", "workbench"]:
-			t.materials(cost, 3)
-			g.update_ui()
-			g.set_tool(kind)
-			t.check(g.tool_buttons[kind].disabled and g.tool != kind and not g.place_building(p, kind), "Enough blocks of the wrong mineral cannot pay a specific recipe")
+		var wrong_mineral := 2 if kind in ["pump", "purifier", "printer", "bank", "belt"] else 3
+		t.materials(cost, wrong_mineral)
+		g.place_building(p, kind)
+		g.simulate(3)
+		t.check(g.workers[0].earned_today == 0 and g.stock_at(p, wrong_mineral) == 0, "Other minerals cannot substitute for the building's specified recipe")
+		g.cancel_site(p)
 		t.building_materials(kind)
 		var initial_materials: Dictionary = g.materials.duplicate()
 		var initial_water: float = g.total_stock("raw_water")
 		g.workers[0].pos = Vector2(p)
 		t.check(not g.place_building(g.BASE, kind) and g.player_blocks == cost, "Rejected placement costs nothing")
-		t.check(g.place_building(p, kind) and g.player_blocks == 0, "Blueprint charges materials once")
-		t.near(g.resource_inventory().get(1, 0), initial_materials.get(1, 0), "Blueprint reservation keeps physical material in inventory until construction consumes it")
-		t.advance_until(func(): return g.workers[0].earned_today > 0, 60, "Materials reach the site before construction starts")
-		earned = g.workers[0].bread
-		t.check(earned > 0, "Construction continues with empty inventory and pays labor")
+		t.check(g.place_building(p, kind) and g.player_blocks == cost, "Placing a blueprint does not deduct or reserve warehouse stock")
+		t.near(g.resource_inventory().get(1, 0), initial_materials.get(1, 0), "Blueprint placement leaves physical inventory unchanged")
+		t.advance_until(func(): return g.report_totals(1, 0)["工作"] > 0, 60, "Materials reach the site before construction starts")
+		t.near(g.workers[0].earned_today, 0, "An unfinished construction does not pay incremental wages")
 		var footprint_end: Vector2i = g.building_cells(p, kind).back()
 		t.check(g.cancel_site(footprint_end), "Occupied footprint cell cancels construction")
+		earned = g.workers[0].bread
+		t.check(earned > 0, "Cancellation pays only the actual completed construction share")
 		t.advance_until(func(): return g.player_blocks == cost and g.total_stock("raw_water") == initial_water, 60, "All delivered materials, including water, are physically recovered after cancellation")
 		t.check(g.materials == initial_materials, "Cancel returns the actual mineral types, not generic replacement blocks")
 		for mineral in initial_materials:
@@ -80,7 +92,7 @@ func run(t) -> void:
 				if mineral != 0:
 					expected[mineral] = expected.get(mineral, 0) + 1
 					blocks += 1
-			t.check(g.place_building(origin, kind) and g.player_blocks == 0, "Ore-covered blueprint reserves its entire recipe immediately")
+			t.check(g.place_building(origin, kind) and g.player_blocks == g.building_blocks(kind), "Ore-covered blueprints do not deduct their recipe at placement")
 			t.check(not g.place_building(origin, kind), "Reserved footprint cannot receive a second building")
 			t.advance_until(func(): return g.mined == blocks or not g.sites.has(origin), 60, "Workers clear the footprint without a separate dig command")
 			for cell in g.building_cells(origin, kind):
@@ -100,7 +112,7 @@ func run(t) -> void:
 	g.update_fog()
 	var buried := Vector2i(39, 13)
 	t.check(not g.place_building(Vector2i(60, 30), "bed") and g.player_blocks == 6, "Unexplored terrain still rejects blueprints without spending materials")
-	t.check(g.place_building(buried, "bed") and g.player_blocks == 0, "An explored buried blueprint can be planned and funded")
+	t.check(g.place_building(buried, "bed") and g.player_blocks == 6, "An explored buried blueprint does not lock remote stock")
 	g.simulate(20)
 	t.check(g.mined == 0 and g.workers[0].earned_today == 0, "No unreachable mining, construction wages, or automatic access tunnel")
 	g.designate(ore, ore + Vector2i.RIGHT)
@@ -117,9 +129,9 @@ func run(t) -> void:
 		g.place_building(ore, "bed")
 		if manual == "after":
 			g.designate(ore, ore)
-		t.advance_until(func(): return g.workers[0].earned_today > 0, 10, "Excavation has begun before cancellation")
-		var paid: float = g.workers[0].bread
+		t.advance_until(func(): return g.report_totals(1, 0)["挖掘"] > 0, 10, "Excavation has begun before cancellation")
 		t.check(g.cancel_site(ore + Vector2i.RIGHT), "Either footprint cell cancels the whole covered blueprint")
+		var paid: float = g.workers[0].bread
 		t.check(g.player_blocks == 6, "Uncollected reserved material is refunded immediately")
 		g.simulate(30)
 		t.check(not g.building_at(ore) and g.terrain[ore + Vector2i.RIGHT] != 0, "Cancellation removes the blueprint and its remaining automatic excavation")
@@ -151,7 +163,9 @@ func run(t) -> void:
 	t.materials(6)
 	g.workers[0].pos = Vector2(g.BASE)
 	g.place_building(p, "bed")
-	g.simulate(0.8)
+	t.advance_until(func():
+		g.select_worker(0)
+		return g.entity_details.text.contains("搬运  砂岩"), 5, "The worker really picks up material before cancellation")
 	g.cancel_site(p)
 	t.advance_until(func(): return g.player_blocks == 6, 20, "Carried and uncollected materials both return exactly once")
 	g.simulate(10)
@@ -231,15 +245,148 @@ func run(t) -> void:
 	t.near(g.resource_inventory().bread, g.STARTING_BREAD, "Reset restores the physical starting stock")
 
 	check_activity_choices(t)
+	check_direct_supply(t)
 	check_loans(t)
 	check_tracks(t)
 	check_mood(t)
+
+func check_direct_supply(t) -> void:
+	var g = t.game
+	var ore := Vector2i(37, 13)
+	# A mined block must reach demand directly, regardless of which command exposed it.
+	for covered in [false, true]:
+		t.scenario("New ore supplies a blueprint directly: covered %s" % covered, 1)
+		var target := Vector2i(36, 13) if covered else Vector2i(35, 13)
+		g.workers[0].pos = Vector2(36, 13)
+		t.check(g.place_building(target, "bed"), "A bed can be planned before its material exists")
+		if not covered:
+			g.designate(ore, ore)
+		t.advance_until(func(): return g.stock_at(target, 1) == 1, 25, "The excavated sandstone goes straight into the blueprint")
+		t.check(g.portal.input_blocks.get(1, 0) == 0 and g.stock_at(g.BASE, 1) == 0, "Blueprint supply never detours through the portal")
+		t.near(g.resource_inventory()[1], 1, "Direct supply keeps the mined block in physical inventory once")
+		t.near(g.resource_activity(1, 1).consumed, 0, "A partially supplied blueprint has not consumed its materials")
+		g.cancel_site(target)
+		t.advance_until(func(): return g.stock_at(g.BASE, 1) == 1, 25, "Cancellation physically recovers only the one delivered block")
+		t.near(g.resource_inventory()[1], 1, "Cancellation cannot refund the five materials that never existed")
+
+	t.scenario("New copper supplies production without a warehouse detour", 1)
+	var station := Vector2i(35, 13)
+	t.station("bench", station)
+	g.terrain[ore] = 2
+	g.workers[0].pos = Vector2(36, 13)
+	g.adjust_production(station, 1)
+	g.designate(ore, ore)
+	t.advance_until(func(): return g.benches[station].produced_today == 1, 75, "Fresh copper directly enables the waiting gun order")
+	t.check(g.portal.input_blocks.get(2, 0) == 0, "Production supply uses the same direct delivery rule as blueprints")
+	t.near(g.resource_activity(2, 1).consumed, 1, "Production consumes the fresh copper exactly once")
+
+	# Track transport must preserve the blueprint receiver and a cancellation's actual cargo.
+	for cancelled in [false, true]:
+		t.scenario("Fresh ore supplies a blueprint by track: cancel %s" % cancelled, 1)
+		var target := Vector2i(28, 11)
+		g.workers[0].pos = Vector2(36, 13)
+		for x in range(28, 37):
+			t.belt(Vector2i(x, 12), Vector2i.UP if x == 28 else Vector2i.LEFT)
+		t.belt(Vector2i(33, 13), Vector2i.LEFT)
+		g.place_building(target, "bed")
+		g.designate(ore, ore)
+		t.advance_until(func():
+			g.select_entity(Vector2i(36, 12))
+			return g.entity_details.text.contains("砂岩 ×"), 25, "The miner loads the blueprint's real sandstone onto the connected track")
+		t.near(g.resource_inventory()[1], 1, "Track cargo and its supply commitment are counted only once")
+		if cancelled:
+			g.cancel_site(target)
+			var reconnect: Array[Vector2i] = [Vector2i(33, 12), Vector2i(33, 13), g.BASE]
+			t.check(g.place_belt_path(reconnect), "The player reconnects the returning cargo to its warehouse")
+			t.advance_until(func(): return g.stock_at(g.BASE, 1) == 1, 20, "Canceled in-flight ore returns without inventing a full recipe refund")
+		else:
+			t.advance_until(func(): return g.stock_at(target, 1) == 1, 20, "The track unloads into the blueprint rather than the portal")
+			t.check(g.portal.input_blocks.is_empty(), "Track supply also skips the intermediate portal")
+		t.near(g.resource_inventory()[1], 1, "Arrival or cancellation preserves the one excavated block")
+
+	# Two destinations and several carriers cannot promise the same warehouse stock twice.
+	t.scenario("Competing blueprints share one real material batch", 3)
+	t.materials(6)
+	var first := Vector2i(35, 11)
+	var second := Vector2i(35, 14)
+	g.place_building(first, "bed")
+	g.place_building(second, "bed")
+	g.simulate(100)
+	t.check(g.beds.size() == 1, "Six sandstone can complete only one of the two beds")
+	t.near(g.resource_inventory()[1], 0, "Competing deliveries neither duplicate material nor leave excess at a completed site")
+	t.near(g.resource_activity(1, 1).consumed, 6, "Only the completed bed consumes materials")
+
+	t.scenario("Blueprint supply chooses the nearer warehouse", 1)
+	var warehouse := Vector2i(35, 14)
+	t.bed(warehouse)
+	g.add_stock(warehouse, 1, 6)
+	g.add_stock(g.BASE, 1, 6)
+	g.workers[0].pos = Vector2(35, 13)
+	g.place_building(first, "bed")
+	t.advance_until(func(): return g.beds.has(first), 100, "The bed is supplied from a reachable nearby warehouse")
+	t.near(g.stock_at(warehouse, 1), 0, "Delivery selection includes the source-to-receiver journey")
+	t.near(g.stock_at(g.BASE, 1), 6, "The portal does not win merely because it is first in the warehouse list")
+
+	# The two backpack items may have different receivers and still form one load.
+	t.scenario("A mixed backpack supplies different nearby consumers", 1)
+	var bed := Vector2i(35, 11)
+	var cable := Vector2i(35, 14)
+	g.workers[0].pos = Vector2(36, 13)
+	g.workers[0].backpack_uses = 1
+	g.terrain[ore + Vector2i.DOWN] = 2
+	g.place_building(bed, "bed")
+	g.place_building(cable, "low_line")
+	g.designate(ore, ore + Vector2i.DOWN)
+	t.advance_until(func(): return g.stock_at(bed, 1) == 1 and g.power_lines.has(cable), 90, "Sandstone and copper reach their respective consumers")
+	t.check(g.workers[0].backpack_uses == 0 and g.delivered == 2, "Completing the two-item load spends one backpack use across destinations")
+	t.near(g.resource_inventory()[1], 1, "The unfinished bed retains its actual sandstone")
+	t.near(g.resource_inventory()[2], 0, "The cable consumes only its actual copper")
+	t.check(g.portal.input_blocks.is_empty(), "Neither item needs an intermediate portal visit")
+
+	# In-flight goods already cover demand; newly mined goods must not overfill it.
+	t.scenario("An existing shipment covers the final material", 2)
+	t.clear_area(Rect2i(38, 12, 30, 3))
+	var distant := Vector2i(65, 13)
+	g.explored[distant] = true
+	g.add_stock(g.BASE, 2, 1)
+	g.terrain[ore] = 2
+	g.workers[0].pos = Vector2(36, 13)
+	g.workers[1].pos = Vector2(g.BASE)
+	g.place_building(distant, "low_line")
+	g.designate(ore, ore)
+	t.advance_until(func(): return g.power_lines.has(distant) and g.delivered == 1, 60, "The original material builds the cable and the new copper remains available")
+	t.near(g.resource_inventory()[2], 1, "Only one of the two copper blocks is consumed")
+	t.near(g.stock_at(distant, 2), 0, "Already-covered demand cannot receive a duplicate delivery")
+
+	# Canceling a destination must redirect actual carried ore, not refund its whole recipe.
+	t.scenario("Cancel a direct mined delivery and reuse the location", 1)
+	t.clear_area(Rect2i(38, 12, 12, 3))
+	distant = Vector2i(47, 13)
+	for cell in g.building_cells(distant, "bed"):
+		g.explored[cell] = true
+	g.workers[0].pos = Vector2(36, 13)
+	g.place_building(distant, "bed")
+	g.designate(ore, ore)
+	t.advance_until(func(): return g.mined == 1 and g.workers[0].pos.x > 39, 25, "The carrier is taking the mined block directly toward the distant blueprint")
+	g.cancel_site(distant)
+	t.check(g.place_building(distant, "low_line"), "The canceled blueprint does not reserve its old footprint")
+	t.advance_until(func(): return g.stock_at(g.BASE, 1) == 1, 25, "The carried sandstone returns to a real warehouse after cancellation")
+	t.near(g.stock_at(distant, 1), 0, "A replacement blueprint cannot receive an old delivery through a stale target")
+	t.near(g.resource_inventory()[1], 1, "Cancellation preserves the single excavated block")
+
+	# Surplus should use nearby completed storage, not automatically walk back to the portal.
+	t.scenario("Surplus ore uses a nearby completed warehouse", 1)
+	t.bed(station)
+	g.workers[0].pos = Vector2(36, 13)
+	g.designate(ore, ore)
+	t.advance_until(func(): return g.stock_at(station, 1) == 1, 25, "Ore without active demand goes to a nearby building")
+	t.check(g.portal.input_blocks.is_empty(), "The portal is not a mandatory intermediate warehouse")
 
 func check_mood(t) -> void:
 	var g = t.game
 	var ore := Vector2i(37, 13)
 	var p := Vector2i(28, 11)
-	# The same output must cost actual paid time, including work slower than its nominal hours.
+	# Faster or slower execution must not change the price of the same finished task.
 	for activity in ["mining", "building", "production"]:
 		var times: Array[float] = []
 		var wages: Array[float] = []
@@ -262,12 +409,12 @@ func check_mood(t) -> void:
 				complete = func(): return g.benches[p].stock == 1
 			times.append(t.advance_until(complete, 60, "The ordered output completes at every mood level"))
 			wages.append(w.earned_today)
-			var labor: float = g.report_totals(1, 0)["挖掘" if activity == "mining" else "工作"]
-			t.near(w.earned_today, labor / g.HOUR_SECONDS * g.WAGE_PER_HOUR, "Every actual labor hour is paid, even beyond nominal job cost", 0.01)
+			var reward := 1.0 if activity == "mining" else 4.0 if activity == "building" else 2.0
+			t.near(w.earned_today, reward, "A completed task pays its agreed reward independently of execution speed")
 			t.near(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, g.STARTING_BREAD, "Actual meals and wage transfers conserve the same physical bread")
 			t.near(g.resource_activity("bread", 1).consumed, w.eaten_today, "Only actual eating, not wages, consumes bread")
 		t.check(times[0] > times[1] and times[1] > times[2], "Low mood slows output and high mood accelerates it")
-		t.check(wages[0] > wages[1] and wages[1] > wages[2], "Hourly pay follows time rather than a fixed per-job ceiling")
+		t.check(is_equal_approx(wages[0], wages[1]) and is_equal_approx(wages[1], wages[2]), "Mood changes time, not the price of the finished item")
 
 	# A real night's sleep must carry into tomorrow's work, not reward entering a bed.
 	var excavation_times: Array[float] = []
@@ -306,18 +453,16 @@ func check_tracks(t) -> void:
 	var source := Vector2i(36, 13)
 	var ore := source + Vector2i.RIGHT
 	var line: Array[Vector2i] = [source, Vector2i(35, 13), Vector2i(34, 13), Vector2i(33, 13), g.BASE]
-	# Whole strokes either place once or leave materials and existing directions untouched.
-	t.scenario("Track strokes charge only new cells", 1)
-	t.materials(3)
-	t.check(not g.place_belt_path(line) and g.player_blocks == 3, "An unaffordable stroke cannot partially spend materials")
+	# Planning is free, but invalid strokes must not create partial construction.
+	t.scenario("Track strokes plan without prepayment", 1)
 	t.materials(4)
 	var through_portal: Array[Vector2i] = [Vector2i(33, 13), g.BASE, Vector2i(31, 13)]
 	t.check(not g.place_belt_path(through_portal) and g.player_blocks == 4, "Track cannot pass through the portal footprint")
-	t.check(g.place_belt_path(line) and g.player_blocks == 0, "Portal endpoint is free; four track cells cost four blocks")
-	t.check(g.place_belt_path(line) and g.player_blocks == 0, "Retracing blueprints does not charge twice")
-	var invalid: Array[Vector2i] = [Vector2i(35, 13), Vector2i(35, 14), Vector2i(35, 15), Vector2i(35, 16)]
-	t.check(not g.place_belt_path(invalid) and g.player_blocks == 0, "Unaffordable extension into ore leaves existing construction unchanged")
-	t.check(not g.cancel_site(Vector2i(37, 13)) and g.player_blocks == 0, "A track occupies only its own cell")
+	t.check(g.place_belt_path(line) and g.player_blocks == 4, "Four track blueprints leave their materials in the warehouse")
+	t.check(g.place_belt_path(line) and g.player_blocks == 4, "Retracing blueprints does not create a material charge")
+	var invalid: Array[Vector2i] = [Vector2i(35, 13), Vector2i(35, 15)]
+	t.check(not g.place_belt_path(invalid) and g.player_blocks == 4, "A nonadjacent stroke leaves existing construction unchanged")
+	t.check(not g.cancel_site(Vector2i(37, 13)) and g.player_blocks == 4, "A track occupies only its own cell")
 	g.simulate(30)
 	g.select_entity(source)
 	t.check(g.entity_title.text == "矿道" and g.entity_details.text.contains("通往传送门"), "Workers complete a connected track without another material charge")
@@ -599,16 +744,118 @@ func check_unbounded_world(t) -> void:
 		g.ensure_region(Rect2i(target - Vector2i.ONE * 2, Vector2i.ONE * 5))
 		t.check(g.terrain[target] == 0 and g.delivered == 1, "Revisiting generated terrain never respawns an excavated deposit")
 
+# Optional long-run diagnosis uses the same fixture and real player commands.
+func audit_hungry_workers(t) -> void:
+	var g = t.game
+	t.scenario("Hungry audit / 600 mining orders and three beds / five days", 3)
+	var quarry := Rect2i(37, 3, 30, 20)
+	g.ensure_region(quarry)
+	for y in range(quarry.position.y, quarry.end.y):
+		for x in range(quarry.position.x, quarry.end.x):
+			var p := Vector2i(x, y)
+			g.terrain[p] = 1
+			g.water_sources.erase(p)
+			g.navigation.set_point_solid(p, true)
+			g.explored[p] = true
+	for w in g.workers:
+		w.fatigue = 30
+	t.check(g.designate(quarry.position, quarry.end - Vector2i.ONE) == 600,
+		"Six hundred real mining orders keep work available throughout the audit")
+	var beds := [Vector2i(28, 11), Vector2i(31, 11), Vector2i(34, 11)]
+	for p in beds:
+		t.check(g.place_building(p, "bed"), "Each of the three bed blueprints is legally placed without prefilled materials")
+	var initial_bread: float = g.resource_inventory().bread
+	var consumed := 0.0
+	audit_observe(t, "start")
+	for i in 5:
+		g.simulate(g.DAY_SECONDS - g.day_elapsed - 0.05)
+		audit_observe(t, "day_%d" % g.day)
+		g.simulate(0.05)
+		consumed += g.resource_activity("bread", i + 1).consumed
+	audit_observe(t, "five_days_completed")
+	t.check(g.mined > 0 and consumed > 0, "The colony actually excavates and eats during five bounded days")
+	t.check(beds.all(func(p): return g.beds.has(p)), "Newly mined materials are delivered and all three beds are built")
+	t.near(g.resource_inventory().bread + consumed, initial_bread, "Five days of wages, rent and eating conserve physical bread")
+
+func audit_observe(t, phase: String) -> void:
+	var g = t.game
+	var people: Array[Dictionary] = []
+	for w in g.workers:
+		people.append({"worker_id": w.id, "name": w.name, "hunger": w.hunger, "fatigue": w.fatigue,
+			"bread": w.bread, "earned_today": w.earned_today, "eaten_today": w.eaten_today,
+			"report": g.report_totals(g.day, w.id)})
+	var result := {"scenario": t.scenario_name, "phase": phase, "day": g.day,
+		"second": g.day_elapsed, "mined": g.mined, "delivered": g.delivered,
+		"completed_beds": g.beds.size(),
+		"treasury_bread": g.stock_at(g.BASE, "bread"), "inventory": g.resource_inventory(), "workers": people}
+	g.ai_trace.record(g, {}, "test", "observation", result)
+	print("AUDIT ", JSON.stringify(result, "", false, true))
+
 # Observable choices and failures, not runner stages, claim handles or utility scores.
 func check_activity_choices(t) -> void:
 	var g = t.game
-	t.scenario("Small meals do not wait for a full daily allowance", 1)
+	# A partially fed person must not ignore a small meal because needs use an old cap.
+	for hunger in [0.0, 60.0]:
+		t.scenario("Small meals do not wait for a full daily allowance: " + str(hunger), 1)
+		var person: Dictionary = g.workers[0]
+		person.bread = 2
+		person.hunger = hunger
+		person.loan_principal = 5
+		t.advance_until(func(): return person.hunger > hunger + 15, 6, "A hungry indebted person can eat the food already owned")
+		t.near(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, g.STARTING_BREAD + 2, "Partial meals conserve food")
+		t.check(person.loan_principal == 5, "Eating does not fabricate debt repayment")
+
+	# Fractional interruption pay must remain usable food, not a rounded-up UI illusion.
+	t.scenario("A nearly whole portion remains edible", 1)
+	var fractional: Dictionary = g.workers[0]
+	fractional.bread = 0.9999999999999922
+	t.advance_until(func(): return fractional.hunger > 8, 5, "A hungry person can eat the actual fractional bread owned")
+	t.check(fractional.bread >= 0 and fractional.eaten_today > 0, "Fractional eating neither overdraws nor discards food")
+
+	# Full portions follow capacity without moving the existing meal-entry threshold.
+	for hunger in [0.0, 90.0]:
+		t.scenario("Meals target capacity without eating early: " + str(hunger), 1)
+		var person: Dictionary = g.workers[0]
+		var full_meal: float = g.MAX_HUNGER / g.HUNGER_PER_BREAD
+		person.bread = full_meal + 2
+		person.hunger = hunger
+		g.simulate(g.MEAL_SECONDS + 1)
+		var eaten := full_meal if hunger == 0 else 0.0
+		t.near(person.eaten_today, eaten, "A hungry person eats to capacity; an already fed person waits")
+		t.near(person.bread, full_meal + 2 - eaten, "Only the actual meal is charged to personal bread")
+		t.near(g.resource_activity("bread", 1).consumed, eaten, "Meal consumption matches the physical bread used")
+		if hunger == 0:
+			t.check(person.hunger > g.MAX_HUNGER - 5 and person.hunger <= g.MAX_HUNGER, "A full meal reaches near capacity without exceeding it")
+
+	# A modest balance must not stop paid work while food capacity remains unprovided.
+	t.scenario("Food capacity still motivates paid work above the old reserve", 1)
 	var w: Dictionary = g.workers[0]
-	w.bread = 2
-	w.loan_principal = 5
-	t.advance_until(func(): return w.hunger > 15, 6, "A hungry indebted person can eat the food already owned")
-	t.near(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, g.STARTING_BREAD + 2, "Partial meals conserve food")
-	t.check(w.loan_principal == 5, "Eating does not fabricate debt repayment")
+	w.hunger = 90
+	w.bread = 5
+	g.designate(Vector2i(37, 13), Vector2i(37, 13))
+	t.advance_until(func(): return g.delivered == 1, 25, "The worker earns and delivers instead of idling with an incomplete food reserve")
+	t.check(w.earned_today > 0, "The food-driven work pays actual wages")
+
+	# A replacement must receive only the unfinished share, not another full task price.
+	t.scenario("Interrupted production shares one task reward across workers", 2)
+	var printer := Vector2i(31, 11)
+	t.station("printer", printer)
+	g.add_stock(printer, 1, g.PRINT_WORKER_BLOCKS)
+	for person in g.workers:
+		person.pos = Vector2(printer)
+		person.hunger = 120
+		person.payroll = 4
+	g.workers[0].fatigue = 72
+	g.workers[0].loan_principal = 20
+	g.workers[1].bread = 5
+	var initial_bread: float = g.resource_inventory().bread
+	g.adjust_production(printer, 1)
+	t.advance_until(func(): return g.workers[0].earned_today > 0, 30, "The first worker interrupts and settles actual progress before completing the batch")
+	t.check(g.workers.size() == 2 and g.workers[0].earned_today < g.PRINT_WORKER_HOURS, "An interruption pays a fraction without inventing a finished product")
+	t.advance_until(func(): return g.workers.size() == 3, 90, "Another available worker finishes the retained task")
+	t.check(g.workers[1].earned_today > 0, "The replacement receives the remaining work share")
+	t.near(g.workers[0].earned_today + g.workers[1].earned_today, g.PRINT_WORKER_HOURS, "Handoffs cannot duplicate the fixed task reward")
+	t.near(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, initial_bread, "Interrupted payments and repayments conserve existing bread")
 
 	for reversed in [false, true]:
 		t.scenario("Paid work chooses a reachable closer opportunity: " + str(reversed), 1)

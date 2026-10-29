@@ -66,7 +66,7 @@ func run(t) -> void:
 	g.terrain[ORE] = 1
 	g.terrain[ORE + Vector2i.RIGHT] = 2
 	g.designate(ORE, ORE + Vector2i.RIGHT)
-	t.advance_until(func(): return g.delivered > 0, 25, "Backpack returns its first load")
+	t.advance_until(func(): return g.delivered == 2, 25, "Backpack delivers both items of its first load")
 	t.check(g.delivered == 2 and g.player_blocks == 2 and w.backpack_uses == 0, "First trip delivers two blocks and spends one backpack use")
 	t.near(g.resource_activity("workbench", 1).consumed, 1, "An exhausted backpack is consumed once, not once per ore delivered")
 	t.check(g.materials.get(1, 0) == 1 and g.materials.get(2, 0) == 1, "Backpack preserves both mineral types after delivery")
@@ -106,6 +106,7 @@ func run(t) -> void:
 
 func check_local_prices(t) -> void:
 	var g = t.game
+	var meal_bread := ceili(g.MAX_HUNGER / g.HUNGER_PER_BREAD)
 	# All saleable goods share local pricing, arrival-time checks and physical payment.
 	for kind in ["bench", "workbench", "purifier"]:
 		for setting in ["one", "two", "disconnect", "outside", "cheaper", "earn_difference"]:
@@ -121,7 +122,7 @@ func check_local_prices(t) -> void:
 			var cheaper := Vector2i(40, 10)
 			if setting == "cheaper": t.station(kind, cheaper, 4 if kind == "purifier" else 1)
 			var buyer: Dictionary = g.create_worker(Vector2i(35, 13))
-			buyer.bread = (30 if kind == "purifier" else 20) if setting != "earn_difference" else 10 + g.PRODUCTS[kind].price
+			buyer.bread = meal_bread + ((20 if kind == "purifier" else 10) if setting != "earn_difference" else g.PRODUCTS[kind].price)
 			buyer.mood.value = 60 if kind == "purifier" else 0
 			if setting == "earn_difference":
 				# A real order funds the shortfall; planning must not stop at the old list price.

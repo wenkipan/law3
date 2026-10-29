@@ -54,8 +54,8 @@ func run(t) -> void:
 	t.check(g.entity_details.text.contains("等待原水") and g.benches[OTHER].stock == 0, "Missing raw water waits instead of creating output")
 	t.near(g.workers[0].bread, 0, "Waiting for materials pays no wages")
 	g.adjust_production(P, 3)
-	g.simulate(45)
-	t.check(g.benches[OTHER].stock == 4 and g.benches[P].stock == 8, "Missed days do not accumulate catch-up batches")
+	t.advance_until(func(): return g.benches[OTHER].stock == 4 and g.benches[P].stock == 8, 120, "Current daily orders finish across actual collection and meals")
+	t.check(g.benches[P].produced_today == 12 and g.benches[OTHER].produced_today == 4, "Missed days do not accumulate catch-up batches")
 
 	t.scenario("Paid batch survives sleep, zero target, and midnight", 0)
 	t.station("workbench", OTHER)
@@ -66,7 +66,7 @@ func run(t) -> void:
 	tired_worker.loan_principal = 20
 	tired_worker.payroll = 4
 	g.adjust_production(OTHER, 1)
-	t.advance_until(func(): return tired_worker.earned_today > 0, 3, "A real production batch begins before midnight")
+	t.advance_until(func(): return g.report_totals(1, 0)["工作"] > 0, 3, "A real production batch begins before midnight")
 	g.adjust_production(OTHER, -1)
 	t.advance_until(func(): return g.benches[OTHER].produced_today == 1, 150, "The committed batch finishes after a voluntary sleep despite zero target")
 	t.check(g.day == 2, "The unfinished batch crosses midnight")
@@ -119,7 +119,7 @@ func run(t) -> void:
 	# A second player order is already waiting; earned mining material supplies it.
 	g.designate(Vector2i(37, 11), Vector2i(37, 15))
 	g.simulate(30)
-	t.check(g.delivered > 0 and g.workers[3].bread > 0, "Printed worker joins real paid mining")
+	t.check(g.delivered > 0 and g.workers[3].earned_today > 0, "Printed worker joins real paid mining even if the earned food is already eaten")
 	g.adjust_production(OTHER, -1)
 	g.adjust_production(P, -1)
 	g.simulate(g.DAY_SECONDS)
@@ -375,8 +375,9 @@ func check_mood_experiences(t) -> void:
 		t.power_facilities(1, 1)
 		g.workers[operator].mood.value = -46
 		g.simulate(g.HOUR_SECONDS)
-		t.check(g.resource_activity(3, 1).consumed > 0 and g.workers[operator].earned_today > 0, "A newly distressed operator still starts paid duty")
-		t.near(g.workers[operator].earned_today, g.report_totals(1, operator)["工作"] / g.HOUR_SECONDS, "Mood does not speed up or underpay attendance hours", 0.01)
+		t.check(g.resource_activity(3, 1).consumed > 0 and g.report_totals(1, operator)["工作"] > 0, "A newly distressed operator still starts real duty")
+		t.near(g.workers[operator].earned_today, 0, "An unfinished duty hour does not pay incremental wages")
+		t.advance_until(func(): return g.workers[operator].earned_today >= 1, 2, "A completed duty hour pays once")
 
 	# Drilling yields at a delivered batch, not the middle of a paid extraction.
 	t.scenario("Distressed drilling pays actual effort and stops on loss of power", 0)
@@ -391,7 +392,7 @@ func check_mood_experiences(t) -> void:
 	miner.mood.value = -60
 	g.designate(deposit, deposit)
 	t.advance_until(func(): return g.stock_at(drill, 2) == 1, 35, "Already-started drilling finishes despite sustained distress")
-	t.check(miner.earned_today > g.DRILL_HOURS, "Slow drilling pays its full actual labor cost")
+	t.near(miner.earned_today, g.DRILL_HOURS, "Slow drilling still pays the agreed extraction price")
 	var drilling_wages: float = miner.earned_today
 	g.remove_power_line(Vector2i(31, 8))
 	g.simulate(g.HOUR_SECONDS)
@@ -543,9 +544,10 @@ func check_power(t) -> void:
 			var wages: float = operator.earned_today
 			g.simulate(g.HOUR_SECONDS * 0.5)
 			t.near(g.resource_activity(3, 1).consumed - fuel, 0 if generator == "manual_generator" else expected / 1600.0 * 0.5, "Only coal generation consumes coal", 0.003)
-			t.near(operator.earned_today - wages, 0.5, "Generation pays for actual attendance, not power capacity", 0.01)
+			t.near(operator.earned_today, wages, "Half a duty period does not trigger a partial payment")
 			g.remove_power_line(Vector2i(29, 8))
 			g.simulate(0.1)
+			t.near(operator.earned_today - wages, g.report_totals(1, operator.id)["工作"] / g.HOUR_SECONDS, "A broken circuit settles the actual partial duty period", 0.01)
 			wages = operator.earned_today
 			g.simulate(g.HOUR_SECONDS)
 			t.near(operator.earned_today, wages, "A disconnected manual or coal generator releases its operator")
@@ -599,12 +601,11 @@ func check_local_services(t) -> void:
 		g.adjust_production(station, 1)
 		var expected := 2.0 if setting in ["absent", "outside"] else 2.4
 		if setting == "disconnect":
-			t.advance_until(func(): return worker.earned_today > 0.4, 10, "The first part of the batch is paid at the lit rate")
-			var paid: float = worker.earned_today
-			expected = paid + 2.0 - paid / 1.2
+			t.advance_until(func(): return g.report_totals(g.day, worker.id)["工作"] > g.HOUR_SECONDS * 0.4, 10, "A real batch begins while the wage light is powered")
+			t.near(worker.earned_today, 0, "Production has not paid before completion")
 			g.remove_power_line(Vector2i(31, 8))
 		t.advance_until(func(): return g.stock_at(station, "workbench") == 1, 30, "The same paid batch finishes without losing progress")
-		t.near(worker.earned_today, expected, "Actual wages follow powered coverage without stacking", 0.01)
+		t.near(worker.earned_today, expected, "The agreed batch price keeps its starting light bonus without stacking", 0.01)
 		t.near(worker.bread + worker.meal_bread + worker.eaten_today, worker.earned_today * (0.75 if setting == "debt" else 1.0), "The actual raised wage preserves normal repayment and food ownership", 0.001)
 		t.near(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, bread, "Actual meals and wage bonuses conserve existing bread")
 		if setting == "debt": t.near(worker.loan_principal, 2 - worker.earned_today * 0.25, "Repayment uses the actual raised wage")
@@ -678,6 +679,10 @@ func check_drilling(t) -> void:
 	g.navigation.set_point_solid(deposit, true)
 	var miner: Dictionary = g.create_worker(drill)
 	miner.gun_uses = 10
+	# Reconnection tests infrastructure; sustained mechanical distress is covered separately.
+	for person in g.workers:
+		person.hunger = 120
+		person.mood.value = 60
 	g.designate(deposit, deposit)
 	t.advance_until(func(): return g.stock_at(drill, 2) >= 2, 65, "A single drilling operator repeatedly extracts copper")
 	t.check(g.terrain[deposit] == 5 and miner.gun_uses == 10, "Dense deposits remain and do not consume ordinary mining tools")
@@ -687,10 +692,15 @@ func check_drilling(t) -> void:
 	t.near(g.stock_at(drill, 2), stock, "Drilling pauses without electricity rather than mining by hand")
 	g.designate(deposit, deposit, true)
 	g.add_stock(g.BASE, 2, 1)
+	var copper: float = g.resource_inventory()[2]
+	var extracted: int = g.mined
 	g.place_building(Vector2i(31, 8), "low_line")
 	t.advance_until(func(): return not g.sites.has(Vector2i(31, 8)), 30, "Player repairs the cut power cable")
 	g.simulate(20)
-	t.near(g.stock_at(drill, 2), stock, "Canceled dense mining does not resume when power returns")
+	t.check(g.mined == extracted, "Canceled dense mining does not resume when power returns")
+	# A repair may use nearby drill output instead of the portal; location is not ownership.
+	t.near(g.resource_inventory()[2], copper - 1, "Repair consumes exactly one actual copper block, wherever it was stored")
+	stock = g.stock_at(drill, 2)
 	g.begin_drill_move(drill)
 	var destination := Vector2i(40, 14)
 	t.check(g.move_drill_to(destination), "Drill can relocate to reachable clear ground without new building materials")
@@ -706,7 +716,7 @@ func check_drilling(t) -> void:
 	g.add_stock(g.BASE, 2, cable_path.size())
 	t.check(g.place_building_batch(cable_path, "low_line"), "A new low-voltage branch can reach the moved drill")
 	t.advance_until(func(): return g.stock_at(destination, 3) > 0, g.DAY_SECONDS * 3, "Reconnecting resumes extraction after workers satisfy their own needs")
-	t.near(g.stock_at(destination, 2), stock, "Later reconnection still preserves moved copper exactly once")
+	t.near(g.resource_inventory()[2], copper - 1, "Reconnection uses its added copper without duplicating or losing relocated inventory")
 
 	# A spare unpowered machine must not attract the entire crew away from generation.
 	t.scenario("An unpowered drill cannot strand the available power crew", 0)

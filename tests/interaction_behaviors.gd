@@ -59,7 +59,11 @@ func run(t) -> void:
 	await t.settle()
 	await t.click(g.furniture_button.get_global_rect().get_center())
 	await t.click(g.tool_buttons.bed.get_global_rect().get_center())
-	t.check(g.tool_buttons.bed.disabled and g.tool != "bed", "Clicking a disabled recipe cannot spend the wrong mineral")
+	t.check(not g.tool_buttons.bed.disabled and g.tool == "bed", "The toolbar allows planning even when only the wrong mineral is available")
+	await t.click_world(g.tile_center(P))
+	t.check(g.building_at(P) and g.stock_at(g.BASE, 2) == 6, "A material-short blueprint is placed without spending copper")
+	g.set_tool("cancel")
+	await t.click_world(g.tile_center(P + Vector2i.RIGHT))
 	t.materials(6)
 	g.set_tool("bed")
 	await t.settle()
@@ -86,7 +90,7 @@ func run(t) -> void:
 		g.set_tool(kind)
 		await t.settle()
 		await t.click_world(g.tile_center(P))
-		t.check(g.player_blocks == 0, "Ground click places a paid blueprint")
+		t.check(g.player_blocks == g.building_blocks(kind), "Ground click places a blueprint without prepaying materials")
 		await t.click_world(g.tile_center(P + Vector2i.RIGHT))
 		t.check(g.entity_title.text == g.building_name(kind) + " · 建造中", "Blueprint opens live construction details")
 		g.simulate(90)
@@ -147,7 +151,7 @@ func run(t) -> void:
 		await t.settle()
 		if not g.build_tray.visible:
 			await t.click(g.furniture_button.get_global_rect().get_center())
-		t.check(g.build_tray.visible and g.tool_buttons.bank.disabled, "Bank is listed but unavailable without materials")
+		t.check(g.build_tray.visible and not g.tool_buttons.bank.disabled, "Bank planning remains available without construction materials")
 		t.check(t.root.get_visible_rect().encloses(g.build_tray.get_global_rect()), "Expanded building list fits the window")
 		await t.click_world(g.tile_center(P + Vector2i.RIGHT))
 		t.check(g.entity_title.text == "银行" and g.entity_details.text.contains("已收利息  0.19"), "Selected bank shows real collected interest")
@@ -257,7 +261,7 @@ func check_power_interactions(t) -> void:
 			var stroke: Array[Vector2i] = [P, P + axis * 2]
 			var orientation := "horizontal" if axis == Vector2i.RIGHT else "vertical"
 			await t.drag_world(stroke, false, false, "/tmp/law3-power-%s-%s-preview.png" % [kind, orientation])
-			t.check(g.player_blocks == 0, "Each of three cable lengths charges exactly once")
+			t.check(g.player_blocks == g.building_blocks(kind) * 3, "Planning cable lengths leaves warehouse materials untouched")
 			var far_cell: Vector2i = P + (Vector2i(axis.y, axis.x) if kind == "high_line" else Vector2i.ZERO)
 			await t.click_world(g.tile_center(far_cell))
 			t.check(g.entity_title.text == g.building_name(kind) + " · 建造中", "Cable footprint opens its construction details")
@@ -288,8 +292,10 @@ func check_power_interactions(t) -> void:
 			t.building_materials(kind)
 			await choose_building(t, kind)
 			stroke = [P, P + axis * 3]
-			await t.drag_world(stroke)
-			t.check(g.player_blocks == 0, "Extending a same-type line charges only its new length")
+			await t.drag_world(stroke, false, false, "", Vector2(18, -8))
+			t.check(g.player_blocks == g.building_blocks(kind), "Planning an extension does not prepay its material")
+			t.check(g.building_at(P + axis * 3), "Dragging from an exposed part of the cable plans the extension")
+			t.advance_until(func(): return g.power_lines.size() == 4, 30, "The extension receives its own material and completes")
 			if t.native and kind == "high_line" and axis == Vector2i.DOWN:
 				await RenderingServer.frame_post_draw
 				t.root.get_texture().get_image().save_png("/tmp/law3-power-vertical.png")
@@ -317,7 +323,7 @@ func check_power_interactions(t) -> void:
 	await choose_building(t, "belt")
 	var crossing: Array[Vector2i] = [Vector2i(30, 10), Vector2i(30, 14)]
 	await t.drag_world(crossing)
-	t.check(g.player_blocks == 0, "A belt can cross both corridor cells without duplicating cable cost")
+	t.check(g.player_blocks == 5, "Belt blueprints can cross the corridor without prepaying materials")
 	t.building_materials("bed")
 	t.check(not g.place_building(Vector2i(28, 12), "bed"), "The full two-cell corridor rejects buildings")
 	t.check(not g.route(Vector2i(29, 10), Vector2i(29, 14)).is_empty(), "People can walk across the corridor")
@@ -582,7 +588,7 @@ func check_building_rows(t) -> void:
 	var covered_row: Array[Vector2i] = [Vector2i(36, 13), Vector2i(38, 13)]
 	await choose_building(t, "bed")
 	await t.drag_world(covered_row)
-	t.check(g.player_blocks == 0, "Dragging over ore places both funded blueprints")
+	t.check(g.player_blocks == g.BED_BLOCKS * 2, "Dragging over ore places blueprints without locking warehouse stock")
 	for width in [1440, 960]:
 		t.root.size = Vector2i(width, 900 if width == 1440 else 640)
 		g.camera.zoom = Vector2.ONE * (1.0 if width == 1440 else 0.65)
@@ -616,15 +622,15 @@ func check_building_rows(t) -> void:
 		await choose_building(t, kind)
 		var stroke: Array[Vector2i] = [P, P + Vector2i(4, 0)]
 		await t.drag_world(stroke, false, false, "/tmp/law3-behaviors-row-preview.png" if kind == "bed" else "")
-		t.check(g.player_blocks == 0 and g.tool_buttons[kind].disabled, "Fast drag fills the row at footprint spacing and charges once")
+		t.check(g.player_blocks == cost * 3 and not g.tool_buttons[kind].disabled, "Fast drag plans the row without locking materials or disabling the tool")
 		for i in 3:
 			await t.click_world(g.tile_center(P + Vector2i(i * 2 + 1, 0)))
 			t.check(g.entity_title.text == g.building_name(kind) + " · 建造中", "Every building's far footprint cell opens its blueprint")
 		t.advance_until(func(): return g.sites.is_empty(), 600, "Row construction completes across autonomous meals and rest")
 		await t.settle()
 		for i in 3:
-			await t.click_world(g.tile_center(P + Vector2i(i * 2 + 1, 0)) + Vector2(0, 16))
-			t.check(g.entity_title.text == g.building_name(kind), "All row blueprints complete with empty inventory")
+			await click_exposed_building(t, P + Vector2i(i * 2 + 1, 0), g.building_name(kind))
+			t.check(g.entity_title.text == g.building_name(kind), "Completed row remains inspectable: %s" % g.entity_title.text)
 		t.check(g.player_blocks == 0, "Batch construction does not charge again")
 
 	# Axis locking must not jump rows due to small perpendicular mouse movement.
@@ -635,7 +641,7 @@ func check_building_rows(t) -> void:
 		var start := Vector2i(28, 11) if endpoint.y == 15 else Vector2i(28, 15)
 		var stroke: Array[Vector2i] = [start, start + Vector2i(0, signi(endpoint.y - start.y)), endpoint + Vector2i.RIGHT]
 		await t.drag_world(stroke)
-		t.check(g.player_blocks == 0, "Vertical drag follows the first axis and uses one-row spacing")
+		t.check(g.player_blocks == g.BED_BLOCKS * 5, "Vertical planning follows the first axis without prepayment")
 		for y in range(11, 16):
 			await t.click_world(g.tile_center(Vector2i(29, y)))
 			t.check(g.entity_title.text == "床 · 建造中", "Reverse or drifting drag leaves a straight complete column")
@@ -653,13 +659,20 @@ func check_building_rows(t) -> void:
 	await t.drag_world(safe_row, false, true)
 	t.check(g.player_blocks == g.BED_BLOCKS * 3, "Right-click cancels a building row without a keyboard")
 	await t.click_world(g.tile_center(Vector2i(28, 15)))
-	t.check(g.player_blocks == g.BED_BLOCKS * 2, "Canceled gesture does not leak into the next single placement")
+	t.check(g.player_blocks == g.BED_BLOCKS * 3 and g.building_at(Vector2i(28, 15)) and not g.building_at(Vector2i(30, 15)), "Canceled gesture does not leak into the next single placement")
 
 func choose_building(t, kind: String) -> void:
 	await t.settle()
 	if not t.game.build_tray.visible:
 		await t.click(t.game.furniture_button.get_global_rect().get_center())
 	await t.click(t.game.tool_buttons[kind].get_global_rect().get_center())
+
+func click_exposed_building(t, cell: Vector2i, title: String) -> void:
+	# Keep workers where simulation left them; click distinct exposed edges, never move them away.
+	for offset in [Vector2(0, 16), Vector2(-18, 16), Vector2(18, 16), Vector2(-18, -18), Vector2(18, -18)]:
+		await t.click_world(t.game.tile_center(cell) + offset)
+		if t.game.entity_title.text == title:
+			return
 
 func check_tracks(t) -> void:
 	var g = t.game
@@ -671,10 +684,10 @@ func check_tracks(t) -> void:
 	await choose_building(t, "belt")
 	var covered_path: Array[Vector2i] = [Vector2i(38, 13), Vector2i(36, 13)]
 	await t.drag_world(covered_path)
-	t.check(g.player_blocks == 0, "Track drag reserves materials for every crossed ore cell")
+	t.check(g.player_blocks == 3, "Track planning across ore leaves materials unreserved")
 	g.set_tool("cancel")
 	await t.click_world(g.tile_center(Vector2i(38, 13)))
-	t.check(g.player_blocks == 1, "Cancel click over solid terrain refunds the covered track cell")
+	t.check(g.player_blocks == 3 and not g.building_at(Vector2i(38, 13)), "Canceling an unfilled covered track does not create a refund")
 	g.simulate(45)
 	g.set_tool("dig")
 	await t.click_world(g.tile_center(Vector2i(37, 13)) + Vector2(0, 16))
@@ -690,7 +703,7 @@ func check_tracks(t) -> void:
 	await t.click(g.tool_buttons.belt.get_global_rect().get_center())
 	var path: Array[Vector2i] = [Vector2i(36, 15), Vector2i(35, 15), Vector2i(35, 14), Vector2i(35, 13), Vector2i(34, 13), Vector2i(33, 13), g.BASE]
 	await t.drag_world(path)
-	t.check(g.player_blocks == 1, "Drag charges every new cell once")
+	t.check(g.player_blocks == 7, "Dragging a route leaves construction materials in storage")
 	await t.click_world(g.tile_center(path[0]))
 	t.check(g.entity_title.text == "矿道 · 建造中", "Single-cell track blueprint can be inspected")
 	g.simulate(45)
@@ -729,16 +742,16 @@ func check_tracks(t) -> void:
 	await t.drag_world(short_path, true)
 	t.check(g.player_blocks == 10, "Releasing a track stroke over UI spends nothing")
 	await t.click_world(g.tile_center(Vector2i(36, 15)))
-	t.check(g.player_blocks == 9, "Next click places only one tile after canceled UI drag")
+	t.check(g.player_blocks == 10 and g.building_at(Vector2i(36, 15)) and not g.building_at(Vector2i(36, 14)), "Next click plans only one tile after canceled UI drag")
 	g.set_tool("cancel")
 	await t.click_world(g.tile_center(Vector2i(36, 15)))
 	t.check(g.player_blocks == 10, "Cancel tool refunds the track blueprint")
 	t.materials(1)
 	g.set_tool("belt")
 	await t.drag_world(short_path)
-	t.check(g.player_blocks == 1, "An unaffordable drag does not place a partial line")
+	t.check(g.player_blocks == 1 and g.building_at(short_path[0]) and g.building_at(short_path[1]), "Material shortage does not prevent planning the full line")
 	await t.click_world(g.tile_center(Vector2i(36, 15)))
-	t.check(g.player_blocks == 0, "Single-tile placement still works after a rejected stroke")
+	t.check(g.player_blocks == 1 and g.entity_title.text == "矿道 · 建造中", "Clicking an existing unfunded blueprint opens its details without a charge")
 
 	# Missing intermediate mouse events must not produce an X-first detour or holes.
 	t.scenario("Fast diagonal track stroke follows crossed grid cells", 0)
@@ -746,7 +759,7 @@ func check_tracks(t) -> void:
 	await choose_building(t, "belt")
 	var diagonal: Array[Vector2i] = [Vector2i(34, 15), Vector2i(35, 11)]
 	await t.drag_world(diagonal)
-	t.check(g.player_blocks == 0, "Fast diagonal gesture places a continuous six-cell stroke")
+	t.check(g.player_blocks == 6, "Fast diagonal planning leaves materials untouched")
 	for cell in [Vector2i(34, 14), Vector2i(35, 12)]:
 		await t.click_world(g.tile_center(cell))
 		t.check(g.entity_title.text == "矿道 · 建造中", "Cells crossed by the pointer, not an arbitrary horizontal-first detour, receive blueprints")
@@ -758,7 +771,7 @@ func check_tracks(t) -> void:
 	await t.drag_world(backtrack, false, true)
 	t.check(g.player_blocks == 5, "Right-click discards a track preview without charging")
 	await t.drag_world(backtrack)
-	t.check(g.player_blocks == 3, "Dragging back retracts pending cells rather than reversing the preview")
+	t.check(g.player_blocks == 5 and g.building_at(Vector2i(36, 15)) and g.building_at(Vector2i(35, 15)) and not g.building_at(Vector2i(34, 15)), "Dragging back retracts preview cells without prepaying construction")
 
 	# Occupied tracks protect ore while worker-over-track picking and nearby buildings stay correct.
 	t.scenario("Loaded track inspector and visible freight", 1)

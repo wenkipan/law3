@@ -34,22 +34,25 @@ func tick(g, w: Dictionary, delta: float) -> Dictionary:
 	var action: String = report_action(g)
 	active.labor_seconds = 0.0
 	active.experience = {}
+	var previous_phase: String = active.phase
 	var result: String = active.tick(g, w, delta)
+	if active.phase != previous_phase:
+		g.ai_trace.record(g, w, "state_tree", "phase", {"from": previous_phase, "to": active.phase})
 	active.age += delta
 	experience = active.experience.duplicate()
 	if active is Work and action in ["挖掘", "工作"]:
 		var labor: float = active.labor_seconds
 		g.record_worker_time(w, action, labor)
 		g.record_worker_time(w, "等待", delta - labor)
-		var refreshed := minf(labor, w.water_effect)
-		w.fatigue = minf(100, w.fatigue + g.FATIGUE_PER_HOUR * (labor - refreshed * g.WATER_FATIGUE_REDUCTION) / g.HOUR_SECONDS)
+		w.fatigue = minf(100, w.fatigue + g.FATIGUE_PER_HOUR * labor * active.fatigue_factor / g.HOUR_SECONDS)
 	else:
 		g.record_worker_time(w, action, delta)
 	if result != "running":
 		# A completed duty segment is a choice point, not a mandatory power outage.
 		if result == "success" and active.option.kind == "operate":
-			var choices: Array = Selection.options(g, w)
-			if not choices.is_empty() and choices[0].same_activity(active.option) and g.begin_work(active.option, w):
+			var choices: Array = Selection.options(g, w, "period_completed")
+			if not choices.is_empty() and choices[0].same_activity(active.option) and g.begin_work(active.option, w, active.segment):
+				active.fatigue_factor = active.segment.fatigue_factor
 				active.age = 0.0
 				return experience
 		exit(g, w, result)
@@ -57,7 +60,7 @@ func tick(g, w: Dictionary, delta: float) -> Dictionary:
 		review_elapsed += delta
 		if review_elapsed >= g.HOUR_SECONDS and active is Work and (w.fatigue >= 75 or (w.hunger < 20 and w.bread >= 4)):
 			review_elapsed = 0.0
-			var choices: Array = Selection.options(g, w)
+			var choices: Array = Selection.options(g, w, "needs_review")
 			var continuation := 0.0
 			for option in choices:
 				if option.same_activity(active.option):
@@ -77,14 +80,15 @@ func select(g, w: Dictionary) -> void:
 		if activity.enter(g, w, option):
 			active = activity
 			review_elapsed = 0.0
-			if "--trace-ai" in OS.get_cmdline_user_args():
-				print("AI ", w.id, " ", option.kind, " ", option.target, " score=", snappedf(option.score, 0.001))
+			g.ai_trace.entered(g, w)
 			return
 		activity.exit(g, w, "rejected")
+		g.ai_trace.record(g, w, "state_tree", "entry_rejected", g.WorkerTrace.proposal(option))
 	decision_wait = 0.2
 
 func exit(g, w: Dictionary, reason: String) -> void:
 	if active != null:
+		g.ai_trace.record(g, w, "state_tree", "exiting", {"reason": reason})
 		active.exit(g, w, reason)
 	active = null
 	drink_elapsed = -1.0

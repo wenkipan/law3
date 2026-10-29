@@ -6,10 +6,13 @@ read file README.md,扩大系统设计.md, they are how game iterated
 - Simulation changes do not authorize new UI fields. Keep internal budgets,
   payment forecasts, and decision diagnostics out of player-facing panels and
   tooltips unless explicitly requested. Do not display daily budget or amount due.
-- Do not show intrusive error dialogs. Disable unavailable building buttons and
-  block placement shortcuts when materials are insufficient. Charge all materials
-  once when placing a blueprint, never during construction; existing sites keep
-  building even when inventory is empty.
+- Do not show intrusive error dialogs. Material shortages do not disable building
+  tools or prevent legal blueprint placement. Blueprints publish supply demand
+  without charging or reserving stock; workers deliver actual materials through
+  the same StateTree, Utility Selection and Smart Objects flow as production.
+  Construction requires a clear footprint and all materials on site, consumes
+  them once on completion, and never charges remote stock during construction.
+  Cancellation recovers only actual goods, never the unfilled recipe.
 - Keep the world view free of text labels and attribute/progress bars.
 - The only world-text exception is a worker's name, centered below their feet.
 - Show descriptions, numeric attributes, status text, and progress bars only in

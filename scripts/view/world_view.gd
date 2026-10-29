@@ -382,7 +382,7 @@ func sync_dynamic() -> void:
 		hover_frame.hide()
 		hovered = null
 	var preview_kind: String = "drill" if game.tool == "move_drill" else game.tool
-	preview.visible = (game.tool == "move_drill" or (game.tool in game.BUILDING_KINDS and game.can_afford_building(game.tool))) and game.explored.has(hover) and get_viewport().gui_get_hovered_control() == null
+	preview.visible = (game.tool == "move_drill" or game.tool in game.BUILDING_KINDS) and game.explored.has(hover) and get_viewport().gui_get_hovered_control() == null
 	if preview.visible:
 		configure_blueprint(preview, hover, preview_kind)
 	preview.modulate = Color(1, 1, 1, 0.5) if game.building_space_valid(hover, preview_kind) else Color(1, 0.4, 0.3, 0.5)
@@ -498,7 +498,7 @@ func sync_line_preview() -> void:
 	if game.tool in game.LINE_KINDS:
 		if game.building_drawing:
 			positions.assign(game.building_row())
-		elif game.can_afford_building(game.tool) and game.explored.has(game.mouse_tile()) and get_viewport().gui_get_hovered_control() == null:
+		elif game.explored.has(game.mouse_tile()) and get_viewport().gui_get_hovered_control() == null:
 			positions.append(game.mouse_tile())
 	var plan: Dictionary = game.power_lines.duplicate()
 	for p in game.sites:

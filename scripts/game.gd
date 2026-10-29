@@ -23,7 +23,7 @@ const BED_LEASE_HOURS := 8.0
 const BED_RECOVERY_PER_HOUR := 15.0
 const BENCH_BLOCKS := 6
 const BENCH_BUILD_HOURS := 4.0
-# 矿枪在武器桌购买，缩短挖掘时间；每完成一格消耗一次耐久，工资与疲劳按实际工时计算。
+# 矿枪缩短挖掘时间但不降低单件报酬；每完成一格消耗一次耐久，疲劳按实际工时计算。
 const GUN_WORK_HOURS := 2.0
 const GUN_PRICE := 5.0
 const GUN_USES := 10
@@ -112,6 +112,7 @@ const WorldNavigation = preload("res://scripts/world_navigation.gd")
 const WorkerMood = preload("res://scripts/worker_mood.gd")
 const WorkerStateTree = preload("res://scripts/simulation/worker_state_tree.gd")
 const SmartObjects = preload("res://scripts/simulation/smart_objects.gd")
+const WorkerTrace = preload("res://scripts/simulation/worker_trace.gd")
 const Art = preload("res://scripts/view/art.gd")
 const ACTIONS := ["挖掘", "工作", "搬运", "等待", "空闲", "通勤", "吃饭", "睡觉"]
 const DIRS := [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
@@ -159,6 +160,7 @@ var building_drawing := false
 var building_start := Vector2i.ZERO
 var building_end := Vector2i.ZERO
 var building_axis := Vector2i.ZERO
+var building_pick = null
 # Available stock is not a location. Reserved freight remains at its source until pickup.
 var stores: Dictionary = {}
 var shipments: Array[Dictionary] = []
@@ -185,6 +187,7 @@ var player_blocks: int:
 		return total
 var workers: Array[Dictionary] = []
 var smart_objects := SmartObjects.new()
+var ai_trace := WorkerTrace.new()
 var newborns: Array[Vector2i] = []
 var navigation := WorldNavigation.new()
 var camera := Camera2D.new()
@@ -208,7 +211,7 @@ var panning := false
 var selection_start := Vector2i.ZERO
 var selection_end := Vector2i.ZERO
 var fog_timer := 0.0
-var dispatch_timer := 0.0
+var recovery_timer := 0.0
 var animation_time := 0.0
 var day_clock: Control
 var pause_button: Button
@@ -231,6 +234,9 @@ var bed_texture: Texture2D
 var bed_blueprint_texture: Texture2D
 
 func _ready() -> void:
+	ai_trace.configure(OS.get_cmdline_user_args())
+	smart_objects.tracing = ai_trace.enabled
+	smart_objects.traced.connect(trace_smart_object)
 	get_viewport().physics_object_picking = true
 	get_viewport().physics_object_picking_sort = true
 	get_viewport().physics_object_picking_first_only = true
@@ -276,6 +282,7 @@ func reset_world(new_seed: int = -1) -> void:
 	belt_path.clear()
 	building_drawing = false
 	building_axis = Vector2i.ZERO
+	building_pick = null
 	stores.clear()
 	stores[BASE] = {"bread": STARTING_BREAD}
 	shipments.clear()
@@ -294,13 +301,17 @@ func reset_world(new_seed: int = -1) -> void:
 	mined = 0
 	day = 1
 	day_elapsed = 0.0
+	ai_trace.reset(self)
 	portal = Portal.new()
 	wander_rng.seed = 1020
-	dispatch_timer = 0.0
+	recovery_timer = 0.0
 	fog_timer = 0.0
 	dragging = false
 	simulation_paused = false
 	pause_button.text = "Ⅱ"
+	set_tool("dig")
+	build_tray.hide()
+	furniture_button.button_pressed = false
 	generate_terrain()
 	for i in 3:
 		create_worker(BASE + Vector2i(i - 1, 1))
@@ -345,14 +356,19 @@ func create_worker(p: Vector2i) -> Dictionary:
 	var id := workers.size()
 	var worker := {"id": id, "name": WORKER_NAMES[id] if id < WORKER_NAMES.size() else "矿工%d" % (id + 1),
 		"color": WORKER_COLORS[id % WORKER_COLORS.size()], "pos": Vector2(p), "facing": 1.0,
-		"activity": WorkerStateTree.new(), "carry": 0, "extra_cargo": [], "freight": {},
+		"activity": WorkerStateTree.new(), "carry": 0, "extra_cargo": [], "freight": {}, "ore_delivery": {},
 		"bread": 0.0, "earned_today": 0.0, "eaten_today": 0.0, "hunger": 0.0, "meal_bread": 0.0,
 		"bed_spent_today": 0.0, "shop_spent_today": 0.0, "fatigue": 0.0,
 		"gun_uses": 0, "backpack_uses": 0, "water": 0, "water_effect": 0.0,
 		"mood": WorkerMood.new(), "loan_principal": 0.0, "loan_interest": 0.0, "loan_day": 0, "loan_bank": null,
 		"unloaded_this_trip": 0, "payroll": 0.0}
 	workers.append(worker)
+	ai_trace.record(self, worker, "simulation", "spawn")
 	return worker
+
+func trace_smart_object(worker_id: int, event: String, data: Dictionary) -> void:
+	if worker_id >= 0 and worker_id < workers.size():
+		ai_trace.record(self, workers[worker_id], "smart_objects", event, data)
 
 func tile_center(p: Vector2) -> Vector2:
 	return (p - Vector2(view_origin) + Vector2(0.5, 0.5)) * CELL
@@ -416,9 +432,6 @@ func delivery_route(start: Vector2i, target: Vector2i, use_belts := true) -> Dic
 				result = {"stop": p, "path": path}
 	return result
 
-func mined_delivery(w: Dictionary) -> Dictionary:
-	return {"target": BASE, "item": w.carry, "amount": 1, "mined": true}
-
 func take_carried_ore(w: Dictionary) -> int:
 	var ore: int = w.carry
 	w.carry = w.extra_cargo.pop_front() if not w.extra_cargo.is_empty() else 0
@@ -431,18 +444,14 @@ func take_carried_ore(w: Dictionary) -> int:
 		w.unloaded_this_trip = 0
 	return ore
 
-func deliver_ore(ore: int, freight_fee := 0.0) -> void:
-	delivered += 1
-	add_stock(BASE, ore, 1)
-	add_stock(BASE, "bread", freight_fee)
-	portal.freight_bread += freight_fee
-	portal.input_blocks[ore] = portal.input_blocks.get(ore, 0) + 1
-
 func delivery_building_at(cell: Vector2i):
 	if cell == BASE:
 		return BASE
-	for collection in [benches, banks, beds]:
+	for collection in [sites, benches, banks, beds]:
 		for origin in collection:
+			if is_same(collection, sites):
+				if collection[origin].get("cancelled", false) or building_kind(origin) in BELT_KINDS or building_kind(origin) in LINE_KINDS:
+					continue
 			if cell in building_cells(origin, building_kind(origin)):
 				return origin
 	return null
@@ -479,7 +488,6 @@ func remove_belt(p: Vector2i) -> bool:
 	sites[p].merge({"kind": kind, "materials": belts[p].materials, "cancelled": true, "direction": belts[p].direction, "inputs": belts[p].inputs})
 	belts.erase(p)
 	recover_cancelled_sites()
-	update_build_availability()
 	return true
 
 func belt_direction_at(p: Vector2i) -> Vector2i:
@@ -531,7 +539,6 @@ func belt_plan_valid(path: Array[Vector2i]) -> bool:
 		return false
 	var plan := belt_path_plan(path)
 	var line_kind := "electric_belt" if tool == "electric_belt" else "belt"
-	var cost := 0
 	var visited: Dictionary = {}
 	for i in path.size():
 		var p := path[i]
@@ -548,8 +555,7 @@ func belt_plan_valid(path: Array[Vector2i]) -> bool:
 			continue
 		if not building_space_valid(p, line_kind):
 			return false
-		cost += building_blocks(line_kind)
-	return cost == 0 or can_afford_building(line_kind, cost)
+	return true
 
 func place_belt_path(path: Array[Vector2i]) -> bool:
 	if not belt_plan_valid(path):
@@ -603,12 +609,17 @@ func finish_belt_drag(screen_position: Vector2) -> void:
 	belt_path.clear()
 
 func complete_delivery(delivery: Dictionary, fee := 0.0) -> void:
+	if not shipments.has(delivery):
+		return
+	add_stock(delivery.target, delivery.item, delivery.amount)
 	if delivery.get("mined", false):
-		deliver_ore(delivery.item, fee)
-	else:
-		add_stock(delivery.target, delivery.item, delivery.amount)
-		shipments.erase(delivery)
-		recover_cancelled_sites()
+		delivered += int(delivery.amount)
+		if delivery.target == BASE:
+			portal.input_blocks[delivery.item] = portal.input_blocks.get(delivery.item, 0) + int(delivery.amount)
+	add_stock(BASE, "bread", fee)
+	portal.freight_bread += fee
+	shipments.erase(delivery)
+	recover_cancelled_sites()
 
 func load_belt(w: Dictionary, delivery: Dictionary, p: Vector2i) -> bool:
 	if not belts.has(p) or belts[p].cargo >= 0 or belt_destination(p) != delivery.target:
@@ -618,9 +629,10 @@ func load_belt(w: Dictionary, delivery: Dictionary, p: Vector2i) -> bool:
 		fee = minf(w.bread, BELT_FEE)
 		w.bread -= fee
 		take_carried_ore(w)
-	else:
-		delivery.on_belt = true
-		delivery.owner = -1
+		w.ore_delivery = {}
+		delivery.carried_ore = false
+	delivery.on_belt = true
+	delivery.owner = -1
 	belt_cargo[next_cargo_id] = {"delivery": delivery, "worker": w.id,
 		"from": p, "to": p, "progress": 0.0, "fee": fee}
 	belts[p].cargo = next_cargo_id
@@ -686,22 +698,30 @@ func simulate_belts(delta: float) -> void:
 func contract(hours: float) -> Dictionary:
 	return {"progress": 0.0, "seconds": hours * HOUR_SECONDS}
 
-func pay_labor(w: Dictionary, task: Dictionary, delta: float, rate := 1.0, station = null) -> float:
-	var kind := building_kind(station) if station != null else ""
-	if kind not in GENERATOR_KINDS and kind != "transformer":
-		rate *= w.mood.work_rate()
-	var hourly_wage := station_wage(station)
-	var work := minf(delta * rate, maxf(0, task.seconds - task.progress))
-	work = minf(work, w.payroll / hourly_wage * HOUR_SECONDS * rate)
-	var seconds := work / rate
-	var wage := seconds / HOUR_SECONDS * hourly_wage
+func advance_labor(segment: Dictionary, delta: float) -> float:
+	var task: Dictionary = segment.task
+	var work := minf(delta * segment.rate, maxf(0, segment.goal - task.progress))
 	task.progress += work
-	w.payroll = maxf(0, w.payroll - wage)
-	receive_income(w, wage)
-	w.mood.worked(kind, seconds / HOUR_SECONDS)
-	if kind == "drill":
-		record_machine_noise(station, kind, seconds / delta)
+	var seconds: float = work / segment.rate
+	segment.labor += seconds
 	return seconds
+
+func settle_labor(w: Dictionary, segment: Dictionary, reason: String) -> void:
+	if segment.is_empty():
+		return
+	var task: Dictionary = segment.task
+	# Cumulative entitlement makes the final payment the exact unpaid task balance.
+	var entitled: float = task.reward if task.progress >= task.seconds else task.reward * task.progress / task.seconds
+	var wage := minf(w.payroll, maxf(0.0, entitled - task.paid))
+	w.payroll = maxf(0.0, w.payroll - wage)
+	task.paid += wage
+	if wage > 0:
+		receive_income(w, wage)
+	w.mood.worked(segment.kind, segment.labor / HOUR_SECONDS)
+	ai_trace.record(self, w, "labor", "settled", {"reason": reason, "paid": wage,
+		"task_reward": task.reward, "task_paid": task.paid,
+		"progress": task.progress, "total_work": task.seconds, "labor_seconds": segment.labor})
+	segment.clear()
 
 func mining_seconds(p: Vector2i) -> float:
 	if terrain[p] >= 5:
@@ -718,7 +738,7 @@ func building_at(p: Vector2i) -> bool:
 				return true
 	return false
 
-# 矿种在开采、运输和仓储中保持身份。配方键 0 表示任意矿石，其余键对应 ORES。
+# 矿种在开采、运输和仓储中保持身份。建材指定矿种，只有生产配方用键 0 接受任意矿石。
 func building_materials(kind: String) -> Dictionary:
 	if NEW_BUILDINGS.has(kind):
 		return NEW_BUILDINGS[kind].materials
@@ -726,7 +746,7 @@ func building_materials(kind: String) -> Dictionary:
 		"bed": return {1: BED_BLOCKS}
 		"bench": return {1: BENCH_BLOCKS - 2, 2: 2}
 		"workbench": return {1: WORKBENCH_BLOCKS - 2, 4: 2}
-	return {0: building_blocks(kind)}
+	return {1: building_blocks(kind)}
 
 # 开工消耗接收建筑内的原料；配方为空表示只需劳动。农田的水用于整批播种与生长。
 func production_materials(kind: String) -> Dictionary:
@@ -736,43 +756,10 @@ func production_materials(kind: String) -> Dictionary:
 		"printer": return {0: PRINT_WORKER_BLOCKS}
 	return {}
 
-func material_payment(recipe: Dictionary, count := 1) -> Dictionary:
-	var payment: Dictionary = {}
-	for ore in recipe:
-		if is_same(ore, 0):
-			continue
-		var required: int = recipe[ore] * count
-		if total_stock(ore) < required:
-			return {}
-		payment[ore] = required
-	var remaining: int = recipe.get(0, 0) * count
-	# Generic recipes spend common stone first, preserving copper for equipment.
-	for ore in [1, 4, 3, 2]:
-		var amount := mini(remaining, materials.get(ore, 0) - payment.get(ore, 0))
-		if amount > 0:
-			payment[ore] = payment.get(ore, 0) + amount
-			remaining -= amount
-	return payment if remaining == 0 else {}
-
-func take_materials(recipe: Dictionary, destination: Vector2i) -> Dictionary:
-	var payment := material_payment(recipe)
-	# Reserve at the source even while excavation blocks access to the blueprint.
-	for item in payment:
-		var remaining: float = payment[item]
-		for source in stock_locations():
-			while remaining > 0.000001 and available_at(source, item) > 0.000001:
-				var moved := minf(FREIGHT_CAPACITY, minf(remaining, available_at(source, item)))
-				reserve_shipment(source, destination, item, moved)
-				remaining -= moved
-	return payment
-
 func return_materials(payment: Dictionary, location := BASE) -> void:
 	for item in payment:
 		add_stock(location, item, payment[item])
 		record_resource_output(item, payment[item])
-
-func can_afford_building(kind: String, count := 1) -> bool:
-	return not material_payment(building_materials(kind), count).is_empty()
 
 func material_requirements_text(recipe: Dictionary, show_stock := false, colored := false) -> String:
 	var lines: Array[String] = []
@@ -898,14 +885,13 @@ func site_cleared(p: Vector2i) -> bool:
 			return false
 	return true
 
-# 放置时锁定全部建材并安排占地挖掘；全部清空、材料齐备才施工，不再次收费。
+# 蓝图只发布建材需求并安排占地挖掘；实物到齐、占地清空后才施工。
 func place_building(p: Vector2i, kind: String) -> bool:
-	if not building_space_valid(p, kind) or not can_afford_building(kind):
+	if not building_space_valid(p, kind):
 		return false
-	var payment := take_materials(building_materials(kind), p)
 	sites[p] = contract(building_hours(kind))
 	sites[p].kind = kind
-	sites[p].materials = payment
+	sites[p].materials = building_materials(kind).duplicate()
 	if kind in BELT_KINDS:
 		sites[p].direction = Vector2i.ZERO
 		sites[p].inputs = []
@@ -915,7 +901,6 @@ func place_building(p: Vector2i, kind: String) -> bool:
 		if add_mining_order(cell):
 			mining_contracts[cell].site = p
 	world_view.sync_orders()
-	update_build_availability()
 	return true
 
 func update_building_drag(cell: Vector2i) -> void:
@@ -938,10 +923,7 @@ func building_row() -> Array[Vector2i]:
 	return result
 
 func building_batch_valid(positions: Array[Vector2i], kind: String) -> bool:
-	var count := 0
-	for p in positions:
-		if not existing_line(p, kind): count += 1
-	if positions.is_empty() or (count > 0 and not can_afford_building(kind, count)):
+	if positions.is_empty():
 		return false
 	var occupied: Dictionary = {}
 	for p in positions:
@@ -971,14 +953,21 @@ func finish_building_drag(screen_position: Vector2) -> void:
 	if get_viewport().gui_get_hovered_control() == null:
 		var world_position := get_global_transform_with_canvas().affine_inverse() * screen_position
 		update_building_drag(world_cell(world_position))
-		place_building_batch(building_row(), tool)
+		if building_start == building_end and building_pick != null and existing_line(building_pick, tool):
+			selected_entity = building_pick
+			selected_line = true
+			update_entity_panel()
+		else:
+			place_building_batch(building_row(), tool)
 	building_axis = Vector2i.ZERO
+	building_pick = null
 
 func cancel_placement() -> void:
 	belt_drawing = false
 	belt_path.clear()
 	building_drawing = false
 	building_axis = Vector2i.ZERO
+	building_pick = null
 	moving_drill_from = null
 	if tool == "move_drill":
 		tool = "dig"
@@ -1056,14 +1045,12 @@ func cancel_site(p: Vector2i) -> bool:
 			shipment.target = shipment.source
 			# Carriers and belts replan against the shipment's current receiver.
 		else:
-			add_stock(shipment.source, shipment.item, shipment.amount)
 			if shipment.owner >= 0:
 				var carrier: Dictionary = workers[shipment.owner]
 				carrier.activity.exit(self, carrier, "cancelled")
 				carrier.freight = {}
-			shipments.erase(shipment)
+			release_shipment(shipment)
 	recover_cancelled_sites()
-	update_build_availability()
 	return true
 
 func uses_daily_output(kind: String) -> bool:
@@ -1109,10 +1096,10 @@ func simulate(delta: float) -> void:
 	var remaining := delta
 	while remaining > 0.0000001:
 		var step := minf(0.05, minf(remaining, DAY_SECONDS - day_elapsed))
-		dispatch_timer += step
-		if dispatch_timer >= 0.2:
-			prepare_deliveries()
-			dispatch_timer = 0.0
+		recovery_timer += step
+		if recovery_timer >= 0.2:
+			recover_cancelled_sites()
+			recovery_timer = 0.0
 		smart_objects.sync(self)
 		machine_noise.clear()
 		simulate_power(step)
@@ -1149,6 +1136,7 @@ func simulate_workers(delta: float) -> void:
 			experiences.append(experience)
 		if has_powered_effect(w.pos, "fountain"):
 			w.fatigue = maxf(0, w.fatigue - 5.0 * delta / HOUR_SECONDS)
+		ai_trace.observe(self, w)
 	for experience in experiences:
 		var noise := machine_noise_at(experience.pos)
 		if experience.has("hours"):
@@ -1499,6 +1487,7 @@ func handle_world_input(event: InputEvent, worker_id: int, entity, line := false
 			belt_pointer = world_position
 		elif tool in BUILDING_KINDS:
 			building_drawing = true
+			building_pick = entity if line else null
 			building_start = cell
 			building_end = cell
 			building_axis = Vector2i.ZERO
@@ -1539,8 +1528,6 @@ func build_ui() -> void:
 	$UI.build_ui(self)
 
 func set_tool(value: String) -> void:
-	if value in BUILDING_KINDS and not can_afford_building(value):
-		return
 	if value != tool:
 		cancel_placement()
 	tool = value
@@ -1549,13 +1536,6 @@ func set_tool(value: String) -> void:
 		furniture_button.button_pressed = true
 	for name_ in tool_buttons:
 		tool_buttons[name_].button_pressed = name_ == value
-
-func update_build_availability() -> void:
-	for kind in BUILDING_KINDS:
-		if tool_buttons.has(kind):
-			tool_buttons[kind].disabled = not can_afford_building(kind)
-	if tool in BUILDING_KINDS and not can_afford_building(tool):
-		set_tool("dig")
 
 func toggle_build_tray() -> void:
 	build_tray.visible = furniture_button.button_pressed
@@ -1591,7 +1571,7 @@ func add_stock(p: Vector2i, item, amount: float) -> void:
 
 func stock_locations() -> Array:
 	var locations: Array = [BASE]
-	for collection in [stores, benches]:
+	for collection in [stores, benches, beds, banks]:
 		for p in collection:
 			if p not in locations and not sites.has(p):
 				locations.append(p)
@@ -1647,15 +1627,69 @@ func reserve_shipment(source: Vector2i, target: Vector2i, item, amount: float) -
 	shipments.append({"source": source, "target": target, "item": item,
 		"amount": amount, "owner": -1, "picked": false})
 
-func request_delivery(target: Vector2i, item, amount: float) -> void:
-	var remaining := maxf(0.0, amount - stock_at(target, item) - incoming(target, item))
-	for source in stock_locations():
-		if source == target or delivery_route(source, target).path.is_empty():
-			continue
-		while remaining > 0.000001 and available_at(source, item) > 0.000001:
-			var moved := minf(FREIGHT_CAPACITY, minf(remaining, available_at(source, item)))
-			reserve_shipment(source, target, item, moved)
-			remaining -= moved
+func release_shipment(shipment: Dictionary) -> void:
+	if shipments.has(shipment) and not shipment.picked:
+		add_stock(shipment.source, shipment.item, shipment.amount)
+		shipments.erase(shipment)
+
+# Shared supply endpoints publish demand; only entering a delivery commits physical goods.
+func delivery_requirements(p: Vector2i) -> Dictionary:
+	if sites.has(p):
+		return {} if sites[p].get("cancelled", false) else sites[p].materials
+	if banks.has(p):
+		return {"bread": LOAN_LIMIT}
+	if not benches.has(p):
+		return {}
+	var b: Dictionary = benches[p]
+	if PRODUCTS.has(b.kind) and has_production_order(p) and b.task.is_empty() and b.growth <= 0:
+		return production_materials(b.kind)
+	if b.kind == "power_plant":
+		var fuel := stock_at(p, 3) + incoming(p, 3)
+		return {3: fuel + 2.0} if fuel <= 1.0 else {}
+	if b.kind == "fountain" and b.water_day != day:
+		return {"raw_water": FOUNTAIN_WATER}
+	return {}
+
+func delivery_need(p: Vector2i, item) -> float:
+	var recipe := delivery_requirements(p)
+	var amount := float(recipe.get(item, 0))
+	if item is int and recipe.has(0):
+		amount = recipe[0]
+		for ore in range(1, ORES.size()):
+			amount -= stock_at(p, ore) + incoming(p, ore)
+	else:
+		amount -= stock_at(p, item) + incoming(p, item)
+	return maxf(0.0, amount)
+
+func claim_delivery(w: Dictionary, plan: Dictionary) -> Dictionary:
+	var target: Vector2i = plan.target
+	var mined_cargo: bool = plan.get("mined", false)
+	var origin := Vector2i(w.pos.round())
+	if not w.freight.is_empty() or not w.ore_delivery.is_empty():
+		return {}
+	if mined_cargo:
+		if w.carry != plan.item or delivery_route(origin, target).path.is_empty():
+			return {}
+	elif w.carry > 0 or route(origin, plan.source).is_empty() or delivery_route(plan.source, target).path.is_empty():
+		return {}
+	var amount := 1.0 if mined_cargo else minf(FREIGHT_CAPACITY, available_at(plan.source, plan.item))
+	if plan.has("identity"):
+		if smart_objects.identity(SmartObjects.key("supply", target)) != plan.identity:
+			return {}
+		amount = minf(amount, delivery_need(target, plan.item))
+	elif not mined_cargo or sites.has(target) or delivery_building_at(target) != target:
+		return {}
+	if amount <= 0.000001 or (mined_cargo and amount < 1.0):
+		return {}
+	var shipment := {"source": plan.source, "target": target, "item": plan.item,
+		"amount": amount, "owner": w.id, "picked": mined_cargo,
+		"mined": mined_cargo, "carried_ore": mined_cargo}
+	if mined_cargo:
+		w.ore_delivery = shipment
+	else:
+		add_stock(shipment.source, shipment.item, -amount)
+	shipments.append(shipment)
+	return shipment
 
 func site_supplied(p: Vector2i) -> bool:
 	for item in sites[p].materials:
@@ -1687,34 +1721,6 @@ func consume_recipe(p: Vector2i, recipe: Dictionary) -> void:
 	for item in payment:
 		add_stock(p, item, -payment[item])
 		record_resource_use(item, payment[item])
-
-func prepare_deliveries() -> void:
-	for p in benches:
-		var bench: Dictionary = benches[p]
-		if not PRODUCTS.has(bench.kind) or not has_production_order(p) or not bench.task.is_empty() or bench.growth > 0:
-			continue
-		var recipe := production_materials(building_kind(p))
-		for item in recipe:
-			if not is_same(item, 0):
-				request_delivery(p, item, recipe[item])
-		if recipe.has(0):
-			var needed: float = recipe[0]
-			for ore in range(1, ORES.size()):
-				needed -= stock_at(p, ore) + incoming(p, ore)
-			for ore in [1, 4, 3, 2]:
-				var count := minf(maxf(0, needed), total_stock(ore))
-				request_delivery(p, ore, stock_at(p, ore) + incoming(p, ore) + count)
-				needed -= count
-	for p in banks:
-		request_delivery(p, "bread", LOAN_LIMIT)
-	for p in benches:
-		if benches[p].kind == "power_plant":
-			var fuel := stock_at(p, 3) + incoming(p, 3)
-			if fuel <= 1.0:
-				request_delivery(p, 3, fuel + 2.0)
-		elif benches[p].kind == "fountain" and benches[p].water_day != day:
-			request_delivery(p, "raw_water", FOUNTAIN_WATER)
-	recover_cancelled_sites()
 
 func recover_cancelled_sites() -> void:
 	for p in sites.keys():
@@ -1999,7 +2005,7 @@ func resource_inventory() -> Dictionary:
 			var item = product_item(building_kind(p))
 			result[item] += benches[p].stock
 	for shipment in shipments:
-		if not shipment.get("on_belt", false):
+		if not shipment.get("on_belt", false) and not shipment.get("carried_ore", false):
 			result[shipment.item] += shipment.amount
 	for cargo in belt_cargo.values():
 		result[cargo.delivery.item] += cargo.delivery.amount
@@ -2034,7 +2040,7 @@ func work_available(option, w: Dictionary) -> bool:
 			return benches.has(p) and is_same(benches[p], option.data.identity) and operation_needed(p) and (option.data.job == null or (mining_contracts.has(option.data.job) and ready_drills.has(p)))
 	return false
 
-func begin_work(option, w: Dictionary) -> bool:
+func begin_work(option, w: Dictionary, segment: Dictionary) -> bool:
 	if not work_available(option, w):
 		return false
 	if option.kind in ["produce", "operate"]:
@@ -2047,63 +2053,79 @@ func begin_work(option, w: Dictionary) -> bool:
 					return false
 				consume_recipe(p, recipe)
 			bench.task = contract(1.0 if bench.kind in OPERATED_KINDS or bench.kind == "farm" else PRODUCTS[bench.kind].hours)
+	var task: Dictionary
+	var station = option.target if option.kind in ["produce", "operate"] else null
+	var kind := building_kind(station) if station != null else ""
+	if option.kind == "mine": task = mining_contracts[option.target]
+	elif option.kind == "build": task = sites[option.target]
+	elif kind == "drill": task = mining_contracts[option.data.job]
+	else: task = benches[station].task
+	if not task.has("reward"):
+		task.reward = task.seconds / HOUR_SECONDS * station_wage(station)
+		task.paid = 0.0
+	var goal: float = minf(task.seconds, (task.paid + w.payroll) / task.reward * task.seconds)
+	if goal <= task.progress + 0.0000001:
+		return false
+	var rate := GUN_MINING_RATE if option.kind == "mine" and w.gun_uses > 0 else 1.0
+	if kind not in GENERATOR_KINDS and kind != "transformer":
+		rate *= w.mood.work_rate()
+	segment.merge({"task": task, "goal": goal, "rate": rate, "kind": kind, "labor": 0.0,
+		"fatigue_factor": 1.0 - WATER_FATIGUE_REDUCTION if w.water_effect > 0 or w.water > 0 else 1.0}, true)
+	ai_trace.record(self, w, "labor", "started", {"reward": task.reward, "already_paid": task.paid,
+		"rate": rate, "goal": goal, "fatigue_factor": segment.fatigue_factor})
 	return true
 
-func perform_work(option, w: Dictionary, delta: float) -> Dictionary:
+func perform_work(option, w: Dictionary, delta: float, segment: Dictionary) -> Dictionary:
+	var task: Dictionary = segment.task
+	var p = option.target
+	if option.kind == "operate" and building_kind(p) == "drill" and not powered_devices.has(p):
+		return {"seconds": 0.0, "complete": false, "funding": false}
+	var seconds := advance_labor(segment, delta)
+	var complete: bool = task.progress >= task.seconds - 0.0000001
+	var funding: bool = not complete and task.progress >= segment.goal - 0.0000001
+	if option.kind == "operate" and building_kind(p) == "drill" and seconds > 0:
+		record_machine_noise(p, "drill", seconds / delta)
+	if complete:
+		task.progress = task.seconds
+		settle_labor(w, segment, "completed")
+		complete_work(option, w)
+	elif funding:
+		settle_labor(w, segment, "funding")
+	return {"seconds": seconds, "complete": complete, "funding": funding}
+
+func complete_work(option, w: Dictionary) -> void:
 	var p: Vector2i = option.target
-	var seconds := 0.0
-	var complete := false
 	match option.kind:
 		"mine":
-			var task: Dictionary = mining_contracts[p]
-			seconds = pay_labor(w, task, delta, GUN_MINING_RATE if w.gun_uses > 0 else 1.0)
-			complete = task.progress >= task.seconds - 0.000001
-			if complete:
-				if w.gun_uses == 1: record_resource_use("bench", 1)
-				w.gun_uses = maxi(0, w.gun_uses - 1)
-				record_resource_output(terrain[p], 1)
-				if w.carry == 0: w.carry = terrain[p]
-				else: w.extra_cargo.append(terrain[p])
-				terrain[p] = 0
-				world_view.block_changed(p)
-				navigation.set_point_solid(p, false)
-				jobs.erase(p)
-				mining_contracts.erase(p)
-				smart_objects.invalidate(SmartObjects.key("mine", p))
-				world_view.sync_orders()
-				record_excavation(w)
-				update_fog()
-		"build":
-			var task: Dictionary = sites[p]
-			seconds = pay_labor(w, task, delta)
-			complete = task.progress >= task.seconds - 0.000001
-			if complete: complete_building(p)
-		"produce":
-			var bench: Dictionary = benches[p]
-			seconds = pay_labor(w, bench.task, delta, 1.0, p)
-			complete = bench.task.progress >= bench.task.seconds - 0.000001
-			if complete: complete_product(p)
+			if w.gun_uses == 1: record_resource_use("bench", 1)
+			w.gun_uses = maxi(0, w.gun_uses - 1)
+			record_resource_output(terrain[p], 1)
+			if w.carry == 0: w.carry = terrain[p]
+			else: w.extra_cargo.append(terrain[p])
+			terrain[p] = 0
+			world_view.block_changed(p)
+			navigation.set_point_solid(p, false)
+			jobs.erase(p)
+			mining_contracts.erase(p)
+			smart_objects.invalidate(SmartObjects.key("mine", p))
+			world_view.sync_orders()
+			record_excavation(w)
+			update_fog()
+		"build": complete_building(p)
+		"produce": complete_product(p)
 		"operate":
 			var bench: Dictionary = benches[p]
 			if bench.kind == "drill":
-				if not powered_devices.has(p):
-					return {"seconds": 0.0, "complete": false}
 				var mineral: Vector2i = option.data.job
 				var task: Dictionary = mining_contracts[mineral]
-				seconds = pay_labor(w, task, delta, 1.0, p)
-				complete = task.progress >= task.seconds - 0.000001
-				if complete:
-					var item: int = ORES[terrain[mineral]].item
-					add_stock(p, item, 1)
-					record_resource_output(item, 1)
-					record_excavation(w)
-					task.progress = 0.0
-					task.seconds = DRILL_HOURS * HOUR_SECONDS
+				var item: int = ORES[terrain[mineral]].item
+				add_stock(p, item, 1)
+				record_resource_output(item, 1)
+				record_excavation(w)
+				task.clear()
+				task.merge(contract(DRILL_HOURS))
 			else:
-				seconds = pay_labor(w, bench.task, delta, 1.0, p)
-				complete = bench.task.progress >= bench.task.seconds - 0.000001
-				if complete: bench.task = {}
-	return {"seconds": seconds, "complete": complete}
+				bench.task = {}
 
 func record_excavation(w: Dictionary) -> void:
 	mined += 1

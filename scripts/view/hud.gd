@@ -357,7 +357,6 @@ func build_ui(controller: Node) -> void:
 		bench_button.pressed.connect(game.set_tool.bind(kind))
 		choices.add_child(bench_button)
 		game.tool_buttons[kind] = bench_button
-	game.update_build_availability()
 	game.build_tray.hide()
 	var inspector := panel(root, Rect2(0, 0, 280, 330))
 	game.entity_panel = inspector.get_parent()
@@ -433,6 +432,5 @@ func build_ui(controller: Node) -> void:
 	game.set_tool("dig")
 
 func update_ui() -> void:
-	game.update_build_availability()
 	update_entity_panel()
 	game.day_clock.set_time(game.day_elapsed, game.day)

@@ -11,6 +11,7 @@ var scenario_name := ""
 var checks := 0
 var failures := 0
 var native := false
+var native_window_size := Vector2i.ZERO
 
 func _initialize() -> void:
 	call_deferred("run")
@@ -56,6 +57,7 @@ func scenario(label: String, population := 3, generated := false, seed_value := 
 		game.terrain[source] = 0
 	game.workers.resize(population)
 	game.world_view.rebuild(game)
+	game.ai_trace.record(game, {}, "test", "scenario", {"name": label, "population": population})
 
 func station(kind: String, p: Vector2i, stock := 0) -> void:
 	if kind == "pump" and not game.near_water_source(p):
@@ -153,6 +155,11 @@ func report_seconds(worker := -1, report_day := 1) -> float:
 	return total
 
 func settle() -> void:
+	if native and root.size != native_window_size:
+		native_window_size = root.size
+		root.grab_focus()
+		# Let the window manager apply the resize before warping the real pointer.
+		await create_timer(0.15).timeout
 	game.update_ui()
 	game.world_view.sync_dynamic()
 	game.camera.force_update_scroll()
@@ -192,17 +199,17 @@ func click(point: Vector2) -> void:
 func click_world(point: Vector2) -> void:
 	await click(game.get_global_transform_with_canvas() * point)
 
-func drag_world(cells: Array[Vector2i], release_over_ui := false, cancel_with_mouse := false, preview_file := "") -> void:
-	await move_to(game.get_global_transform_with_canvas() * game.tile_center(cells[0]))
+func drag_world(cells: Array[Vector2i], release_over_ui := false, cancel_with_mouse := false, preview_file := "", offset := Vector2.ZERO) -> void:
+	await move_to(game.get_global_transform_with_canvas() * (game.tile_center(cells[0]) + offset))
 	var event := InputEventMouseButton.new()
-	event.position = game.get_global_transform_with_canvas() * game.tile_center(cells[0])
+	event.position = game.get_global_transform_with_canvas() * (game.tile_center(cells[0]) + offset)
 	event.button_index = MOUSE_BUTTON_LEFT
 	event.pressed = true
 	root.push_input(event, true)
 	await settle()
 	for cell in cells.slice(1):
-		await move_to(game.get_global_transform_with_canvas() * game.tile_center(cell))
-	var endpoint: Vector2 = game.pause_button.get_global_rect().get_center() if release_over_ui else game.get_global_transform_with_canvas() * game.tile_center(cells.back())
+		await move_to(game.get_global_transform_with_canvas() * (game.tile_center(cell) + offset))
+	var endpoint: Vector2 = game.pause_button.get_global_rect().get_center() if release_over_ui else game.get_global_transform_with_canvas() * (game.tile_center(cells.back()) + offset)
 	await move_to(endpoint)
 	if native and preview_file != "":
 		await RenderingServer.frame_post_draw
