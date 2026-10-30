@@ -13,7 +13,7 @@ var review_elapsed := 0.0
 
 func tick(g, w: Dictionary, delta: float) -> Dictionary:
 	var experience: Dictionary = {}
-	if active != null and (not active.valid(g, w) or (w.fatigue >= 100 and active.option.kind != "sleep")):
+	if active != null and (not active.valid(g, w) or (w.fatigue >= g.MAX_FATIGUE and active.option.kind != "sleep")):
 		exit(g, w, "invalidated")
 	decision_wait -= delta
 	if active == null and decision_wait <= 0:
@@ -44,7 +44,7 @@ func tick(g, w: Dictionary, delta: float) -> Dictionary:
 		var labor: float = active.labor_seconds
 		g.record_worker_time(w, action, labor)
 		g.record_worker_time(w, "等待", delta - labor)
-		w.fatigue = minf(100, w.fatigue + g.FATIGUE_PER_HOUR * labor * active.fatigue_factor / g.HOUR_SECONDS)
+		w.fatigue = minf(g.MAX_FATIGUE, w.fatigue + g.FATIGUE_PER_HOUR * labor * active.fatigue_factor / g.HOUR_SECONDS)
 	else:
 		g.record_worker_time(w, action, delta)
 	if result != "running":
@@ -58,7 +58,7 @@ func tick(g, w: Dictionary, delta: float) -> Dictionary:
 		exit(g, w, result)
 	else:
 		review_elapsed += delta
-		if review_elapsed >= g.HOUR_SECONDS and active is Work and (w.fatigue >= 75 or (w.hunger < 20 and w.bread >= 4)):
+		if review_elapsed >= g.HOUR_SECONDS and active is Work and (w.fatigue >= g.MAX_FATIGUE * 0.75 or (w.hunger < 20 and w.bread >= 4)):
 			review_elapsed = 0.0
 			var choices: Array = Selection.options(g, w, "needs_review")
 			var continuation := 0.0

@@ -86,8 +86,8 @@ func update_entity_panel() -> void:
 			game.entity_panel.offset_top -= 70
 		game.worker_bars["饥饿值"][0].text = "饥饿值  %.1f / %.0f" % [w.hunger, game.MAX_HUNGER]
 		game.worker_bars["饥饿值"][1].value = w.hunger / game.MAX_HUNGER * 100
-		game.worker_bars["疲劳"][0].text = "疲劳  %.1f / 100" % w.fatigue
-		game.worker_bars["疲劳"][1].value = w.fatigue
+		game.worker_bars["疲劳"][0].text = "疲劳  %.1f / %.0f" % [w.fatigue, game.MAX_FATIGUE]
+		game.worker_bars["疲劳"][1].value = w.fatigue / game.MAX_FATIGUE * 100
 		var progress := -1.0
 		if w.state == "dig" and game.terrain.get(w.job, 0) != 0:
 			progress = w.progress / game.mining_seconds(w.job)
@@ -208,10 +208,10 @@ func update_entity_panel() -> void:
 		details = "状态  空闲\n\n"
 		if game.slot_owner("bed", p) >= 0:
 			var occupant: Dictionary = game.worker_display(game.workers[game.slot_owner("bed", p)])
-			details = "使用者  %s\n%s\n疲劳  %.1f / 100\n\n" % [
+			details = "使用者  %s\n%s\n疲劳  %.1f / %.0f\n\n" % [
 				occupant.name,
 				"前往床位中" if occupant.state == "to_bed" else "剩余时间  %.1fh" % (bed.remaining / game.HOUR_SECONDS),
-				occupant.fatigue]
+				occupant.fatigue, game.MAX_FATIGUE]
 	game.entity_details.text = details + game.building_effects_text(kind)
 	if game.beds.has(p):
 		game.entity_details.text += "\n\n仓储\n" + game.storage_text(p)
@@ -432,5 +432,8 @@ func build_ui(controller: Node) -> void:
 	game.set_tool("dig")
 
 func update_ui() -> void:
+	var available: Dictionary = game.building_available_materials()
+	for kind in game.BUILDING_KINDS:
+		game.tool_buttons[kind].disabled = not game.can_plan_building(kind, available)
 	update_entity_panel()
 	game.day_clock.set_time(game.day_elapsed, game.day)

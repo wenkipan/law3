@@ -71,13 +71,13 @@ static func life_options(c, choices: Array) -> void:
 				var path: Array[Vector2i] = c.path_to(seat)
 				if path.is_empty() or path.size() - 1 > g.CANTEEN_WALK_LIMIT:
 					continue
-				var option = add(c, choices, "eat", seat, benefit + 0.22 + 0.1 * w.fatigue / 100.0,
+				var option = add(c, choices, "eat", seat, benefit + 0.22 + 0.1 * w.fatigue / g.MAX_FATIGUE,
 					{"amount": meal, "canteen": p}, [Slots.key("seat", seat)])
 				if option != null and g.has_powered_effect(Vector2(seat), "fountain"):
 					option.score += 0.08
-	if w.fatigue >= 20:
-		var tired := 1.15 * pow(w.fatigue / 100.0, 3)
-		if w.fatigue >= 100:
+	if w.fatigue >= g.MAX_FATIGUE * 0.2:
+		var tired := 1.15 * pow(w.fatigue / g.MAX_FATIGUE, 3)
+		if w.fatigue >= g.MAX_FATIGUE:
 			tired = 4.0
 		add(c, choices, "sleep", c.origin, tired, {"bed": false})
 		var preferred = null

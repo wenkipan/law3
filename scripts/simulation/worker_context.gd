@@ -21,7 +21,7 @@ func _init(world, person: Dictionary) -> void:
 	desired_cash = maxf(0.0, (game.MAX_HUNGER - person.hunger) / game.HUNGER_PER_BREAD)
 	for p in game.beds:
 		if game.beds[p].assigned in [-1, person.id] and not path_to(p).is_empty():
-			desired_cash += game.BED_PRICE * clampf(person.fatigue / 60.0, 0.0, 1.0)
+			desired_cash += game.BED_PRICE * clampf(person.fatigue / (game.MAX_FATIGUE * 0.6), 0.0, 1.0)
 			break
 	var products: Dictionary = {}
 	for p in game.benches:
@@ -56,7 +56,7 @@ func labor_score(p = null, task: Dictionary = {}) -> float:
 		var kind: String = game.building_kind(p)
 		if not worker.mood.accepts_work(kind):
 			comfort = 0.35
-	var stamina := 1.0 - 0.65 * pow(worker.fatigue / 100.0, 2)
+	var stamina := 1.0 - 0.65 * pow(worker.fatigue / game.MAX_FATIGUE, 2)
 	return 0.9 * income_need * rate * stamina * comfort
 
 func reject(kind: String, p, reason: String, details: Dictionary = {}) -> void:

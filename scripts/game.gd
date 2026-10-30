@@ -4,23 +4,25 @@ const CELL := 40.0
 const BASE := Vector2i(32, 13)
 const VISION_RADIUS := 7
 const DAY_SECONDS := 180.0
-# 面包兼作食物和支付物。进食消耗个人面包、恢复饱食度；饱食度全天衰减，最低为零。
+# 面包兼作食物和支付物。饱食度全天衰减，最低为零；出生时满饱食，不增加实物面包。
 const MEAL_SECONDS := 2.0
 const HUNGER_PER_BREAD := 10.0
 const MAX_HUNGER := 180.0
-const HUNGER_DECAY_PER_DAY := 100.0
+const STARTING_HUNGER := MAX_HUNGER
+const HUNGER_DECAY_PER_DAY := 80.0
 # 挖掘、建造与生产增加疲劳，通勤和搬运不增加；疲劳提高睡眠意愿，满后强制休息。
+const MAX_FATIGUE := 120.0
 const FATIGUE_PER_HOUR := 10.0
-const SLEEP_RECOVERY_PER_HOUR := 10.0
+const SLEEP_RECOVERY_PER_HOUR := 15.0
 const HOUR_SECONDS := DAY_SECONDS / 24.0
 const MIN_MINING_HOURS := 1.0
 const BED_BLOCKS := 6
 const BED_BUILD_HOURS := 4.0
 const WAGE_PER_HOUR := 1.0
 # 床到达后收费，独占一个租期并加快疲劳恢复；提前醒来不退费，租期结束后按地面速度恢复。
-const BED_PRICE := 5.0
+const BED_PRICE := 4.0
 const BED_LEASE_HOURS := 8.0
-const BED_RECOVERY_PER_HOUR := 15.0
+const BED_RECOVERY_PER_HOUR := 25.0
 const BENCH_BLOCKS := 6
 const BENCH_BUILD_HOURS := 4.0
 # 矿枪缩短挖掘时间但不降低单件报酬；每完成一格消耗一次耐久，疲劳按实际工时计算。
@@ -357,7 +359,7 @@ func create_worker(p: Vector2i) -> Dictionary:
 	var worker := {"id": id, "name": WORKER_NAMES[id] if id < WORKER_NAMES.size() else "矿工%d" % (id + 1),
 		"color": WORKER_COLORS[id % WORKER_COLORS.size()], "pos": Vector2(p), "facing": 1.0,
 		"activity": WorkerStateTree.new(), "carry": 0, "extra_cargo": [], "freight": {}, "ore_delivery": {},
-		"bread": 0.0, "earned_today": 0.0, "eaten_today": 0.0, "hunger": 0.0, "meal_bread": 0.0,
+		"bread": 0.0, "earned_today": 0.0, "eaten_today": 0.0, "hunger": STARTING_HUNGER, "meal_bread": 0.0,
 		"bed_spent_today": 0.0, "shop_spent_today": 0.0, "fatigue": 0.0,
 		"gun_uses": 0, "backpack_uses": 0, "water": 0, "water_effect": 0.0,
 		"mood": WorkerMood.new(), "loan_principal": 0.0, "loan_interest": 0.0, "loan_day": 0, "loan_bank": null,
@@ -560,11 +562,17 @@ func belt_plan_valid(path: Array[Vector2i]) -> bool:
 func place_belt_path(path: Array[Vector2i]) -> bool:
 	if not belt_plan_valid(path):
 		return false
-	var plan := belt_path_plan(path)
 	var line_kind := "electric_belt" if tool == "electric_belt" else "belt"
+	var placed: Array[Vector2i] = []
+	for p in path:
+		if delivery_building_at(p) == null and not belts.has(p) and not sites.has(p):
+			if not place_building(p, line_kind):
+				break
+		placed.append(p)
+	if placed.is_empty():
+		return false
+	var plan := belt_path_plan(placed)
 	for p in plan:
-		if not belts.has(p) and not sites.has(p):
-			place_building(p, line_kind)
 		var data := belt_data(p)
 		data.direction = plan[p].direction
 		data.inputs = plan[p].inputs
@@ -748,6 +756,27 @@ func building_materials(kind: String) -> Dictionary:
 		"workbench": return {1: WORKBENCH_BLOCKS - 2, 4: 2}
 	return {1: building_blocks(kind)}
 
+# Planning commits quantities only; deliveries do not change physical totals.
+func building_available_materials() -> Dictionary:
+	var available := resource_inventory()
+	for site in sites.values():
+		if site.get("cancelled", false):
+			continue
+		for item in site.materials:
+			available[item] = available.get(item, 0.0) - site.materials[item]
+	return available
+
+func can_plan_building(kind: String, available: Dictionary = {}) -> bool:
+	if kind not in BUILDING_KINDS:
+		return false
+	if available.is_empty():
+		available = building_available_materials()
+	var recipe := building_materials(kind)
+	for item in recipe:
+		if available.get(item, 0.0) + 0.000001 < recipe[item]:
+			return false
+	return true
+
 # 开工消耗接收建筑内的原料；配方为空表示只需劳动。农田的水用于整批播种与生长。
 func production_materials(kind: String) -> Dictionary:
 	match kind:
@@ -763,9 +792,10 @@ func return_materials(payment: Dictionary, location := BASE) -> void:
 
 func material_requirements_text(recipe: Dictionary, show_stock := false, colored := false) -> String:
 	var lines: Array[String] = []
+	var available := building_available_materials() if show_stock else {}
 	for ore in recipe:
 		var amount: int = recipe[ore]
-		var stock: int = player_blocks if is_same(ore, 0) else int(total_stock(ore))
+		var stock := int(maxf(0.0, available.get(ore, 0.0)))
 		var label: String = "方块" if is_same(ore, 0) else item_name(ore)
 		var line := "%s  %d / %d" % [label, stock, amount] if show_stock else "%s × %d" % [label, amount]
 		if colored:
@@ -885,9 +915,9 @@ func site_cleared(p: Vector2i) -> bool:
 			return false
 	return true
 
-# 蓝图只发布建材需求并安排占地挖掘；实物到齐、占地清空后才施工。
+# 蓝图按数量占用可规划建材，不扣实物或绑定货源；实物到齐、占地清空后才施工。
 func place_building(p: Vector2i, kind: String) -> bool:
-	if not building_space_valid(p, kind):
+	if not building_space_valid(p, kind) or not can_plan_building(kind):
 		return false
 	sites[p] = contract(building_hours(kind))
 	sites[p].kind = kind
@@ -901,6 +931,7 @@ func place_building(p: Vector2i, kind: String) -> bool:
 		if add_mining_order(cell):
 			mining_contracts[cell].site = p
 	world_view.sync_orders()
+	update_ui()
 	return true
 
 func update_building_drag(cell: Vector2i) -> void:
@@ -940,10 +971,12 @@ func building_batch_valid(positions: Array[Vector2i], kind: String) -> bool:
 func place_building_batch(positions: Array[Vector2i], kind: String) -> bool:
 	if not building_batch_valid(positions, kind):
 		return false
+	var placed := false
 	for p in positions:
-		if not existing_line(p, kind):
-			place_building(p, kind)
-	return true
+		if not existing_line(p, kind) and not place_building(p, kind):
+			break
+		placed = true
+	return placed
 
 func existing_line(p: Vector2i, kind: String) -> bool:
 	return kind in LINE_KINDS and (power_lines.get(p, {}).get("kind", "") == kind or sites.get(p, {}).get("kind", "") == kind)
@@ -1051,6 +1084,7 @@ func cancel_site(p: Vector2i) -> bool:
 				carrier.freight = {}
 			release_shipment(shipment)
 	recover_cancelled_sites()
+	update_ui()
 	return true
 
 func uses_daily_output(kind: String) -> bool:
@@ -1350,8 +1384,8 @@ func update_entity_panel() -> void:
 	$UI.update_entity_panel()
 
 func bed_effects_text() -> String:
-	return "使用费  %.0f 面包 / %.0fh\n疲劳恢复  −%.0f / h" % [
-		BED_PRICE, BED_LEASE_HOURS, BED_RECOVERY_PER_HOUR]
+	return "使用费  %s 面包 / %.0fh\n疲劳恢复  −%s / h" % [
+		String.num(BED_PRICE, 1), BED_LEASE_HOURS, String.num(BED_RECOVERY_PER_HOUR, 1)]
 
 func product_recipe_text(kind: String, p = null) -> String:
 	var product: Dictionary = PRODUCTS[kind]
@@ -1528,6 +1562,8 @@ func build_ui() -> void:
 	$UI.build_ui(self)
 
 func set_tool(value: String) -> void:
+	if value in BUILDING_KINDS and not can_plan_building(value):
+		return
 	if value != tool:
 		cancel_placement()
 	tool = value
@@ -1784,7 +1820,7 @@ func station_staffed(p: Vector2i) -> bool:
 		return false
 	var w: Dictionary = workers[owner]
 	var active = w.activity.active
-	return active != null and active.option.target == p and active.phase == "use" and w.activity.drink_elapsed < 0 and w.payroll > 0.000001 and w.fatigue < 100.0
+	return active != null and active.option.target == p and active.phase == "use" and w.activity.drink_elapsed < 0 and w.payroll > 0.000001 and w.fatigue < MAX_FATIGUE
 
 func power_demand(p: Vector2i) -> float:
 	match building_kind(p):

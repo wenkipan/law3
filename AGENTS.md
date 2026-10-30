@@ -6,9 +6,11 @@ read file README.md,扩大系统设计.md, they are how game iterated
 - Simulation changes do not authorize new UI fields. Keep internal budgets,
   payment forecasts, and decision diagnostics out of player-facing panels and
   tooltips unless explicitly requested. Do not display daily budget or amount due.
-- Do not show intrusive error dialogs. Material shortages do not disable building
-  tools or prevent legal blueprint placement. Blueprints publish supply demand
-  without charging or reserving stock; workers deliver actual materials through
+- Do not show intrusive error dialogs. Building availability is physical inventory
+  minus the full material recipes of unfinished, non-cancelled blueprints. Shortages
+  gray out and disable building choices and block placement; drags stop when their
+  affordable prefix ends. Blueprints commit quantities without charging physical
+  stock or binding sources; workers deliver actual materials through
   the same StateTree, Utility Selection and Smart Objects flow as production.
   Construction requires a clear footprint and all materials on site, consumes
   them once on completion, and never charges remote stock during construction.
@@ -59,6 +61,18 @@ read file README.md,扩大系统设计.md, they are how game iterated
 
 # Behavioral tests
 
+- Test this game's rules and integration, not whether Godot works. Do not add
+  generic node, signal, picking, layout, or built-in control contract tests.
+  Keep representative viewport regressions for our input routing and HUD; avoid
+  multiplying them across equivalent buildings, tools, zooms, and window sizes.
+- Keep the runner, starting-world fixtures, input driver, and behavior checks
+  separate. Do not retain livelihood/rhythm calibration experiments as test
+  contracts or test-runner modes. Map previews are opt-in, not default suites.
+- Workers choose their own activities. Do not assert a prescribed work/rest/meal/
+  shopping schedule, a specific worker or preferred target, or a fixed number
+  of breaks. Do not retune needs, cash, or mood just to force an expected choice.
+  Check player commands and the accounting/effects of actual actions; record
+  autonomous choices as diagnostics, not pass/fail expectations.
 - Follow `tests/README.md`. Extend an existing behavior suite; do not add a test
   script or visual smoke script for every building, item, or implementation change.
 - Arrange a valid starting world, issue player commands, advance bounded game
