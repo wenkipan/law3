@@ -57,6 +57,14 @@ static func add(c, choices: Array, kind: String, p: Vector2i, score: float, data
 static func life_options(c, choices: Array) -> void:
 	var g = c.game
 	var w: Dictionary = c.worker
+	for item in w.items:
+		if w.items[item] <= 0: continue
+		if g.ITEM_USES.has(item) and g.equipped_amount(w, item) <= 0:
+			add(c, choices, "use_item", c.origin, 1.0, {"item": item})
+		elif item == "ale" and w.buffs.remaining("tipsy") <= 0 and w.fatigue >= g.WorkerBuffs.ALE_RECOVERY:
+			add(c, choices, "use_item", c.origin, 0.8 + 0.2 * w.fatigue / g.MAX_FATIGUE, {"item": item})
+		elif item == "meat" and w.hunger < 70:
+			add(c, choices, "use_item", c.origin, 1.05 * pow(c.food_need, 2), {"item": item})
 	var meal := minf(maxf(0, w.bread), maxf(0, g.MAX_HUNGER - w.hunger) / g.HUNGER_PER_BREAD)
 	if meal <= 0 or w.hunger >= 70:
 		c.reject("eat", c.origin, "no_food" if meal <= 0 else "above_meal_threshold",
@@ -105,27 +113,23 @@ static func shopping_options(c, choices: Array) -> void:
 		return
 	for p in g.smart_objects.query("shop"):
 		var kind: String = g.building_kind(p)
-		var product: Dictionary = g.PRODUCTS.get(kind, {})
-		if not product.has("price") or g.benches[p].stock <= 0:
-			c.reject("purchase", p, "not_for_sale" if not product.has("price") else "sold_out")
-			continue
-		var price: float = g.sale_price(p)
-		if w.bread < price:
-			c.reject("purchase", p, "insufficient_balance", {"price": price, "balance": w.bread})
-			continue
-		var amount := 1
-		var score := 0.85 * float(product.price) / price
-		if product.has("durability"):
-			if w[product.durability] > 0:
-				c.reject("purchase", p, "already_equipped")
+		for item in g.shop_goods(p):
+			if g.stock_at(p, item) <= 0 or not g.wants_item(w, item): continue
+			var product: Dictionary = g.sale_product(p, item)
+			var price: float = g.sale_price(p, item)
+			if w.bread < price:
+				c.reject("purchase", p, "insufficient_balance", {"price": price, "balance": w.bread})
 				continue
-		else:
-			if w.water > 0 or w.water_effect > 0 or g.has_debt(w):
-				c.reject("purchase", p, "water_or_debt")
-				continue
-			amount = mini(w.mood.water_limit(g.WATER_CAPACITY), mini(g.benches[p].stock, floori(w.bread / price)))
-			score = (0.65 if w.mood.shopping > 0 else 0.5) / price
-		add(c, choices, "purchase", p, score, {"kind": kind, "amount": amount, "identity": g.benches[p]})
+			var amount := 1
+			var score := 0.85 * float(product.price) / price
+			if item == "clean_water":
+				amount = mini(w.mood.water_limit(g.WATER_CAPACITY), mini(g.stock_at(p, item), floori(w.bread / price)))
+				score = (0.65 if w.mood.shopping > 0 else 0.5) / price
+			elif item == "ale":
+				score = (0.65 if w.mood.shopping > 0 else 0.5) * product.price / price
+			elif item == "meat":
+				score = 1.05 * pow(c.food_need, 2)
+			add(c, choices, "purchase", p, score, {"kind": kind, "item": item, "amount": amount, "identity": g.benches[p]})
 
 static func work_options(c, choices: Array) -> void:
 	var g = c.game
@@ -161,14 +165,14 @@ static func work_options(c, choices: Array) -> void:
 				var task: Dictionary = g.mining_contracts[data.job] if kind == "drill" else b.task
 				add(c, choices, "operate", p, c.labor_score(p, task), data, slots)
 			elif g.PRODUCTS.has(kind) and b.growth <= 0 and g.has_production_order(p):
-				if b.task.is_empty() and not g.recipe_ready(p, g.production_materials(kind)):
+				if b.task.is_empty() and not (kind == "barn" and b.slaughter) and not g.recipe_ready(p, g.production_materials(kind)):
 					c.reject("produce", p, "missing_materials")
 					continue
 				add(c, choices, "produce", p, c.labor_score(p, b.task), {"identity": b}, [Slots.key("work", p)])
 			else:
 				c.reject("produce", p, "growing" if b.growth > 0 else "no_production_order")
 	for p in g.smart_objects.query("mine"):
-		if g.terrain[p] >= 5:
+		if g.terrain[p] in [5, 6]:
 			c.reject("mine", p, "requires_drill")
 			continue
 		var best: Array[Vector2i] = []
@@ -221,7 +225,7 @@ static func delivery_options(c, choices: Array) -> void:
 		var recipe: Dictionary = g.delivery_requirements(p)
 		var items: Array = recipe.keys()
 		if recipe.has(0):
-			items = [1, 4, 3, 2]
+			items = [1, 4, 3, 2, 7, 8]
 		for item in items:
 			if g.delivery_need(p, item) <= 0.000001:
 				continue

@@ -28,7 +28,7 @@ func sync(game) -> void:
 	for p in game.benches:
 		register(present, key("work", p), game.benches[p], p)
 		register(present, key("supply", p), game.benches[p], p, true)
-		if game.PRODUCTS.get(game.building_kind(p), {}).has("price"):
+		if not game.shop_goods(p).is_empty():
 			register(present, key("shop", p), game.benches[p], p, true)
 		if game.building_kind(p) == "canteen":
 			for seat in game.building_cells(p, "canteen"):

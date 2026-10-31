@@ -22,7 +22,7 @@ func tick(g, w: Dictionary, delta: float) -> Dictionary:
 		g.record_worker_time(w, "等待", delta)
 		return experience
 	# One bounded overlay; the enclosing activity keeps its claims while drinking.
-	if drink_elapsed < 0 and active is Work and active.phase == "use" and w.water > 0 and w.water_effect <= 0:
+	if drink_elapsed < 0 and active is Work and active.phase == "use" and w.water > 0 and w.buffs.remaining("hydrated") <= 0:
 		drink_elapsed = 0.0
 	if drink_elapsed >= 0:
 		drink_elapsed += delta
@@ -74,7 +74,7 @@ func select(g, w: Dictionary) -> void:
 		var activity
 		match option.kind:
 			"mine", "build", "produce", "operate": activity = Work.new()
-			"eat", "sleep", "rest": activity = Life.new()
+			"eat", "sleep", "rest", "use_item": activity = Life.new()
 			"purchase", "borrow", "payroll": activity = Economy.new()
 			"deliver": activity = Delivery.new()
 		if activity.enter(g, w, option):
@@ -100,6 +100,7 @@ func report_action(g) -> String:
 	if drink_elapsed >= 0:
 		return "吃饭"
 	match active.option.kind:
+		"use_item": return "吃饭" if active.option.data.item in ["ale", "meat"] else "空闲"
 		"mine": return "通勤" if active.phase == "approach" else "挖掘"
 		"build": return "通勤" if active.phase == "approach" else "工作"
 		"produce", "operate":
@@ -123,6 +124,9 @@ func presentation(g) -> Dictionary:
 	result.path = a.path
 	result.progress = a.elapsed
 	match a.option.kind:
+		"use_item":
+			result.state = "use_item"
+			result.item = a.option.data.item
 		"mine":
 			result.state = "walk" if a.phase == "approach" else "dig"
 			result.job = p
@@ -136,6 +140,7 @@ func presentation(g) -> Dictionary:
 		"purchase":
 			result.state = "to_shop"
 			result.station = p
+			result.item = a.option.data.item
 		"payroll": result.state = "to_payroll"
 		"borrow": result.state = "to_bank"
 		"eat":

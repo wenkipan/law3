@@ -157,7 +157,7 @@ func components(w: Dictionary) -> Dictionary:
 		"cargo": {"ore": w.carry, "extra_ore": w.extra_cargo.duplicate(),
 			"freight": shipment(w.freight), "ore_delivery": shipment(w.ore_delivery)},
 		"equipment": {"gun_uses": w.gun_uses, "backpack_uses": w.backpack_uses,
-			"water": w.water, "water_effect": w.water_effect},
+			"water": w.water, "buffs": w.buffs.timed, "items": w.items, "equipment": w.equipment},
 		"mood": {"value": w.mood.value, "shopping": w.mood.shopping, "avoids_machines": w.mood.avoids_machines},
 		"activity": activity}
 

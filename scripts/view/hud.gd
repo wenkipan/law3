@@ -2,7 +2,24 @@ extends CanvasLayer
 
 const DayClock = preload("res://scripts/day_clock.gd")
 const BuildButton = preload("res://scripts/build_button.gd")
+const Art = preload("res://scripts/view/art.gd")
+const InspectorIcons = preload("res://scripts/view/inspector_icons.gd")
+const BUILD_CATEGORIES := {
+	"food": {"name": "农业与食品", "icon": "wheat", "kinds": ["farm", "barn", "mill", "brewery", "grow_light"]},
+	"industry": {"name": "工业与装备", "icon": "tools", "kinds": ["drill", "smelter", "sawmill", "smithy", "weaver", "tailor", "bench", "workbench"]},
+	"water": {"name": "水务", "icon": "water", "kinds": ["pump", "purifier"]},
+	"power": {"name": "电力", "icon": "electricity", "kinds": ["manual_generator", "power_plant", "low_line", "high_line", "transformer"]},
+	"logistics": {"name": "物流", "icon": "freight", "kinds": ["belt", "electric_belt"]},
+	"life": {"name": "生活与环境", "icon": "furniture", "kinds": ["bed", "canteen", "fountain", "spotlight", "daylight"]},
+	"society": {"name": "人口与金融", "icon": "population-finance", "kinds": ["printer", "bank"]},
+}
+
 var game: Node
+var category_buttons: Dictionary = {}
+var selected_build_category := ""
+var inventory_icons: InspectorIcons
+var effect_icons: InspectorIcons
+var effect_separator: HSeparator
 var bed_assignment: OptionButton
 var production_controls: HBoxContainer
 var queue_count: Label
@@ -11,11 +28,17 @@ var add_order: Button
 var belt_controls: HBoxContainer
 var remove_track: Button
 var move_drill: Button
+var slaughter: Button
 
 func update_entity_panel() -> void:
 	if not is_instance_valid(game.entity_panel):
 		return
 	var p = game.selected_entity
+	update_entity_icons()
+	game.entity_details.visible = game.selected_worker >= 0 or game.selected_tile != null or p != game.BASE
+	slaughter.visible = game.selected_worker < 0 and game.benches.has(p) and game.building_kind(p) == "barn"
+	if slaughter.visible:
+		slaughter.disabled = game.benches[p].sheep <= 0 or game.benches[p].slaughter
 	move_drill.visible = game.selected_worker < 0 and game.benches.has(p) and game.building_kind(p) == "drill"
 	belt_controls.visible = game.selected_worker < 0 and (game.selected_line or game.building_kind(p) in game.BELT_KINDS)
 	if belt_controls.visible:
@@ -59,31 +82,15 @@ func update_entity_panel() -> void:
 		elif w.state == "to_work":
 			state_name = "前往" + game.building_name(game.building_kind(w.station))
 		elif w.state == "to_shop":
-			state_name = "购买" + game.PRODUCTS[game.building_kind(w.station)].name
+			state_name = "购买" + game.item_name(w.item)
 		elif w.state == "drink":
 			state_name = "饮水"
+		elif w.state == "use_item":
+			state_name = "使用" + game.item_name(w.item)
 		elif w.state == "to_meal":
 			state_name = "前往食堂"
-		game.entity_details.text = "%s\n面包  %.1f" % [state_name, w.bread]
-		if not w.freight.is_empty() and w.freight.picked:
-			game.entity_details.text += "\n搬运  %s × %s" % [game.item_name(w.freight.item), String.num(w.freight.amount, 1)]
-		if w.carry:
-			var cargo: Array[String] = [game.ORES[w.carry].name]
-			for ore in w.extra_cargo:
-				cargo.append(game.ORES[ore].name)
-			game.entity_details.text += "\n携带  " + "、".join(cargo)
-		if w.gun_uses > 0:
-			game.entity_panel.offset_top = -420
-			game.entity_details.text += "\n矿枪  剩余 %d 格" % [w.gun_uses, (game.GUN_MINING_RATE - 1.0) * 100]
-		if w.backpack_uses > 0:
-			game.entity_panel.offset_top = -460 if w.gun_uses > 0 else -420
-			game.entity_details.text += "\n背包  剩余 %d 次" % w.backpack_uses
-		if w.water > 0:
-			game.entity_details.text += "\n清水  %d 份" % w.water
-		if w.water_effect > 0:
-			game.entity_details.text += "\n饮水效果  %.1fh" % [w.water_effect / game.HOUR_SECONDS, game.WATER_FATIGUE_REDUCTION * 100]
-		if w.water > 0 or w.water_effect > 0:
-			game.entity_panel.offset_top -= 70
+		game.entity_details.text = state_name
+		game.entity_panel.offset_top = -minf(500, get_viewport().get_visible_rect().size.y - 110)
 		game.worker_bars["饥饿值"][0].text = "饥饿值  %.1f / %.0f" % [w.hunger, game.MAX_HUNGER]
 		game.worker_bars["饥饿值"][1].value = w.hunger / game.MAX_HUNGER * 100
 		game.worker_bars["疲劳"][0].text = "疲劳  %.1f / %.0f" % [w.fatigue, game.MAX_FATIGUE]
@@ -112,7 +119,7 @@ func update_entity_panel() -> void:
 		return
 	if p == game.BASE:
 		game.entity_title.text = "基地传送门"
-		game.entity_details.text = "仓储\n" + game.storage_text(p)
+		game.entity_details.text = ""
 		return
 	if game.selected_line and game.power_lines.has(p) and not game.sites.has(p):
 		var kind: String = game.power_lines[p].kind
@@ -126,17 +133,13 @@ func update_entity_panel() -> void:
 		var status := "未连接传送门或建筑"
 		if destination != null:
 			status = "通往" + ("传送门" if destination == game.BASE else game.building_name(game.building_kind(destination)))
-		var cargo_id: int = game.belts[p].cargo
-		if cargo_id >= 0:
-			var cargo: Dictionary = game.belt_cargo[cargo_id]
-			status += "\n%s × %s · %s" % [game.item_name(cargo.delivery.item), String.num(cargo.delivery.amount, 1), game.workers[cargo.worker].name]
 		game.entity_details.text = status + "\n\n" + game.building_effects_text(belt_kind)
 		if belt_kind == "electric_belt":
 			game.entity_details.text += "\n" + ("运行中" if game.powered_devices.has(p) else "待机 / 未供电")
 		return
 	if game.banks.has(p):
 		game.entity_title.text = game.building_name("bank")
-		game.entity_details.text = "%s\n\n已收利息  %.2f 面包\n仓储\n%s" % [game.building_effects_text("bank"), game.banks[p].interest_received, game.storage_text(p)]
+		game.entity_details.text = "%s\n\n已收利息  %.2f 面包" % [game.building_effects_text("bank"), game.banks[p].interest_received]
 		return
 	if game.benches.has(p):
 		var bench: Dictionary = game.benches[p]
@@ -154,14 +157,14 @@ func update_entity_panel() -> void:
 				status += "\n输出  %.0fW" % game.power_output.get(p, 0.0)
 			elif kind == "canteen":
 				status = "用餐中" if game.workers.any(func(w): return game.worker_display(w).canteen == p) else "空闲"
-			game.entity_details.text = status + "\n\n" + game.building_effects_text(kind, p) + "\n\n仓储\n" + game.storage_text(p)
+			game.entity_details.text = status + "\n\n" + game.building_effects_text(kind, p)
 			return
 		var product: Dictionary = game.PRODUCTS[kind]
 		game.entity_title.text = game.building_name(kind)
 		var status := "空闲"
 		if game.uses_daily_output(kind) and bench.task.is_empty() and not game.has_production_order(p):
 			status = "已停产" if bench.daily_output == 0 else "今日已完成"
-		if game.has_production_order(p) and bench.task.is_empty() and not game.recipe_ready(p, game.production_materials(kind)):
+		if game.has_production_order(p) and bench.task.is_empty() and not (kind == "barn" and bench.slaughter) and not game.recipe_ready(p, game.production_materials(kind)):
 			var missing: Array[String] = []
 			for item in game.production_materials(kind):
 				if is_same(item, 0):
@@ -177,16 +180,21 @@ func update_entity_panel() -> void:
 				status = "生长中  %.1fh" % (bench.growth / game.HOUR_SECONDS)
 			elif not bench.task.is_empty():
 				status = ("收割 · " if bench.harvest else "浇水 · ") + status
-		game.entity_details.text = "%s\n仓储\n%s\n\n%s" % [status, game.storage_text(p), game.product_recipe_text(kind, p)]
+		if kind == "barn":
+			if bench.growth > 0: status += "\n产毛中 %.1fh" % (bench.growth / game.HOUR_SECONDS)
+			if bench.slaughter: status += "\n待屠宰" if not bench.task.get("slaughter", false) else "\n屠宰中"
+		game.entity_details.text = status + "\n\n" + game.product_recipe_text(kind, p)
 		var effects: String = game.product_effects_text(kind, p)
 		if effects != "":
 			game.entity_details.text += "\n\n" + effects
 		if game.uses_daily_output(kind):
+			add_order.disabled = kind == "barn" and (bench.sheep <= 0 or bench.slaughter)
 			queue_count.text = "每日产出 %d%s" % [bench.daily_output, product.unit]
 			remove_order.disabled = bench.daily_output == 0
 			remove_order.tooltip_text = "每日产出 −%d%s" % [product.get("amount", 1), product.unit]
 			add_order.tooltip_text = "每日产出 +%d%s" % [product.get("amount", 1), product.unit]
 		else:
+			add_order.disabled = false
 			queue_count.text = "待制  %d" % bench.queue
 			remove_order.disabled = bench.queue <= (0 if bench.task.is_empty() else 1)
 			remove_order.tooltip_text = "减少一%s（保留正在制作的%s）" % [product.unit, product.name]
@@ -200,8 +208,7 @@ func update_entity_panel() -> void:
 		var worker: String = game.workers[game.slot_owner("build", p)].name if game.slot_owner("build", p) >= 0 else ("等待工人" if game.site_supplied(p) else "等待材料送达")
 		if task.get("cancelled", false):
 			worker = "回收材料"
-		details = "仓储\n" + game.storage_text(p) + "\n\n"
-		details += "%s\n工时  %s / %sh\n\n" % [
+		details = "%s\n工时  %s / %sh\n\n" % [
 			worker, String.num(task.progress / game.HOUR_SECONDS, 2), String.num(game.building_hours(kind), 2)]
 	else:
 		var bed: Dictionary = game.beds[p]
@@ -213,8 +220,82 @@ func update_entity_panel() -> void:
 				"前往床位中" if occupant.state == "to_bed" else "剩余时间  %.1fh" % (bed.remaining / game.HOUR_SECONDS),
 				occupant.fatigue, game.MAX_FATIGUE]
 	game.entity_details.text = details + game.building_effects_text(kind)
-	if game.beds.has(p):
-		game.entity_details.text += "\n\n仓储\n" + game.storage_text(p)
+
+func inventory_entries(contents: Dictionary, notes: Dictionary = {}) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for item in game.RESOURCE_ITEMS:
+		var amount: float = contents.get(item, 0.0)
+		if amount <= 0.000001:
+			continue
+		var title: String = game.item_name(item)
+		var description := title + "\n"
+		if notes.has(item):
+			var lines: Array[String] = []
+			for role in notes[item]:
+				lines.append(role + " " + String.num(notes[item][role], 4))
+			description += "\n".join(lines)
+		else:
+			description += "数量 " + String.num(amount, 4)
+		result.append({"id": item, "texture": Art.item_texture(item), "name": title,
+			"quantity": InspectorIcons.quantity_text(amount), "description": description})
+	return result
+
+func add_held_item(contents: Dictionary, notes: Dictionary, item, amount: float, role: String) -> void:
+	if amount <= 0.000001:
+		return
+	contents[item] = contents.get(item, 0.0) + amount
+	if not notes.has(item):
+		notes[item] = {}
+	notes[item][role] = notes[item].get(role, 0.0) + amount
+
+func worker_inventory_entries(w: Dictionary) -> Array[Dictionary]:
+	var contents: Dictionary = {}
+	var notes: Dictionary = {}
+	add_held_item(contents, notes, "bread", w.bread + w.meal_bread, "自用")
+	add_held_item(contents, notes, "clean_water", w.water, "自用")
+	for item in w.items:
+		add_held_item(contents, notes, item, w.items[item], "未使用")
+	if w.carry > 0:
+		add_held_item(contents, notes, w.carry, 1, "搬运")
+	for ore in w.extra_cargo:
+		add_held_item(contents, notes, ore, 1, "搬运")
+	var freight: Dictionary = w.freight
+	if freight.get("picked", false) and not freight.get("on_belt", false) and not freight.get("carried_ore", false):
+		add_held_item(contents, notes, freight.item, freight.amount, "搬运")
+	var result := inventory_entries(contents, notes)
+	var special_items: Dictionary = game.worker_special_items(w)
+	for item in special_items:
+		var title: String = game.item_name(item)
+		result.append({"id": item, "texture": Art.item_texture(item), "name": title,
+			"quantity": str(special_items[item]), "description": title + "\n凭证 %d 笔" % special_items[item]})
+	return result
+
+func update_entity_icons() -> void:
+	var items: Array[Dictionary] = []
+	var effects: Array[Dictionary] = []
+	var p = game.selected_entity
+	if game.selected_tile == null:
+		if game.selected_worker >= 0 and game.selected_worker < game.workers.size():
+			var w: Dictionary = game.workers[game.selected_worker]
+			items = worker_inventory_entries(w)
+			for effect in w.buffs.display_effects(game, w):
+				var texture: Texture2D = Art.item_texture(effect.item) if effect.has("item") else Art.texture("res://assets/icons/%s.svg" % effect.icon)
+				effects.append({"id": effect.id, "name": effect.name, "texture": texture,
+					"description": effect.name + "\n" + effect.description})
+		elif p != null and (not game.selected_line or game.sites.has(p)):
+			var contents: Dictionary = game.storage_contents(p)
+			var notes: Dictionary = {}
+			if game.belts.has(p) and not game.sites.has(p) and game.belts[p].cargo >= 0:
+				var cargo: Dictionary = game.belt_cargo[game.belts[p].cargo]
+				add_held_item(contents, notes, cargo.delivery.item, cargo.delivery.amount, "搬运 · " + game.workers[cargo.worker].name)
+			items = inventory_entries(contents, notes)
+			if game.benches.has(p) and game.building_kind(p) == "barn":
+				var sheep: int = game.benches[p].sheep
+				items.append({"id": "sheep", "name": "羊", "texture": Art.texture("res://assets/icons/sheep.svg"),
+					"quantity": str(sheep), "description": "羊\n数量 %d" % sheep})
+	inventory_icons.sync(items)
+	effect_icons.sync(effects)
+	effect_separator.visible = not items.is_empty() and not effects.is_empty()
 
 func make_label(text_: String, size := 14) -> Label:
 	var node := Label.new()
@@ -256,6 +337,40 @@ func panel(parent: Node, rect: Rect2, anchor_right := false, anchor_bottom := fa
 	content.add_theme_constant_override("separation", 12)
 	box.add_child(content)
 	return content
+
+func show_build_category(category: String) -> void:
+	selected_build_category = category
+	var kinds: Array = BUILD_CATEGORIES[category].kinds
+	for kind in game.BUILDING_KINDS:
+		game.tool_buttons[kind].visible = kind in kinds
+	for index in kinds.size():
+		var button: Button = game.tool_buttons[kinds[index]]
+		button.get_parent().move_child(button, index)
+	for key in category_buttons:
+		category_buttons[key].set_pressed_no_signal(key == category)
+	game.build_tray.show()
+
+func show_building_category(kind: String) -> void:
+	for category in BUILD_CATEGORIES:
+		if kind in BUILD_CATEGORIES[category].kinds:
+			show_build_category(category)
+			return
+
+func close_build_tray() -> void:
+	game.build_tray.hide()
+	selected_build_category = ""
+	for button in category_buttons.values():
+		button.set_pressed_no_signal(false)
+	if game.tool in game.BUILDING_KINDS:
+		game.set_tool("dig")
+
+func toggle_build_category(category: String) -> void:
+	if game.build_tray.visible and selected_build_category == category:
+		close_build_tray()
+		return
+	if game.tool in game.BUILDING_KINDS and game.tool not in BUILD_CATEGORIES[category].kinds:
+		game.set_tool("dig")
+	show_build_category(category)
 
 func build_ui(controller: Node) -> void:
 	game = controller
@@ -304,59 +419,47 @@ func build_ui(controller: Node) -> void:
 		tools.add_child(b)
 		game.speed_buttons[value] = b
 	game.set_speed(1)
-	var construction := panel(root, Rect2(20, -88, 88, 68), false, true)
+	var construction := panel(root, Rect2(20, -88, 416, 68), false, true)
 	var categories := HBoxContainer.new()
-	categories.add_theme_constant_override("separation", 18)
+	categories.add_theme_constant_override("separation", 8)
 	construction.add_child(categories)
-	game.furniture_button = make_button("", "家具", game.toggle_build_tray)
-	game.furniture_button.icon = game.icon_texture("res://assets/icons/furniture.svg")
-	game.furniture_button.expand_icon = true
-	game.furniture_button.add_theme_constant_override("icon_max_width", 28)
-	game.furniture_button.toggle_mode = true
-	game.furniture_button.custom_minimum_size.x = 56
-	categories.add_child(game.furniture_button)
-	var choice_panel := panel(root, Rect2(20, -474, 350, 404), false, true)
+	for category in BUILD_CATEGORIES:
+		var definition: Dictionary = BUILD_CATEGORIES[category]
+		var button := make_button("", definition.name, toggle_build_category.bind(category))
+		button.icon = game.icon_texture("res://assets/icons/%s.svg" % definition.icon)
+		button.expand_icon = true
+		button.add_theme_constant_override("icon_max_width", 28)
+		button.toggle_mode = true
+		button.custom_minimum_size = Vector2(48, 36)
+		categories.add_child(button)
+		category_buttons[category] = button
+	var choice_panel := panel(root, Rect2(20, -248, 344, 148), false, true)
 	game.build_tray = choice_panel.get_parent()
+	var choice_scroll := ScrollContainer.new()
+	choice_scroll.custom_minimum_size = Vector2(312, 116)
+	choice_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	choice_panel.add_child(choice_scroll)
 	var choices := GridContainer.new()
 	choices.columns = 4
 	choices.add_theme_constant_override("h_separation", 8)
 	choices.add_theme_constant_override("v_separation", 8)
-	choice_panel.add_child(choices)
-	var bed_button := BuildButton.new()
-	bed_button.game = game
-	bed_button.tooltip_text = "床"
-	bed_button.focus_mode = Control.FOCUS_NONE
-	bed_button.add_theme_font_override("font", game.font)
-	bed_button.add_theme_font_size_override("font_size", 18)
-	bed_button.add_theme_constant_override("h_separation", 16)
-	game.bed_texture = game.icon_texture("res://assets/icons/bed.svg")
-	bed_button.icon = game.bed_texture
-	game.bed_blueprint_texture = game.icon_texture("res://assets/icons/bed-blueprint.svg")
-	bed_button.expand_icon = true
-	bed_button.add_theme_constant_override("icon_max_width", 64)
-	bed_button.add_theme_color_override("icon_disabled_color", Color(0.45, 0.45, 0.45, 0.55))
-	bed_button.pressed.connect(game.set_tool.bind("bed"))
-	bed_button.toggle_mode = true
-	bed_button.custom_minimum_size = Vector2(72, 54)
-	choices.add_child(bed_button)
-	game.tool_buttons["bed"] = bed_button
+	choice_scroll.add_child(choices)
 	for kind in game.BUILDING_KINDS:
-		if kind == "bed":
-			continue
-		var bench_button := BuildButton.new()
-		bench_button.game = game
-		bench_button.kind = kind
-		bench_button.tooltip_text = game.building_name(kind)
-		bench_button.focus_mode = Control.FOCUS_NONE
-		bench_button.icon = game.icon_texture("res://assets/icons/%s.svg" % kind)
-		bench_button.expand_icon = true
-		bench_button.add_theme_constant_override("icon_max_width", 64)
-		bench_button.add_theme_color_override("icon_disabled_color", Color(0.45, 0.45, 0.45, 0.55))
-		bench_button.toggle_mode = true
-		bench_button.custom_minimum_size = Vector2(72, 54)
-		bench_button.pressed.connect(game.set_tool.bind(kind))
-		choices.add_child(bench_button)
-		game.tool_buttons[kind] = bench_button
+		var button := BuildButton.new()
+		button.game = game
+		button.kind = kind
+		button.tooltip_text = game.building_name(kind)
+		button.focus_mode = Control.FOCUS_NONE
+		button.icon = game.icon_texture("res://assets/icons/%s.svg" % kind)
+		button.expand_icon = true
+		button.add_theme_constant_override("icon_max_width", 64)
+		button.add_theme_color_override("icon_disabled_color", Color(0.45, 0.45, 0.45, 0.55))
+		button.toggle_mode = true
+		button.custom_minimum_size = Vector2(72, 54)
+		button.pressed.connect(game.set_tool.bind(kind))
+		button.hide()
+		choices.add_child(button)
+		game.tool_buttons[kind] = button
 	game.build_tray.hide()
 	var inspector := panel(root, Rect2(0, 0, 280, 330))
 	game.entity_panel = inspector.get_parent()
@@ -372,10 +475,31 @@ func build_ui(controller: Node) -> void:
 	inspector_heading.add_child(make_button("×", "关闭属性（Esc）", game.clear_entity_selection))
 	inspector.add_child(inspector_heading)
 	inspector.add_child(HSeparator.new())
+	var detail_scroll := ScrollContainer.new()
+	detail_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	detail_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	inspector.add_child(detail_scroll)
+	var detail_content := VBoxContainer.new()
+	detail_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	detail_content.add_theme_constant_override("separation", 10)
+	detail_scroll.add_child(detail_content)
+	var inspector_frame := inspector
+	inspector = detail_content
 	game.entity_details = make_label("", 14)
-	game.entity_details.custom_minimum_size.x = 248
 	game.entity_details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	inspector.add_child(game.entity_details)
+	inventory_icons = InspectorIcons.new()
+	inventory_icons.display_font = game.font
+	inventory_icons.hide()
+	inspector.add_child(inventory_icons)
+	effect_separator = HSeparator.new()
+	effect_separator.hide()
+	inspector.add_child(effect_separator)
+	effect_icons = InspectorIcons.new()
+	effect_icons.display_font = game.font
+	effect_icons.show_quantities = false
+	effect_icons.hide()
+	inspector.add_child(effect_icons)
 	belt_controls = HBoxContainer.new()
 	remove_track = make_button("×", "拆除矿道", func():
 		if game.sites.has(game.selected_entity):
@@ -393,6 +517,11 @@ func build_ui(controller: Node) -> void:
 	move_drill.add_theme_constant_override("icon_max_width", 24)
 	inspector.add_child(move_drill)
 	move_drill.hide()
+	slaughter = make_button("", "屠宰：完成当前产毛后执行，不自动补羊", func(): game.request_slaughter(game.selected_entity))
+	slaughter.icon = game.icon_texture("res://assets/icons/slaughter.svg")
+	slaughter.expand_icon = true
+	slaughter.add_theme_constant_override("icon_max_width", 24)
+	slaughter.hide()
 	bed_assignment = OptionButton.new()
 	bed_assignment.add_theme_font_override("font", game.font)
 	bed_assignment.add_item("自动安排", -1)
@@ -401,6 +530,7 @@ func build_ui(controller: Node) -> void:
 	inspector.add_child(bed_assignment)
 	bed_assignment.hide()
 	production_controls = HBoxContainer.new()
+	production_controls.add_child(slaughter)
 	remove_order = make_button("−", "", func(): game.adjust_production(game.selected_entity, -1))
 	production_controls.add_child(remove_order)
 	queue_count = make_label("", 14)
@@ -409,7 +539,7 @@ func build_ui(controller: Node) -> void:
 	production_controls.add_child(queue_count)
 	add_order = make_button("+", "", func(): game.adjust_production(game.selected_entity, 1))
 	production_controls.add_child(add_order)
-	inspector.add_child(production_controls)
+	inspector_frame.add_child(production_controls)
 	production_controls.hide()
 	game.worker_attributes = VBoxContainer.new()
 	game.worker_attributes.add_theme_constant_override("separation", 6)
@@ -417,7 +547,7 @@ func build_ui(controller: Node) -> void:
 	for attribute in ["饥饿值", "疲劳", "动作进度"]:
 		var caption := make_label(attribute, 13)
 		var bar := ProgressBar.new()
-		bar.custom_minimum_size = Vector2(240, 8)
+		bar.custom_minimum_size = Vector2(0, 8)
 		bar.show_percentage = false
 		game.worker_attributes.add_child(caption)
 		game.worker_attributes.add_child(bar)

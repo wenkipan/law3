@@ -1,8 +1,8 @@
 extends RefCounted
 
-const VERSION := 4
+const VERSION := 5
 const CHUNK_SIZE := 32
-const WATER := 7
+const WATER := 9
 const REGION_SIZE := 128
 const SPOT_GRID := 16
 const MIN_RADIUS := 6.0
@@ -94,7 +94,8 @@ func spot_candidates_at(index: Vector2i) -> Array:
 				"aspect": lerpf(0.55, 1.0, random_at(index, channel + 4)),
 				"angle": random_at(index, channel + 5) * TAU,
 				"phase": random_at(index, channel + 6) * TAU, "field": field,
-				"priority": random_at(index, channel + 7), "index": index})
+				"priority": random_at(index, channel + 7), "index": index,
+				"material": (7 if field == 0 else 8) if field < 2 and random_at(index, channel + 8) < 0.35 else field + 2})
 		remember(candidate_cache, index, result)
 	return candidate_cache[index]
 
@@ -131,7 +132,7 @@ func base_material(cell: Vector2i) -> int:
 		return base_cache[cell]
 	var point := Vector2(cell) + Vector2.ONE * 0.5
 	var index := Vector2i((point / SPOT_GRID).floor())
-	var strengths := Vector4.ZERO
+	var strengths := {0: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 7: 0.0, 8: 0.0}
 	var reach := ceili(MAX_RADIUS / SPOT_GRID)
 	for y in range(index.y - reach, index.y + reach + 1):
 		for x in range(index.x - reach, index.x + reach + 1):
@@ -144,16 +145,17 @@ func base_material(cell: Vector2i) -> int:
 				var angle := delta.angle()
 				var edge := 0.84 + 0.1 * sin(angle * 3.0 + spot.phase) + 0.06 * sin(angle * 5.0 - spot.phase * 2.0)
 				var falloff := maxf(0.0, 1.0 - delta.length() / (spot.radius * edge))
-				strengths[spot.field] = maxf(strengths[spot.field], falloff * falloff)
+				var material: int = 0 if spot.field == 3 else spot.material
+				strengths[material] = maxf(strengths[material], falloff * falloff)
 	var material := 1
-	if strengths.w > SPOT_THRESHOLD:
+	if strengths[0] > SPOT_THRESHOLD:
 		material = 0
 	else:
 		var strongest := SPOT_THRESHOLD
-		for field in 3:
-			if strengths[field] > strongest:
-				strongest = strengths[field]
-				material = field + 2
+		for ore in [2, 3, 4, 7, 8]:
+			if strengths[ore] > strongest:
+				strongest = strengths[ore]
+				material = ore
 	remember(base_cache, cell, material, 16384)
 	return material
 

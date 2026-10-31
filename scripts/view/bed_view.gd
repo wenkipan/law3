@@ -8,6 +8,7 @@ var belt_art: Node2D
 var line_art: Dictionary = {}
 var kind := ""
 var visual_size := Vector2.ZERO
+var sheep: Sprite2D
 
 func _ready() -> void:
 	$Solid.texture = Art.texture("res://assets/icons/bed.svg")
@@ -42,6 +43,11 @@ func set_kind(value: String) -> void:
 	kind = value
 	$Solid.texture = Art.texture("res://assets/icons/%s.svg" % kind)
 	$Blueprint.texture = Art.texture("res://assets/icons/%s-blueprint.svg" % kind)
+	if kind == "barn":
+		sheep = Sprite2D.new()
+		sheep.texture = Art.texture("res://assets/icons/sheep.svg")
+		sheep.scale = Vector2.ONE * 0.65
+		add_child(sheep)
 	for sprite in [$Solid, $Blueprint]:
 		var size := Vector2(40, 40) if kind in ["belt", "electric_belt", "low_line"] else Vector2(80, 40)
 		sprite.scale = size / sprite.texture.get_size()
@@ -76,6 +82,11 @@ func animate(active: bool, time: float) -> void:
 	$Solid.modulate = Color.WHITE if not active else Color(1, 1, 0.85 + 0.15 * sin(time * 5.0))
 	if kind in ["drill", "power_plant", "manual_generator"]:
 		$Solid.position.y = sin(time * 24.0) * 0.6 if active else 0.0
+
+func sync_sheep(count: int, time: float) -> void:
+	sheep.visible = count > 0
+	sheep.position = Vector2(46 + sin(time * 0.4) * 8, 25 + sin(time * 2) * 0.4)
+	sheep.rotation = sin(time * 0.7) * 0.03
 
 func set_belt_connections(connections: int, direction: Vector2i) -> void:
 	belt_art.configure(connections, direction, progress)

@@ -250,6 +250,49 @@ func run(t) -> void:
 	await check_track_receivers(t)
 	await check_tile_details(t)
 	await check_power_interactions(t)
+	await check_industry_controls(t)
+
+func check_industry_controls(t) -> void:
+	var g = t.game
+	var ui = g.get_node("UI")
+	# The expanded tray must keep later buildings selectable without click-through.
+	t.fixtures.scenario("Industry tray scroll and livestock commands", 1)
+	t.fixtures.clear_area(Rect2i(25, 7, 18, 12))
+	t.fixtures.building_materials("smithy")
+	t.fixtures.station("barn", P)
+	for entry in [{"kind": "weaver", "pos": Vector2i(31, 9)}, {"kind": "tailor", "pos": Vector2i(34, 9)},
+			{"kind": "brewery", "pos": Vector2i(37, 9)}, {"kind": "smelter", "pos": Vector2i(31, 11)},
+			{"kind": "sawmill", "pos": Vector2i(34, 11)}, {"kind": "mill", "pos": Vector2i(37, 11)}]:
+		t.fixtures.station(entry.kind, entry.pos)
+	g.workers[0].water = 1
+	g.workers[0].fatigue = 40
+	g.workers[0].items = {"ale": 1}
+	g.workers[0].equipment = {"clothes": 70 * g.HOUR_SECONDS, "tools": 12}
+	for entry in [{"pos": Vector2i(29, 15), "ore": 7}, {"pos": Vector2i(30, 15), "ore": 8}]:
+		g.terrain[entry.pos] = entry.ore
+		g.navigation.set_point_solid(entry.pos, true)
+	g.world_view.rebuild(g)
+	await t.input.choose_building("smithy")
+	t.check(g.tool == "smithy", "Mouse wheel reaches and selects a later industry icon")
+	await t.input.click_world(g.tile_center(Vector2i(37, 14)))
+	t.check(g.building_kind(Vector2i(37, 14)) == "smithy", "Scrolled selection places the requested industry blueprint")
+	g.set_tool("dig")
+	if g.build_tray.visible: await t.input.click(g.furniture_button.get_global_rect().get_center())
+	await t.input.click_exposed_building(P, "畜棚")
+	t.check(g.entity_title.text == "畜棚" and ui.slaughter.visible and g.entity_details.text.contains("羊 1"), "A live sheep is inspectable through its barn")
+	await t.input.screenshot("/tmp/law3-industry-1440.png")
+	await t.input.click(ui.slaughter.get_global_rect().get_center())
+	t.advance_until(func(): return g.resource_activity("meat", 1).produced == g.SHEEP_MEAT, 120, "The inspector's slaughter button issues a real paid job")
+	await t.input.click_exposed_building(P, "畜棚")
+	t.check(g.entity_details.text.contains("羊 0") and ui.slaughter.disabled, "Completed slaughter updates live details and disables duplicate commands")
+	for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
+		t.tree.root.size = size
+		await t.input.settle()
+		await t.input.click_world(g.tile_center(g.workers[0].pos) + Vector2(0, -8))
+		t.check(g.selected_worker == 0 and g.entity_details.text.contains("铁工具"), "A worker's owned equipment remains inspectable in both layouts")
+		await t.input.screenshot("/tmp/law3-buffs-%d.png" % size.x)
+	t.tree.root.size = Vector2i(1440, 900)
+	await t.input.settle()
 
 func check_power_interactions(t) -> void:
 	var g = t.game

@@ -4,7 +4,9 @@ static var textures: Dictionary = {}
 
 static func item_texture(item) -> Texture2D:
 	var icons := {"raw_water": "raw-water", "wheat": "wheat", 3: "coal",
-		"clean_water": "water", "bench": "mining-gun", "workbench": "backpack"}
+		"clean_water": "water", "bench": "mining-gun", "workbench": "backpack",
+		"wool": "wool", "cloth": "cloth", "clothes": "clothes", "ale": "ale",
+		"iron": "iron", "planks": "planks", "tools": "tools", "meat": "meat", "loan": "loan"}
 	if icons.has(item):
 		return texture("res://assets/icons/%s.svg" % icons[item])
 	var key := "item:" + str(item)

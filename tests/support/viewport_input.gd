@@ -92,7 +92,25 @@ func choose_building(kind: String) -> void:
 	await settle()
 	if not game.build_tray.visible:
 		await click(game.furniture_button.get_global_rect().get_center())
+	var scroll: ScrollContainer = game.tool_buttons[kind].get_parent().get_parent()
+	for attempt in 12:
+		var target: Rect2 = game.tool_buttons[kind].get_global_rect()
+		var visible_area := scroll.get_global_rect()
+		if visible_area.encloses(target): break
+		await scroll_at(visible_area.get_center(), MOUSE_BUTTON_WHEEL_DOWN if target.end.y > visible_area.end.y else MOUSE_BUTTON_WHEEL_UP)
 	await click(game.tool_buttons[kind].get_global_rect().get_center())
+
+func scroll_at(point: Vector2, button: MouseButton) -> void:
+	await move_to(point)
+	var event := InputEventMouseButton.new()
+	event.position = point
+	event.button_index = button
+	event.pressed = true
+	root.push_input(event, true)
+	event = event.duplicate()
+	event.pressed = false
+	root.push_input(event, true)
+	await settle()
 
 func click_exposed_building(cell: Vector2i, title: String) -> void:
 	# Keep workers where simulation left them; click distinct exposed edges, never move them away.

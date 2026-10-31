@@ -8,7 +8,7 @@ func enter(g, w: Dictionary, proposal) -> bool:
 			return false
 		w.meal_bread = option.data.amount
 		w.bread -= w.meal_bread
-	if option.kind == "rest" or (option.kind == "sleep" and not option.data.bed):
+	if option.kind in ["rest", "use_item"] or (option.kind == "sleep" and not option.data.bed):
 		phase = "use"
 		path.clear()
 	return true
@@ -26,6 +26,10 @@ func tick(g, w: Dictionary, delta: float) -> String:
 			phase = "use"
 		return "running"
 	match option.kind:
+		"use_item":
+			elapsed += delta
+			if elapsed < g.DRINK_HOURS * g.HOUR_SECONDS: return "running"
+			return "success" if g.use_item(w, option.data.item) else "failure"
 		"eat":
 			var seconds := minf(delta, g.MEAL_SECONDS - elapsed)
 			g.eat_portion(w, option, seconds)

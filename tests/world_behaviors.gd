@@ -25,6 +25,16 @@ func run(t) -> void:
 	t.check(g.delivered == 1 and g.terrain[next] != 0, "Cancellation stops excavation and extra delivery")
 	t.near(g.workers[0].earned_today, earned, "Cancellation keeps earned wages but pays no idle wages")
 
+	# New map blocks are ordinary finite resources, never drill-only deposits.
+	for mineral in [7, 8]:
+		t.fixtures.scenario("Extract new raw material: " + g.item_name(mineral), 1)
+		g.terrain[ore] = mineral
+		g.designate(ore, ore)
+		t.advance_until(func(): return g.delivered == 1, 40, "An ordinary worker extracts and delivers the new raw material")
+		t.near(g.stock_at(g.BASE, mineral), 1, "Delivery preserves timber and iron identities")
+		t.near(g.resource_activity(mineral, 1).produced, 1, "New resource extraction is counted once")
+		t.check(g.terrain[ore] == 0, "New resource blocks are depleted after excavation")
+
 	# One shared construction contract, with all actual building kinds as inputs.
 	for kind in g.BUILDING_KINDS:
 		t.fixtures.scenario("Plan, supply, build and recover: " + kind, 1)
@@ -54,6 +64,7 @@ func run(t) -> void:
 		g.set_tool(kind)
 		t.check(not g.tool_buttons[kind].disabled and g.tool == kind, "Exactly enough of every ingredient enables selecting the tool")
 		var initial_materials: Dictionary = g.materials.duplicate()
+		var recipe: Dictionary = g.building_materials(kind)
 		var initial_water: float = g.total_stock("raw_water")
 		g.workers[0].pos = Vector2(p)
 		t.check(not g.place_building(g.BASE, kind) and g.player_blocks == cost, "Rejected placement costs nothing")
@@ -71,7 +82,10 @@ func run(t) -> void:
 		t.check(g.cancel_site(footprint_end), "Occupied footprint cell cancels construction")
 		earned = g.workers[0].bread
 		t.check(earned > 0, "Cancellation pays only the actual completed construction share")
-		t.advance_until(func(): return g.player_blocks == cost and g.total_stock("raw_water") == initial_water, 60, "All delivered materials, including water, are physically recovered after cancellation")
+		t.advance_until(func():
+			for item in recipe:
+				if g.total_stock(item) != recipe[item]: return false
+			return true, 60, "All delivered materials, including processed goods, are physically recovered after cancellation")
 		t.check(g.materials == initial_materials, "Cancel returns the actual mineral types, not generic replacement blocks")
 		for mineral in initial_materials:
 			t.near(g.resource_activity(mineral, 1).produced + g.resource_activity(mineral, 1).consumed, 0, "Canceling a blueprint creates neither production nor consumption")
@@ -680,7 +694,7 @@ func check_unbounded_world(t) -> void:
 		var visited: Dictionary = {}
 		var largest := 0
 		for start in snapshot:
-			if visited.has(start) or snapshot[start] == 1 or snapshot[start] >= 5:
+			if visited.has(start) or snapshot[start] in [1, 5, 6, g.MapGenerator.WATER]:
 				continue
 			var frontier: Array[Vector2i] = [start]
 			visited[start] = true
@@ -697,14 +711,14 @@ func check_unbounded_world(t) -> void:
 		t.check(largest <= 512, "Varied mineral deposits and caves stay compact instead of merging into region-wide fields")
 		for cell in snapshot:
 			counts[snapshot[cell]] = counts.get(snapshot[cell], 0) + 1
-			if snapshot[cell] >= 5:
+			if snapshot[cell] in [5, 6, g.MapGenerator.WATER]:
 				var isolated := true
 				for direction in g.DIRS:
 					var neighbor: Vector2i = cell + direction
-					if area.has_point(neighbor) and snapshot[neighbor] >= 5:
+					if area.has_point(neighbor) and snapshot[neighbor] in [5, 6, g.MapGenerator.WATER]:
 						isolated = false
 				t.check(isolated, "Special sources occupy isolated single cells rather than ordinary mineral fields")
-	for material in range(8):
+	for material in range(10):
 		t.check(counts.get(material, 0) > 0, "Exploration finds terrain category %d, including natural caves and scarce sources" % material)
 	g.reset_world(1021)
 	g.reset_world(1020)

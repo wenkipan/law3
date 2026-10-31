@@ -2,7 +2,7 @@ extends Node2D
 
 const CELL := 40.0
 const BASE := Vector2i(32, 13)
-const VISION_RADIUS := 7
+const VISION_RADIUS := 9
 const DAY_SECONDS := 180.0
 # 面包兼作食物和支付物。饱食度全天衰减，最低为零；出生时满饱食，不增加实物面包。
 const MEAL_SECONDS := 2.0
@@ -68,7 +68,18 @@ const WORKER_NAMES := ["阿麦", "米粒", "石头", "小满", "青禾", "阿砾
 const WORKER_COLORS := [Color("#d6ba72"), Color("#a4cbb5"), Color("#d99987")]
 # 开局面包存于传送门。工厂库存与个人面包分别归属，支付转移所有权，进食消耗实物。
 const STARTING_BREAD := 300.0
-const RESOURCE_ITEMS := [1, 2, 3, 4, "bread", "wheat", "raw_water", "clean_water", "bench", "workbench"]
+const RESOURCE_ITEMS := [1, 2, 3, 4, 7, 8, "bread", "wheat", "raw_water", "clean_water", "bench", "workbench", "wool", "cloth", "clothes", "ale", "iron", "planks", "tools", "meat"]
+const PROCESSING_KINDS := ["bench", "workbench", "purifier", "mill", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy"]
+const SHEEP_GROWTH_HOURS := 12.0
+const SHEEP_MEAT := 6
+const MEAT_HUNGER := 20.0
+const ITEM_USES := {
+	"bench": {"slot": "gun_uses", "uses": GUN_USES},
+	"workbench": {"slot": "backpack_uses", "uses": BACKPACK_USES},
+	"clothes": {"slot": "clothes", "uses": 72.0 * HOUR_SECONDS},
+	"tools": {"slot": "tools", "uses": 12},
+}
+const MEAT_PRODUCT := {"name": "肉", "unit": "份", "price": 1.0, "item": "meat"}
 const FARM_GROWTH_HOURS := 6.0
 const EFFECT_RADIUS := 3
 const FOUNTAIN_WATER := 10
@@ -82,6 +93,14 @@ const LINE_KINDS := ["high_line", "low_line"]
 const GENERATOR_KINDS := ["power_plant", "manual_generator"]
 const OPERATED_KINDS := ["power_plant", "manual_generator", "transformer", "drill"]
 const NEW_BUILDINGS := {
+	"barn": {"name": "畜棚", "materials": {1: 8, 7: 4}, "hours": 4.0},
+	"mill": {"name": "磨房", "materials": {1: 6, 4: 2}, "hours": 4.0},
+	"weaver": {"name": "纺织坊", "materials": {1: 4, 7: 4}, "hours": 4.0},
+	"tailor": {"name": "裁缝铺", "materials": {1: 4, "planks": 2}, "hours": 4.0},
+	"brewery": {"name": "酿酒坊", "materials": {1: 6, "planks": 2}, "hours": 4.0},
+	"smelter": {"name": "熔炉", "materials": {1: 8, 4: 4}, "hours": 6.0},
+	"sawmill": {"name": "锯木厂", "materials": {1: 6, 7: 2}, "hours": 4.0},
+	"smithy": {"name": "铁匠铺", "materials": {1: 6, "iron": 2}, "hours": 4.0},
 	"farm": {"name": "农田", "materials": {1: 4}, "hours": 4.0},
 	"power_plant": {"name": "燃煤发电站", "materials": {4: 12, 2: 6}, "hours": 8.0},
 	"high_line": {"name": "粗电线", "materials": {2: 2}, "hours": 0.5},
@@ -97,9 +116,17 @@ const NEW_BUILDINGS := {
 	"canteen": {"name": "食堂", "materials": {1: 8, 4: 2}, "hours": 4.0},
 }
 const FREIGHT_CAPACITY := 4
-const BUILDING_KINDS := ["bed", "bench", "workbench", "pump", "purifier", "printer", "bank", "belt", "farm", "power_plant", "high_line", "low_line", "transformer", "grow_light", "fountain", "electric_belt", "drill", "manual_generator", "spotlight", "daylight", "canteen"]
+const BUILDING_KINDS := ["bed", "bench", "workbench", "pump", "purifier", "printer", "bank", "belt", "farm", "power_plant", "high_line", "low_line", "transformer", "grow_light", "fountain", "electric_belt", "drill", "manual_generator", "spotlight", "daylight", "canteen", "mill", "barn", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy"]
 # 生产批次的产物、工时与售价；原料见 production_materials，建材见 building_materials。
 const PRODUCTS := {
+	"mill": {"name": "面包", "unit": "份", "hours": 2.0, "amount": 8, "item": "bread", "materials": {"wheat": 4}},
+	"barn": {"name": "羊毛", "unit": "份", "hours": 2.0, "amount": 2, "item": "wool", "materials": {"wheat": 2, "raw_water": 2}},
+	"weaver": {"name": "布", "unit": "匹", "hours": 2.0, "amount": 2, "item": "cloth", "materials": {"wool": 2}},
+	"tailor": {"name": "衣物", "unit": "件", "hours": 2.0, "amount": 1, "item": "clothes", "price": 4.0, "materials": {"cloth": 2}},
+	"brewery": {"name": "麦酒", "unit": "份", "hours": 2.0, "amount": 4, "item": "ale", "price": 2.0, "materials": {"wheat": 2, "raw_water": 2}},
+	"smelter": {"name": "铁锭", "unit": "块", "hours": 2.0, "amount": 2, "item": "iron", "materials": {8: 2, 3: 1}},
+	"sawmill": {"name": "木板", "unit": "块", "hours": 1.0, "amount": 2, "item": "planks", "materials": {7: 1}},
+	"smithy": {"name": "铁工具", "unit": "套", "hours": 2.0, "amount": 1, "item": "tools", "price": 5.0, "materials": {"iron": 1, "planks": 1}},
 	"farm": {"name": "小麦", "unit": "份", "hours": 2.0, "amount": 8, "item": "wheat"},
 	"bench": {"name": "矿枪", "unit": "把", "hours": GUN_WORK_HOURS, "price": GUN_PRICE, "uses": GUN_USES, "durability": "gun_uses"},
 	"workbench": {"name": "背包", "unit": "个", "hours": BACKPACK_WORK_HOURS, "price": BACKPACK_PRICE, "uses": BACKPACK_USES, "durability": "backpack_uses"},
@@ -112,6 +139,7 @@ const DailyReport = preload("res://scripts/daily_report.gd")
 const MapGenerator = preload("res://scripts/map_generator.gd")
 const WorldNavigation = preload("res://scripts/world_navigation.gd")
 const WorkerMood = preload("res://scripts/worker_mood.gd")
+const WorkerBuffs = preload("res://scripts/simulation/worker_buffs.gd")
 const WorkerStateTree = preload("res://scripts/simulation/worker_state_tree.gd")
 const SmartObjects = preload("res://scripts/simulation/smart_objects.gd")
 const WorkerTrace = preload("res://scripts/simulation/worker_trace.gd")
@@ -126,6 +154,8 @@ const ORES := [
 	{"name": "花岗岩", "color": Color("#777187"), "time": 4.2},
 	{"name": "致密铜矿", "color": Color("#b27457"), "time": 15.0, "item": 2},
 	{"name": "致密煤矿", "color": Color("#313a43"), "time": 15.0, "item": 3},
+	{"name": "木材", "color": Color("#8b9860"), "time": 7.5},
+	{"name": "铁矿", "color": Color("#83a1a3"), "time": 9.0},
 ]
 
 var world_seed := 0
@@ -219,7 +249,6 @@ var day_clock: Control
 var pause_button: Button
 var tool_buttons: Dictionary = {}
 var build_tray: PanelContainer
-var furniture_button: Button
 var speed_buttons: Dictionary = {}
 var reset_dialog: ConfirmationDialog
 var font: Font
@@ -232,8 +261,6 @@ var worker_bars: Dictionary = {}
 var entity_panel: PanelContainer
 var entity_title: Label
 var entity_details: Label
-var bed_texture: Texture2D
-var bed_blueprint_texture: Texture2D
 
 func _ready() -> void:
 	ai_trace.configure(OS.get_cmdline_user_args())
@@ -312,8 +339,7 @@ func reset_world(new_seed: int = -1) -> void:
 	simulation_paused = false
 	pause_button.text = "Ⅱ"
 	set_tool("dig")
-	build_tray.hide()
-	furniture_button.button_pressed = false
+	$UI.close_build_tray()
 	generate_terrain()
 	for i in 3:
 		create_worker(BASE + Vector2i(i - 1, 1))
@@ -361,7 +387,8 @@ func create_worker(p: Vector2i) -> Dictionary:
 		"activity": WorkerStateTree.new(), "carry": 0, "extra_cargo": [], "freight": {}, "ore_delivery": {},
 		"bread": 0.0, "earned_today": 0.0, "eaten_today": 0.0, "hunger": STARTING_HUNGER, "meal_bread": 0.0,
 		"bed_spent_today": 0.0, "shop_spent_today": 0.0, "fatigue": 0.0,
-		"gun_uses": 0, "backpack_uses": 0, "water": 0, "water_effect": 0.0,
+		"gun_uses": 0, "backpack_uses": 0, "water": 0,
+		"items": {}, "equipment": {}, "buffs": WorkerBuffs.new(),
 		"mood": WorkerMood.new(), "loan_principal": 0.0, "loan_interest": 0.0, "loan_day": 0, "loan_bank": null,
 		"unloaded_this_trip": 0, "payroll": 0.0}
 	workers.append(worker)
@@ -402,6 +429,10 @@ func route(start: Vector2i, target: Vector2i) -> Array[Vector2i]:
 func has_debt(w: Dictionary) -> bool:
 	return w.loan_principal + w.loan_interest > 0.000001
 
+func worker_special_items(w: Dictionary) -> Dictionary:
+	# A loan is one personal contract, not physical stock or a second debt balance.
+	return {"loan": 1} if has_debt(w) else {}
+
 func receive_income(w: Dictionary, amount: float) -> void:
 	# Repayment stays in the carried employer purse; the bank records interest only.
 	var repayment := minf(amount * LOAN_REPAYMENT_RATE, w.loan_principal + w.loan_interest)
@@ -420,7 +451,7 @@ func cargo_count(w: Dictionary) -> int:
 	return (1 if w.carry > 0 else 0) + w.extra_cargo.size()
 
 func carry_capacity(w: Dictionary) -> int:
-	return 2 if w.backpack_uses > 0 else 1
+	return w.buffs.carry_capacity(w)
 
 # A delivery names its receiver first; walking and tracks are interchangeable transport legs.
 func delivery_route(start: Vector2i, target: Vector2i, use_belts := true) -> Dictionary:
@@ -732,7 +763,7 @@ func settle_labor(w: Dictionary, segment: Dictionary, reason: String) -> void:
 	segment.clear()
 
 func mining_seconds(p: Vector2i) -> float:
-	if terrain[p] >= 5:
+	if terrain[p] in [5, 6]:
 		return DRILL_HOURS * HOUR_SECONDS
 	return maxf(MIN_MINING_HOURS * HOUR_SECONDS, ORES[terrain[p]].time)
 
@@ -779,6 +810,8 @@ func can_plan_building(kind: String, available: Dictionary = {}) -> bool:
 
 # 开工消耗接收建筑内的原料；配方为空表示只需劳动。农田的水用于整批播种与生长。
 func production_materials(kind: String) -> Dictionary:
+	if PRODUCTS.get(kind, {}).has("materials"):
+		return PRODUCTS[kind].materials
 	match kind:
 		"bench": return {2: 1}
 		"purifier", "farm": return {"raw_water": 4}
@@ -894,7 +927,7 @@ func building_space_valid(p: Vector2i, kind: String) -> bool:
 	if kind == "pump" and not near_water_source(p):
 		return false
 	for cell in building_cells(p, kind):
-		if not in_bounds(cell) or not explored.has(cell) or water_sources.has(cell) or cell == BASE or terrain[cell] >= 5:
+		if not in_bounds(cell) or not explored.has(cell) or water_sources.has(cell) or cell == BASE or terrain[cell] in [5, 6]:
 			return false
 		for collection in [sites, beds, benches, banks, belts, power_lines]:
 			for origin in collection:
@@ -1088,15 +1121,24 @@ func cancel_site(p: Vector2i) -> bool:
 	return true
 
 func uses_daily_output(kind: String) -> bool:
-	return kind in ["bench", "workbench", "pump", "purifier", "farm"]
+	return PRODUCTS.has(kind) and kind != "printer"
 
 func production_station(kind: String) -> Dictionary:
-	return {"kind": kind, "queue": 0, "daily_output": 0, "produced_today": 0, "stock": 0, "task": {}, "growth": 0.0, "harvest": false, "water_day": 0}
+	var result := {"kind": kind, "queue": 0, "daily_output": 0, "produced_today": 0, "stock": 0, "task": {}, "growth": 0.0, "harvest": false, "water_day": 0}
+	if kind == "barn":
+		result.merge({"sheep": 1, "slaughter": false})
+	return result
+
+func request_slaughter(p: Vector2i) -> void:
+	if building_kind(p) == "barn" and benches.has(p) and benches[p].sheep > 0:
+		benches[p].slaughter = true
 
 # 日产量跨天保留，完成量按完成当天计入；缺产不累积，销售库存不增加配额。
 # 已开工或正在生长的批次完成后才检查新配额；打印仓使用有限待制数量。
 func has_production_order(p: Vector2i) -> bool:
 	var bench: Dictionary = benches[p]
+	if bench.kind == "barn" and (bench.sheep <= 0 or bench.slaughter):
+		return bench.sheep > 0
 	if not bench.task.is_empty() or bench.growth > 0:
 		return true
 	var kind := building_kind(p)
@@ -1119,8 +1161,15 @@ func adjust_production(p: Vector2i, change: int) -> void:
 func product_item(kind: String):
 	return PRODUCTS.get(kind, {}).get("item", {"pump": "raw_water", "purifier": "clean_water"}.get(kind, kind))
 
-func sale_price(p: Vector2i) -> float:
-	return PRODUCTS[building_kind(p)].price * (1.0 + LIGHT_BONUS if has_powered_effect(Vector2(p), "spotlight") else 1.0)
+func shop_goods(p: Vector2i) -> Array:
+	if building_kind(p) == "barn": return ["meat"]
+	return [product_item(building_kind(p))] if PRODUCTS.get(building_kind(p), {}).has("price") else []
+
+func sale_product(p: Vector2i, item = null) -> Dictionary:
+	return MEAT_PRODUCT if item == "meat" else PRODUCTS.get(building_kind(p), {})
+
+func sale_price(p: Vector2i, item = null) -> float:
+	return sale_product(p, item).get("price", 0.0) * (1.0 + LIGHT_BONUS if has_powered_effect(Vector2(p), "spotlight") else 1.0)
 
 func station_wage(p) -> float:
 	return WAGE_PER_HOUR * (1.0 + LIGHT_BONUS if p != null and benches.has(p) and has_powered_effect(Vector2(p), "daylight") else 1.0)
@@ -1160,10 +1209,11 @@ func simulate(delta: float) -> void:
 func simulate_workers(delta: float) -> void:
 	var experiences: Array[Dictionary] = []
 	for w in workers:
-		w.mood.advance(delta / HOUR_SECONDS)
+		w.buffs.advance(delta)
+		wear_clothes(w, delta)
+		w.mood.advance(delta / HOUR_SECONDS, w.buffs.mood_bonus(w))
 		w.hunger = maxf(0.0, w.hunger - HUNGER_DECAY_PER_DAY * delta / DAY_SECONDS)
 		var experience: Dictionary = w.activity.tick(self, w, delta)
-		w.water_effect = maxf(0, w.water_effect - delta)
 		if not experience.is_empty():
 			experience.worker = w
 			experience.pos = w.pos
@@ -1357,7 +1407,7 @@ func tile_details(p: Vector2i) -> Dictionary:
 	if water_sources.has(p):
 		return {"title": "水源", "text": "不可通行\n可供抽水与灌溉"}
 	var ore: int = terrain[p]
-	if ore >= 5:
+	if ore in [5, 6]:
 		return {"title": ORES[ore].name, "text": "%s\n矿钻开采  %.0fh / 块\n产物  %s × 1\n矿脉可反复开采" % ["已标记开采" if jobs.has(p) else "需要矿钻", DRILL_HOURS, item_name(ORES[ore].item)]}
 	if ore == 0:
 		return {"title": "空地", "text": "可通行"}
@@ -1396,6 +1446,8 @@ func product_recipe_text(kind: String, p = null) -> String:
 		recipe += "\n原料  " + material_requirements_text(production_materials(kind))
 	if kind == "farm":
 		recipe += "\n浇水 1h · 生长 6h · 收割 1h"
+	if kind == "barn":
+		recipe += "\n喂养 1h · 产毛 %.0fh · 剪毛 1h" % SHEEP_GROWTH_HOURS
 	return recipe
 
 func building_effects_text(kind: String, p = null) -> String:
@@ -1422,6 +1474,16 @@ func building_effects_text(kind: String, p = null) -> String:
 	return effects
 
 func product_effects_text(kind: String, p = null) -> String:
+	if kind == "barn":
+		return "建成带 1 只羊\n屠宰 1h → 肉 ×%d\n肉售价 %s 面包 · 饱食 +%.0f" % [SHEEP_MEAT, String.num(sale_price(p, "meat") if p != null else MEAT_PRODUCT.price, 1), MEAT_HUNGER]
+	if kind in ["tailor", "brewery", "smithy"]:
+		var price: float = sale_price(p) if p != null else PRODUCTS[kind].price
+		var effect: String = {
+			"tailor": "穿着 %.0fh · 心情 +%.0f" % [ITEM_USES.clothes.uses / HOUR_SECONDS, WorkerBuffs.CLOTHES_MOOD],
+			"brewery": "疲劳 -%.0f · 酒意 %.0fh\n心情 +%.0f · 工作效率 -%.0f%%" % [WorkerBuffs.ALE_RECOVERY, WorkerBuffs.ALE_HOURS, WorkerBuffs.ALE_MOOD, (1 - WorkerBuffs.ALE_RATE) * 100],
+			"smithy": "农田劳动/加工效率 +%.0f%%\n耐久 %d 次劳动阶段" % [(WorkerBuffs.TOOL_RATE - 1) * 100, ITEM_USES.tools.uses],
+		}[kind]
+		return "售价 %s 面包\n%s" % [String.num(price, 1), effect]
 	if kind == "farm":
 		return ""
 	if kind == "printer":
@@ -1432,7 +1494,9 @@ func product_effects_text(kind: String, p = null) -> String:
 		return "售价  %s 面包 / 份\n饮用  %.1fh · 持续 %.0fh\n劳动疲劳增长  −%.0f%%" % [String.num(sale_price(p) if p != null else WATER_PRICE, 1), DRINK_HOURS, WATER_EFFECT_HOURS, WATER_FATIGUE_REDUCTION * 100]
 	if kind == "workbench":
 		return "售价  %s 面包\n使用次数  %d 次（每次交付两块）\n携带方块  +1" % [String.num(sale_price(p) if p != null else BACKPACK_PRICE, 1), BACKPACK_USES]
-	return "售价  %s 面包\n耐久  %d 格\n挖掘速度  +%.0f%%" % [String.num(sale_price(p) if p != null else GUN_PRICE, 1), GUN_USES, (GUN_MINING_RATE - 1.0) * 100.0]
+	if kind == "bench":
+		return "售价  %s 面包\n耐久  %d 格\n挖掘速度  +%.0f%%" % [String.num(sale_price(p) if p != null else GUN_PRICE, 1), GUN_USES, (GUN_MINING_RATE - 1.0) * 100.0]
+	return ""
 
 func icon_texture(path: String) -> Texture2D:
 	return Art.texture(path)
@@ -1568,15 +1632,9 @@ func set_tool(value: String) -> void:
 		cancel_placement()
 	tool = value
 	if value in BUILDING_KINDS and is_instance_valid(build_tray):
-		build_tray.show()
-		furniture_button.button_pressed = true
+		$UI.show_building_category(value)
 	for name_ in tool_buttons:
 		tool_buttons[name_].button_pressed = name_ == value
-
-func toggle_build_tray() -> void:
-	build_tray.visible = furniture_button.button_pressed
-	if not build_tray.visible and tool in BUILDING_KINDS:
-		set_tool("dig")
 
 func set_speed(value: int) -> void:
 	speed = float(value)
@@ -1635,9 +1693,9 @@ func item_name(item) -> String:
 	if item is int:
 		return ORES[item].name
 	return {"bread": "面包", "wheat": "小麦", "raw_water": "原水",
-		"clean_water": "清水", "bench": "矿枪", "workbench": "背包"}.get(item, str(item))
+		"clean_water": "清水", "bench": "矿枪", "workbench": "背包", "wool": "羊毛", "cloth": "布", "clothes": "衣物", "ale": "麦酒", "iron": "铁锭", "planks": "木板", "tools": "铁工具", "meat": "肉", "loan": "贷款"}.get(item, str(item))
 
-func storage_text(p: Vector2i) -> String:
+func storage_contents(p: Vector2i) -> Dictionary:
 	var contents: Dictionary = stores.get(p, {}).duplicate()
 	if benches.has(p) and PRODUCTS.has(building_kind(p)) and building_kind(p) != "printer":
 		var item = product_item(building_kind(p))
@@ -1645,11 +1703,7 @@ func storage_text(p: Vector2i) -> String:
 	for shipment in shipments:
 		if not shipment.picked and shipment.source == p:
 			contents[shipment.item] = contents.get(shipment.item, 0.0) + shipment.amount
-	var lines: Array[String] = []
-	for item in contents:
-		if contents[item] > 0.000001:
-			lines.append("%s  %s" % [item_name(item), String.num(contents[item], 1)])
-	return "\n".join(lines) if not lines.is_empty() else "空"
+	return contents
 
 func incoming(p: Vector2i, item) -> float:
 	var amount := 0.0
@@ -1677,6 +1731,8 @@ func delivery_requirements(p: Vector2i) -> Dictionary:
 	if not benches.has(p):
 		return {}
 	var b: Dictionary = benches[p]
+	if b.kind == "barn" and (b.sheep <= 0 or b.slaughter):
+		return {}
 	if PRODUCTS.has(b.kind) and has_production_order(p) and b.task.is_empty() and b.growth <= 0:
 		return production_materials(b.kind)
 	if b.kind == "power_plant":
@@ -1742,7 +1798,7 @@ func local_payment(p: Vector2i, recipe: Dictionary) -> Dictionary:
 			return {}
 		payment[item] = recipe[item]
 	var remaining: int = recipe.get(0, 0)
-	for ore in [1, 4, 3, 2]:
+	for ore in [1, 4, 3, 2, 7, 8]:
 		var taken := mini(remaining, int(stock_at(p, ore)) - payment.get(ore, 0))
 		if taken > 0:
 			payment[ore] = payment.get(ore, 0) + taken
@@ -1779,7 +1835,7 @@ func simulate_growth(delta: float) -> void:
 		var bench: Dictionary = benches[p]
 		if bench.growth <= 0:
 			continue
-		bench.growth = maxf(0.0, bench.growth - delta * (2.0 if has_powered_effect(Vector2(p), "grow_light") else 1.0))
+		bench.growth = maxf(0.0, bench.growth - delta * (2.0 if bench.kind == "farm" and has_powered_effect(Vector2(p), "grow_light") else 1.0))
 		if bench.growth == 0:
 			bench.harvest = true
 			bench.task = contract(1.0)
@@ -1810,7 +1866,7 @@ func machine_noise_at(p: Vector2) -> float:
 
 func drill_target(p: Vector2i, worker_id := -1):
 	for target in jobs:
-		if terrain[target] >= 5 and smart_objects.available(SmartObjects.key("mine", target), worker_id) and in_effect_range(p, Vector2(target), DRILL_RADIUS):
+		if terrain[target] in [5, 6] and smart_objects.available(SmartObjects.key("mine", target), worker_id) and in_effect_range(p, Vector2(target), DRILL_RADIUS):
 			return target
 	return null
 
@@ -2054,6 +2110,10 @@ func resource_inventory() -> Dictionary:
 		result.clean_water += w.water
 		result.bench += 1 if w.gun_uses > 0 else 0
 		result.workbench += 1 if w.backpack_uses > 0 else 0
+		for item in w.items:
+			result[item] += w.items[item]
+		for item in w.equipment:
+			result[item] += 1 if w.equipment[item] > 0 else 0
 	return result
 
 func sample_inventory() -> void:
@@ -2067,7 +2127,7 @@ func work_available(option, w: Dictionary) -> bool:
 	var p = option.target
 	match option.kind:
 		"mine":
-			return mining_contracts.has(p) and is_same(mining_contracts[p], option.data.identity) and terrain[p] in [1, 2, 3, 4] and cargo_count(w) < carry_capacity(w)
+			return mining_contracts.has(p) and is_same(mining_contracts[p], option.data.identity) and terrain[p] in [1, 2, 3, 4, 7, 8] and cargo_count(w) < carry_capacity(w)
 		"build":
 			return sites.has(p) and is_same(sites[p], option.data.identity) and not sites[p].get("cancelled", false) and site_cleared(p) and site_supplied(p)
 		"produce":
@@ -2083,12 +2143,14 @@ func begin_work(option, w: Dictionary, segment: Dictionary) -> bool:
 		var p: Vector2i = option.target
 		var bench: Dictionary = benches[p]
 		if bench.task.is_empty():
-			if option.kind == "produce":
+			var slaughter: bool = bench.kind == "barn" and bench.slaughter
+			if option.kind == "produce" and not slaughter:
 				var recipe := production_materials(bench.kind)
 				if not recipe_ready(p, recipe):
 					return false
 				consume_recipe(p, recipe)
-			bench.task = contract(1.0 if bench.kind in OPERATED_KINDS or bench.kind == "farm" else PRODUCTS[bench.kind].hours)
+			bench.task = contract(1.0 if bench.kind in OPERATED_KINDS or bench.kind in ["farm", "barn"] else PRODUCTS[bench.kind].hours)
+			if slaughter: bench.task.slaughter = true
 	var task: Dictionary
 	var station = option.target if option.kind in ["produce", "operate"] else null
 	var kind := building_kind(station) if station != null else ""
@@ -2102,11 +2164,9 @@ func begin_work(option, w: Dictionary, segment: Dictionary) -> bool:
 	var goal: float = minf(task.seconds, (task.paid + w.payroll) / task.reward * task.seconds)
 	if goal <= task.progress + 0.0000001:
 		return false
-	var rate := GUN_MINING_RATE if option.kind == "mine" and w.gun_uses > 0 else 1.0
-	if kind not in GENERATOR_KINDS and kind != "transformer":
-		rate *= w.mood.work_rate()
+	var rate: float = w.buffs.work_rate(self, w, option.kind, kind)
 	segment.merge({"task": task, "goal": goal, "rate": rate, "kind": kind, "labor": 0.0,
-		"fatigue_factor": 1.0 - WATER_FATIGUE_REDUCTION if w.water_effect > 0 or w.water > 0 else 1.0}, true)
+		"fatigue_factor": w.buffs.fatigue_factor(self, w)}, true)
 	ai_trace.record(self, w, "labor", "started", {"reward": task.reward, "already_paid": task.paid,
 		"rate": rate, "goal": goal, "fatigue_factor": segment.fatigue_factor})
 	return true
@@ -2148,7 +2208,11 @@ func complete_work(option, w: Dictionary) -> void:
 			record_excavation(w)
 			update_fog()
 		"build": complete_building(p)
-		"produce": complete_product(p)
+		"produce":
+			if tool_work(building_kind(p)) and w.equipment.get("tools", 0) > 0:
+				w.equipment.tools -= 1
+				if w.equipment.tools == 0: record_resource_use("tools", 1)
+			complete_product(p)
 		"operate":
 			var bench: Dictionary = benches[p]
 			if bench.kind == "drill":
@@ -2173,8 +2237,14 @@ func complete_product(p: Vector2i) -> void:
 	if bench.kind == "printer":
 		newborns.append(p + Vector2i.RIGHT)
 		bench.queue -= 1
-	elif bench.kind == "farm" and not bench.harvest:
-		bench.growth = FARM_GROWTH_HOURS * HOUR_SECONDS
+	elif bench.task.get("slaughter", false):
+		bench.sheep = 0
+		bench.slaughter = false
+		bench.daily_output = 0
+		add_stock(p, "meat", SHEEP_MEAT)
+		record_resource_output("meat", SHEEP_MEAT)
+	elif bench.kind in ["farm", "barn"] and not bench.harvest:
+		bench.growth = (FARM_GROWTH_HOURS if bench.kind == "farm" else SHEEP_GROWTH_HOURS) * HOUR_SECONDS
 	else:
 		var amount: int = PRODUCTS[bench.kind].get("amount", 1)
 		bench.stock += amount
@@ -2202,23 +2272,21 @@ func complete_building(p: Vector2i) -> void:
 	sites.erase(p)
 	smart_objects.invalidate(SmartObjects.key("build", p))
 
-func purchase(w: Dictionary, p: Vector2i, limit: int) -> void:
+func purchase(w: Dictionary, p: Vector2i, limit: int, item = null) -> void:
 	if not benches.has(p) or w.pos.distance_to(Vector2(p)) > 0.01:
 		return
-	var product: Dictionary = PRODUCTS[building_kind(p)]
-	var price := sale_price(p)
-	var count := mini(limit, mini(benches[p].stock, floori((w.bread + 0.000001) / price)))
-	if product.has("durability"):
-		count = mini(1, count) if w[product.durability] == 0 else 0
-	else:
-		count = mini(count, WATER_CAPACITY - w.water)
+	if item == null: item = product_item(building_kind(p))
+	if item not in shop_goods(p): return
+	var price := sale_price(p, item)
+	var count := mini(limit, mini(floori(stock_at(p, item)), floori((w.bread + 0.000001) / price)))
+	count = mini(count, purchase_capacity(w, item))
 	if count <= 0: return
-	benches[p].stock -= count
+	add_stock(p, item, -count)
 	w.bread -= count * price
 	w.shop_spent_today += count * price
 	add_stock(p, "bread", count * price)
-	if product.has("durability"): w[product.durability] = product.uses
-	else: w.water += count
+	if item == "clean_water": w.water += count
+	else: w.items[item] = w.items.get(item, 0) + count
 
 func collect_payroll(w: Dictionary, p: Vector2i) -> void:
 	var cash := minf(4.0, stock_at(p, "bread"))
@@ -2243,7 +2311,52 @@ func drink(w: Dictionary) -> void:
 	if w.water <= 0: return
 	w.water -= 1
 	record_resource_use("clean_water", 1)
-	w.water_effect = WATER_EFFECT_HOURS * HOUR_SECONDS
+	w.buffs.apply("hydrated", WATER_EFFECT_HOURS * HOUR_SECONDS)
+
+func tool_work(kind: String) -> bool:
+	return kind == "farm" or kind in PROCESSING_KINDS
+
+func equipped_amount(w: Dictionary, item: String) -> float:
+	if item == "bench": return w.gun_uses
+	if item == "workbench": return w.backpack_uses
+	return w.equipment.get(item, 0.0)
+
+func purchase_capacity(w: Dictionary, item: String) -> int:
+	if item == "clean_water": return WATER_CAPACITY - w.water
+	if ITEM_USES.has(item) and equipped_amount(w, item) > 0: return 0
+	return maxi(0, (2 if item == "meat" else 1) - w.items.get(item, 0))
+
+func wants_item(w: Dictionary, item: String) -> bool:
+	if purchase_capacity(w, item) <= 0: return false
+	if item == "clean_water": return w.water == 0 and w.buffs.remaining("hydrated") <= 0 and not has_debt(w)
+	if item == "ale": return w.buffs.remaining("tipsy") <= 0 and not has_debt(w) and w.fatigue >= WorkerBuffs.ALE_RECOVERY
+	if item == "meat": return w.hunger < 70
+	return true
+
+func use_item(w: Dictionary, item: String) -> bool:
+	if w.items.get(item, 0) <= 0: return false
+	if ITEM_USES.has(item):
+		if equipped_amount(w, item) > 0: return false
+		var rule: Dictionary = ITEM_USES[item]
+		if item in ["bench", "workbench"]: w[rule.slot] = rule.uses
+		else: w.equipment[rule.slot] = rule.uses
+	elif item == "ale":
+		if w.buffs.remaining("tipsy") > 0: return false
+		w.fatigue = maxf(0.0, w.fatigue - WorkerBuffs.ALE_RECOVERY)
+		w.buffs.apply("tipsy", WorkerBuffs.ALE_HOURS * HOUR_SECONDS)
+		record_resource_use(item, 1)
+	elif item == "meat":
+		w.hunger = minf(MAX_HUNGER, w.hunger + MEAT_HUNGER)
+		record_resource_use(item, 1)
+	else:
+		return false
+	w.items[item] -= 1
+	return true
+
+func wear_clothes(w: Dictionary, delta: float) -> void:
+	if w.equipment.get("clothes", 0) <= 0: return
+	w.equipment.clothes = maxf(0.0, w.equipment.clothes - delta)
+	if w.equipment.clothes == 0: record_resource_use("clothes", 1)
 
 func rent_bed(w: Dictionary, p: Vector2i) -> bool:
 	if not beds.has(p) or w.bread < BED_PRICE or slot_owner("bed", p) != w.id:

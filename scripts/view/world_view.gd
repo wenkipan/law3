@@ -28,7 +28,7 @@ var chunk_pool: Array[Dictionary] = []
 var view_chunks := Rect2i()
 
 func _ready() -> void:
-	var tiles := Art.tile_set("res://assets/world/terrain-atlas.svg", 7)
+	var tiles := Art.tile_set("res://assets/world/terrain-atlas.svg", 9)
 	$TerrainBackground.tile_set = tiles
 	$Blocks.tile_set = tiles
 	$Fog.tile_set = Art.tile_set("res://assets/world/fog-atlas.svg", 2)
@@ -298,6 +298,8 @@ func sync_buildings() -> void:
 		building_nodes[p].set_progress(progress)
 		building_nodes[p].set_size(game.building_size(p, kind))
 		building_nodes[p].animate(game.powered_devices.has(p) or game.power_output.get(p, 0.0) > 0, game.animation_time)
+		if kind == "barn":
+			building_nodes[p].sync_sheep(game.benches.get(p, {}).get("sheep", 0), game.animation_time)
 		if kind in game.BELT_KINDS:
 			building_nodes[p].set_belt_connections(game.belt_connections(p), game.belt_direction_at(p))
 		building_nodes[p].input_pickable = game.explored.has(p)

@@ -172,6 +172,77 @@ func run(t) -> void:
 	check_drilling(t)
 	check_electric_freight(t)
 	check_mood_payments(t)
+	check_industry(t)
+
+func check_industry(t) -> void:
+	var g = t.game
+	# Every new recipe must use delivered inputs, not global stock or free output.
+	for kind in ["mill", "barn", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy"]:
+		for reachable in [false, true]:
+			t.fixtures.scenario("Industry local materials: %s / reachable %s" % [kind, reachable], 1)
+			t.fixtures.station(kind, P)
+			var recipe: Dictionary = g.production_materials(kind)
+			if reachable: t.fixtures.stock_recipe(g.BASE, recipe)
+			else: t.fixtures.isolated_warehouse(recipe)
+			g.adjust_production(P, 1)
+			var item = g.product_item(kind)
+			var amount: int = g.PRODUCTS[kind].amount
+			if not reachable:
+				g.simulate(25)
+				t.near(g.resource_activity(item, 1).produced, 0, "Unreachable ingredients cannot produce goods")
+			else:
+				t.advance_until(func(): return g.resource_activity(item, 1).produced == amount, 160, "Delivered recipe produces its complete batch")
+				g.adjust_production(P, -1)
+				g.simulate(3)
+				for ingredient in recipe:
+					t.near(g.resource_activity(ingredient, 1).consumed, recipe[ingredient], "Actual inputs are consumed once per batch")
+				var activity: Dictionary = g.resource_activity(item, 1)
+				var initial: float = g.STARTING_BREAD if item == "bread" else 0.0
+				t.near(g.resource_inventory()[item], initial + activity.produced - activity.consumed, "Production, personal purchases and consumption reconcile physical totals")
+
+	# Sheep remain alive between wool harvests; slaughter cannot regenerate livestock.
+	t.fixtures.scenario("Sheep wool, queued slaughter and permanent removal", 1)
+	t.fixtures.station("barn", P)
+	t.fixtures.stock_recipe(g.BASE, {"wheat": 6, "raw_water": 6})
+	g.adjust_production(P, 2)
+	t.advance_until(func(): return g.resource_activity("wheat", 1).consumed == 2, 30, "Feed is physically delivered before wool grows")
+	g.request_slaughter(P)
+	g.request_slaughter(P)
+	t.advance_until(func(): return g.resource_activity("meat", 1).produced == g.SHEEP_MEAT, 150, "Slaughter follows the already fed wool cycle")
+	t.near(g.resource_activity("wool", 1).produced, 2, "Queued slaughter preserves the paid wool batch")
+	t.near(g.resource_activity("wheat", 1).consumed, 2, "Slaughter does not consume another feed recipe")
+	g.request_slaughter(P)
+	g.adjust_production(P, 1)
+	g.simulate(g.DAY_SECONDS)
+	g.select_entity(P)
+	t.check(g.entity_details.text.contains("羊 0"), "The barn remains empty after slaughter, including after midnight")
+	t.near(g.resource_inventory().meat + g.resource_activity("meat", 1).consumed + g.resource_activity("meat", 2).consumed, g.SHEEP_MEAT, "Repeated slaughter cannot duplicate meat")
+	t.near(g.resource_inventory().wool, 2, "An empty barn cannot regrow wool")
+
+	# The two intermediate streams must arrive at the smithy before tools exist.
+	t.fixtures.scenario("Ore and timber reach tools through real factories", 3)
+	t.fixtures.station("sawmill", P)
+	t.fixtures.station("smelter", OTHER)
+	var smith := Vector2i(34, 11)
+	t.fixtures.station("smithy", smith)
+	t.fixtures.stock_recipe(g.BASE, {7: 1, 8: 2, 3: 1})
+	for p in [P, OTHER, smith]: g.adjust_production(p, 1)
+	t.advance_until(func(): return g.resource_activity("tools", 1).produced == 1, 160, "Both processed streams supply the final tool recipe")
+	t.near(g.resource_activity("iron", 1).produced, 2, "Smelting outputs iron once")
+	t.near(g.resource_activity("planks", 1).produced, 2, "Sawing outputs planks once")
+	t.near(g.resource_activity("iron", 1).consumed, 1, "Smithy consumes only delivered iron")
+	t.near(g.resource_activity("planks", 1).consumed, 1, "Smithy consumes only delivered planks")
+
+	t.fixtures.scenario("Sheep supply cloth and wearable clothing", 3)
+	t.fixtures.station("barn", P)
+	t.fixtures.station("weaver", OTHER)
+	var tailor := Vector2i(34, 11)
+	t.fixtures.station("tailor", tailor)
+	t.fixtures.stock_recipe(g.BASE, {"wheat": 2, "raw_water": 2})
+	for p in [P, OTHER, tailor]: g.adjust_production(p, 1)
+	t.advance_until(func(): return g.resource_activity("clothes", 1).produced == 1, 175, "Wool and cloth are carried through both downstream facilities")
+	t.near(g.resource_activity("wool", 1).consumed, 2, "Weaving consumes real sheep wool")
+	t.near(g.resource_activity("cloth", 1).consumed, 2, "Tailoring consumes real woven cloth")
 
 func check_mood_payments(t) -> void:
 	var g = t.game

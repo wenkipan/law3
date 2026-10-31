@@ -28,23 +28,24 @@ var low_hours := 0.0
 var avoids_machines := false
 var shopping := 0
 
-func advance(hours: float) -> void:
+func advance(hours: float, bonus := 0.0) -> void:
 	value = move_toward(value, 0.0, RECOVERY_PER_HOUR * hours)
-	if value <= AVOID_ENTER:
+	var effective := clampf(value + bonus, -LIMIT, LIMIT)
+	if effective <= AVOID_ENTER:
 		low_hours += hours
 		if low_hours >= AVOID_AFTER_HOURS:
 			avoids_machines = true
 	else:
 		low_hours = 0.0
-	if value >= AVOID_EXIT:
+	if effective >= AVOID_EXIT:
 		avoids_machines = false
-	if shopping > 0 and value < SHOP_EXIT:
+	if shopping > 0 and effective < SHOP_EXIT:
 		shopping = 0
-	elif shopping < 0 and value > LOW_SHOP_EXIT:
+	elif shopping < 0 and effective > LOW_SHOP_EXIT:
 		shopping = 0
-	if value >= SHOP_ENTER:
+	if effective >= SHOP_ENTER:
 		shopping = 1
-	elif value <= LOW_SHOP_ENTER:
+	elif effective <= LOW_SHOP_ENTER:
 		shopping = -1
 
 func experience(amount: float) -> void:
@@ -63,9 +64,10 @@ func ate_meal(meal_fraction: float, comfortable: bool, noise: float) -> void:
 func accepts_work(kind: String) -> bool:
 	return not avoids_machines or not WORK_STRESS.has(kind)
 
-func work_rate() -> float:
-	var strength := maxf(0.0, absf(value) - EFFICIENCY_THRESHOLD) / (LIMIT - EFFICIENCY_THRESHOLD)
-	return 1.0 + signf(value) * minf(1.0, strength) * MAX_EFFICIENCY_CHANGE
+func work_rate(bonus := 0.0) -> float:
+	var effective := clampf(value + bonus, -LIMIT, LIMIT)
+	var strength := maxf(0.0, absf(effective) - EFFICIENCY_THRESHOLD) / (LIMIT - EFFICIENCY_THRESHOLD)
+	return 1.0 + signf(effective) * minf(1.0, strength) * MAX_EFFICIENCY_CHANGE
 
 func water_limit(capacity: int) -> int:
 	return 1 if shopping < 0 else capacity

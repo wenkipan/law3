@@ -5,7 +5,7 @@ const ORE := Vector2i(37, 13)
 
 func run(t) -> void:
 	var g = t.game
-	for kind in ["bench", "workbench"]:
+	for kind in ["bench", "workbench", "tailor", "smithy"]:
 		t.fixtures.scenario("Last item has one buyer: " + kind, 2)
 		t.fixtures.station(kind, P, 1)
 		var product: Dictionary = g.PRODUCTS[kind]
@@ -17,11 +17,11 @@ func run(t) -> void:
 		g.simulate(1)
 		var equipped := 0
 		for worker in g.workers:
-			if worker[product.durability] > 0:
+			if g.equipped_amount(worker, g.product_item(kind)) > 0:
 				equipped += 1
 		t.check(equipped == 1 and g.benches[P].stock == 0, "One stocked item equips only one competing buyer")
-		t.near(g.resource_inventory()[kind], 1, "Equipping a purchased item transfers inventory instead of destroying it")
-		t.near(g.resource_activity(kind, 1).produced + g.resource_activity(kind, 1).consumed, 0, "An equipment sale is neither production nor consumption")
+		t.near(g.resource_inventory()[g.product_item(kind)], 1, "Equipping a purchased item transfers inventory instead of destroying it")
+		t.near(g.resource_activity(g.product_item(kind), 1).produced + g.resource_activity(g.product_item(kind), 1).consumed, 0, "An equipment sale is neither production nor consumption")
 		t.near(g.workers[0].shop_spent_today + g.workers[1].shop_spent_today, product.price, "Sold-out shop cannot charge a second buyer")
 
 	t.fixtures.scenario("Sale does not replenish today's completed quota", 1)
@@ -102,6 +102,90 @@ func run(t) -> void:
 		t.advance_until(func(): return g.delivered == 1, 30, "Worker mines without money or available water")
 
 	check_local_prices(t)
+	check_item_effects(t)
+
+func check_item_effects(t) -> void:
+	var g = t.game
+	# Buying is only a transfer; the effect belongs to a later actual use.
+	t.fixtures.scenario("Ale is bought, held and then consumed", 1)
+	t.fixtures.station("brewery", P, 1)
+	var buyer: Dictionary = g.workers[0]
+	buyer.bread = 2
+	buyer.hunger = 100
+	buyer.fatigue = 40
+	t.advance_until(func(): return buyer.shop_spent_today == 2, 15, "The buyer reaches the brewery and pays for one serving")
+	t.near(g.resource_activity("ale", 1).consumed, 0, "Payment does not consume the drink or grant its effect")
+	t.near(buyer.fatigue, 40, "Possession alone does not recover fatigue")
+	t.near(g.resource_inventory().ale, 1, "The purchased serving remains in physical inventory")
+	t.advance_until(func(): return g.resource_activity("ale", 1).consumed == 1, 10, "Actual drinking consumes the owned serving")
+	t.near(buyer.fatigue, 20, "Actual drinking applies recovery once", 0.1)
+	g.simulate(1)
+	t.near(g.resource_activity("ale", 1).consumed, 1, "A sold-out shop and empty personal stock cannot duplicate a drink")
+	var plain_hours := 0.0
+	# Compare paid output, not a prescribed routine or private efficiency cache.
+	for item in ["none", "tools", "clothes", "ale"]:
+		t.fixtures.scenario("Owned item use changes real production: " + item, 1)
+		t.fixtures.station("workbench", P)
+		var w: Dictionary = g.workers[0]
+		w.pos = Vector2(P)
+		w.fatigue = 40
+		if item != "none": w.items[item] = 1
+		g.adjust_production(P, 1)
+		if item == "ale":
+			t.advance_until(func(): return g.resource_activity("ale", 1).consumed == 1, 10, "The owned drink is actually used before any effect is claimed")
+			t.near(w.fatigue, 20, "Ale immediately removes twenty fatigue", 0.1)
+			g.select_worker(w.id)
+			t.check(g.entity_details.text.contains("酒意") and g.entity_details.text.contains("效率 -20%"), "The inspector exposes both benefit and penalty")
+		t.advance_until(func(): return g.resource_activity("workbench", 1).produced == 1, 90, "A worker completes a real paid batch with the owned item")
+		var hours: float = g.report_totals(1)["工作"] / g.HOUR_SECONDS
+		t.near(w.earned_today, 2, "Effects change speed, not the fixed full-batch wage")
+		match item:
+			"none": plain_hours = hours
+			"tools": t.near(hours, plain_hours / 1.3, "Iron tools accelerate processing labor", 0.02)
+			"clothes":
+				t.check(hours < plain_hours, "Clothing's mood condition affects actual labor efficiency")
+				t.near(g.resource_inventory().clothes, 1, "Wearing clothes is ownership, not immediate consumption")
+			"ale":
+				t.check(hours > plain_hours, "Tipsiness lowers actual output speed despite its mood benefit")
+				g.simulate(g.WorkerBuffs.ALE_HOURS * g.HOUR_SECONDS)
+				g.select_worker(w.id)
+				t.check(not g.entity_details.text.contains("酒意"), "Timed alcohol effects expire without another action")
+
+	for kind in ["farm", "workbench", "printer"]:
+		t.fixtures.scenario("Tool wear follows eligible labor: " + kind, 1)
+		t.fixtures.station(kind, P)
+		var w: Dictionary = g.workers[0]
+		w.equipment.tools = 1
+		if kind == "farm": t.fixtures.stock_recipe(P, {"raw_water": 4})
+		if kind == "printer": t.fixtures.stock_recipe(P, {1: 10})
+		g.adjust_production(P, 1)
+		t.advance_until(func(): return g.workers.size() == 2 if kind == "printer" else g.resource_activity(g.product_item(kind), 1).produced > 0, 150, "Ordered production completes with initially equipped tools")
+		t.near(g.resource_activity("tools", 1).consumed, 0 if kind == "printer" else 1, "Only farm and processing labor wear out tools; printing does not")
+		if kind == "farm":
+			t.near(g.report_totals(1)["工作"] / g.HOUR_SECONDS, 1.0 / 1.3 + 1.0, "One remaining use accelerates watering but not later growth or unequipped harvesting", 0.02)
+
+	t.fixtures.scenario("Clothing expiration removes its condition and consumes one item", 1)
+	var w: Dictionary = g.workers[0]
+	w.equipment.clothes = 2.0
+	g.select_worker(w.id)
+	t.check(g.entity_details.text.contains("衣物"), "Initially worn clothes appear in live details")
+	g.simulate(3)
+	g.select_worker(w.id)
+	t.check(not g.entity_details.text.contains("衣物"), "Expired clothing no longer grants a displayed condition")
+	t.near(g.resource_inventory().clothes, 0, "Worn-out clothes leave physical inventory")
+	t.near(g.resource_activity("clothes", 1).consumed, 1, "Clothing expiration is recorded once")
+
+	# Secondary meat stock uses the same buy/own/use path, not wool or factory cash.
+	t.fixtures.scenario("Meat sale and actual consumption conserve inventory", 1)
+	t.fixtures.station("barn", P)
+	t.fixtures.stock_recipe(P, {"meat": 1})
+	w = g.workers[0]
+	w.bread = 1
+	w.hunger = 60
+	t.advance_until(func(): return g.resource_activity("meat", 1).consumed == 1, 40, "A hungry buyer purchases and eats meat from the barn")
+	t.near(w.shop_spent_today, 1, "Meat charges its own listed price once")
+	t.near(g.resource_inventory().meat, 0, "Eaten meat is not also held or left for sale")
+	t.check(w.hunger > 60, "Eating meat restores hunger")
 
 func check_local_prices(t) -> void:
 	var g = t.game

@@ -25,14 +25,12 @@ func _init(world, person: Dictionary) -> void:
 			break
 	var products: Dictionary = {}
 	for p in game.benches:
-		var kind: String = game.building_kind(p)
-		var product: Dictionary = game.PRODUCTS.get(kind, {})
-		if not product.has("price") or game.benches[p].stock <= 0 or path_to(p).is_empty():
-			continue
-		if product.has("durability") and person[product.durability] == 0:
-			products[kind] = minf(products.get(kind, INF), game.sale_price(p))
-		elif kind == "purifier" and person.mood.shopping > 0 and not game.has_debt(person) and person.water == 0 and person.water_effect <= 0:
-			products[kind] = minf(products.get(kind, INF), game.sale_price(p) * mini(4, game.benches[p].stock))
+		if path_to(p).is_empty(): continue
+		for item in game.shop_goods(p):
+			if game.stock_at(p, item) <= 0 or not game.wants_item(person, item): continue
+			if item == "clean_water" and person.mood.shopping <= 0: continue
+			var quantity: int = mini(4, game.stock_at(p, item)) if item == "clean_water" else 1
+			products[item] = minf(products.get(item, INF), game.sale_price(p, item) * quantity)
 	for price in products.values():
 		desired_cash += price
 	desired_cash += minf(4.0, person.loan_principal + person.loan_interest)

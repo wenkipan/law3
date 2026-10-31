@@ -19,7 +19,7 @@ func tick(g, w: Dictionary, delta: float) -> String:
 	if reached == 0:
 		return "running"
 	match option.kind:
-		"purchase": g.purchase(w, option.target, option.data.amount)
+		"purchase": g.purchase(w, option.target, option.data.amount, option.data.item)
 		"borrow": g.borrow(w, option.target, option.data.amount)
 		"payroll": g.collect_payroll(w, option.target)
 	return "success"

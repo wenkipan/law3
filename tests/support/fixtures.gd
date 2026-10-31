@@ -52,6 +52,10 @@ func materials(amount: int, ore := 1) -> void:
 		game.add_stock(game.BASE, mineral, -game.stock_at(game.BASE, mineral))
 	game.add_stock(game.BASE, ore, amount)
 
+func stock_recipe(p: Vector2i, recipe: Dictionary) -> void:
+	for item in recipe:
+		game.add_stock(p, item, recipe[item])
+
 func building_materials(kind: String, count := 1) -> void:
 	materials(0)
 	for ore in game.building_materials(kind):
