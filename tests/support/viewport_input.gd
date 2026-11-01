@@ -90,8 +90,10 @@ func drag_world(cells: Array[Vector2i], release_over_ui := false, cancel_with_mo
 
 func choose_building(kind: String) -> void:
 	await settle()
-	if not game.build_tray.visible:
-		await click(game.furniture_button.get_global_rect().get_center())
+	var ui = game.get_node("UI")
+	for category in ui.BUILD_CATEGORIES:
+		if kind in ui.BUILD_CATEGORIES[category].kinds and (not game.build_tray.visible or ui.selected_build_category != category):
+			await click(ui.category_buttons[category].get_global_rect().get_center())
 	var scroll: ScrollContainer = game.tool_buttons[kind].get_parent().get_parent()
 	for attempt in 12:
 		var target: Rect2 = game.tool_buttons[kind].get_global_rect()
@@ -99,6 +101,11 @@ func choose_building(kind: String) -> void:
 		if visible_area.encloses(target): break
 		await scroll_at(visible_area.get_center(), MOUSE_BUTTON_WHEEL_DOWN if target.end.y > visible_area.end.y else MOUSE_BUTTON_WHEEL_UP)
 	await click(game.tool_buttons[kind].get_global_rect().get_center())
+
+func close_build_tray() -> void:
+	var ui = game.get_node("UI")
+	if game.build_tray.visible:
+		await click(ui.category_buttons[ui.selected_build_category].get_global_rect().get_center())
 
 func scroll_at(point: Vector2, button: MouseButton) -> void:
 	await move_to(point)

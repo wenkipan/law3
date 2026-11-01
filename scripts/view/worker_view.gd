@@ -43,13 +43,13 @@ func configure(w: Dictionary, font: Font) -> void:
 	$Puppet/RightArm.modulate = w.color.lightened(0.2)
 
 func sync(w: Dictionary, clock: float, cell_size: float, work_active := true, origin := Vector2i.ZERO) -> void:
-	var walking: bool = w.state in ["walk", "haul", "to_build", "to_bed", "to_meal", "to_work", "to_shop", "freight_pickup", "freight_dropoff", "to_payroll", "to_bank"] or (w.state == "rest" and not w.path.is_empty())
+	var walking: bool = w.state in ["walk", "haul", "to_build", "to_bed", "to_meal", "to_work", "to_shop", "freight_pickup", "freight_dropoff", "to_payroll", "to_bank", "to_bath"] or (w.state == "rest" and not w.path.is_empty())
 	var gun: bool = w.state == "dig" and w.gun_uses > 0
 	var backpack: bool = w.backpack_uses > 0
 	var in_bed: bool = w.state == "sleep" and w.bed != null
 	var freight: bool = not w.freight.is_empty() and w.freight.picked
 	var cargo_item = w.freight.item if freight else (w.carry if w.carry > 0 else null)
-	$Puppet/Torso.modulate = Color("#d8a8c8") if w.equipment.get("clothes", 0) > 0 else w.color.lightened(0.2)
+	$Puppet/Torso.modulate = Color("#888c87").lerp(Color("#d8a8c8"), w.clothes_cleanliness / 100.0) if w.equipment.get("clothes", 0) > 0 else w.color.lightened(0.2)
 	if last_origin == origin and last_clock == clock and last_position == w.pos and last_state == w.state and last_carry == w.carry and last_facing == w.facing and last_walking == walking and last_in_bed == in_bed and last_gun == gun and last_backpack == backpack and last_work_active == work_active and is_same(last_cargo_item, cargo_item):
 		return
 	last_origin = origin
@@ -83,7 +83,7 @@ func sync(w: Dictionary, clock: float, cell_size: float, work_active := true, or
 	$Puppet/RightBoot.rotation = -stride * 0.25
 	$Puppet/LeftArm.rotation = -stride * 0.3
 	$Puppet/RightArm.rotation = stride * 0.3
-	$Puppet/Tool.visible = w.state in ["dig", "build", "work", "eat", "drink", "use_item"] and (w.state != "work" or work_active)
+	$Puppet/Tool.visible = w.state in ["dig", "build", "work", "eat", "drink", "use_item", "bathe"] and (w.state != "work" or work_active)
 	$Puppet/Cargo.visible = (w.carry > 0 or freight) and not in_bed
 	if not is_same(last_cargo_item, cargo_item):
 		last_cargo_item = cargo_item
@@ -105,6 +105,9 @@ func sync(w: Dictionary, clock: float, cell_size: float, work_active := true, or
 		if w.state == "use_item":
 			$Puppet/Tool.texture = Art.item_texture(w.item)
 			$Puppet/Tool.region_enabled = false
+		if w.state == "bathe":
+			$Puppet/Tool.texture = Art.texture("res://assets/icons/bath.svg")
+			$Puppet/Tool.region_enabled = false
 		set_part($Puppet/Tool, Vector2i(5, 0) if w.state == "eat" else (Vector2i(4, 0) if w.state == "dig" else Vector2i(0, 1)))
 	$Puppet/Tool.position = Vector2(17, -5)
 	$Puppet/Tool.rotation = 0.0
@@ -116,6 +119,10 @@ func sync(w: Dictionary, clock: float, cell_size: float, work_active := true, or
 			$Puppet/Tool.rotation = 0.0
 			$Puppet/Tool.position.x += sin(clock * 35) * 1.5
 			$Puppet/RightArm.rotation = -0.5
+	elif w.state == "bathe" or (w.state == "use_item" and w.item == "cleaner"):
+		$Puppet/Tool.position = Vector2(9 + sin(clock * 8) * 3, 2)
+		$Puppet/RightArm.rotation = -0.5 + sin(clock * 8) * 0.25
+		$Puppet/LeftArm.rotation = 0.4 - sin(clock * 8) * 0.25
 	elif w.state in ["eat", "drink", "use_item"]:
 		$Puppet/Tool.position = Vector2(12, -9 + sin(clock * 7) * 3)
 		$Puppet/RightArm.rotation = -0.8

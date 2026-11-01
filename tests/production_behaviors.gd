@@ -137,11 +137,11 @@ func run(t) -> void:
 		t.fixtures.hungry_worker(Vector2i(36, 15))
 		g.simulate(0.5)
 		g.select_entity(source)
-		t.check(g.entity_details.text.contains("%s  %s" % [g.item_name(entry.item), String.num(1024 + entry.amount, 1)]), "Reserved goods remain visible in their source warehouse until pickup")
-		var carried := "搬运  %s × %s" % [g.item_name(entry.item), String.num(entry.amount, 1)]
+		t.check(t.inventory_description(entry.item).contains("数量 " + str(1024 + entry.amount)), "Reserved goods remain visible in their source warehouse until pickup")
+		var carried := "搬运 " + str(entry.amount)
 		t.advance_until(func():
 			g.select_worker(0)
-			return g.entity_details.text.contains(carried), 10, "Worker visibly carries the actual ingredient after visiting its source")
+			return t.inventory_description(entry.item).contains(carried), 10, "Worker visibly carries the actual ingredient after visiting its source")
 		t.check(g.stock_at(OTHER, entry.item) == 0 and g.benches[OTHER].produced_today == 0, "Ingredients in transit cannot be consumed at the destination")
 		t.near(g.resource_inventory()[entry.item], 1024 + entry.amount, "Inventory includes transported material exactly once")
 		t.near(g.resource_activity(entry.item, g.day).consumed, 0, "Reservation and transport are not consumption")
@@ -177,7 +177,7 @@ func run(t) -> void:
 func check_industry(t) -> void:
 	var g = t.game
 	# Every new recipe must use delivered inputs, not global stock or free output.
-	for kind in ["mill", "barn", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy"]:
+	for kind in ["mill", "barn", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy", "chemical_plant", "soapworks"]:
 		for reachable in [false, true]:
 			t.fixtures.scenario("Industry local materials: %s / reachable %s" % [kind, reachable], 1)
 			t.fixtures.station(kind, P)
@@ -200,6 +200,20 @@ func check_industry(t) -> void:
 				var initial: float = g.STARTING_BREAD if item == "bread" else 0.0
 				t.near(g.resource_inventory()[item], initial + activity.produced - activity.consumed, "Production, personal purchases and consumption reconcile physical totals")
 
+	# Coal and raw water must pass through both factories before cleaning goods exist.
+	t.fixtures.scenario("Coal chemistry supplies cleaning goods", 3)
+	t.fixtures.station("chemical_plant", P)
+	t.fixtures.station("soapworks", OTHER)
+	t.fixtures.stock_recipe(g.BASE, {3: 2, "raw_water": 4})
+	g.adjust_production(P, 1)
+	g.adjust_production(OTHER, 1)
+	t.advance_until(func(): return g.resource_activity("cleaner", 1).produced == 4, 160, "Both ordered stages complete using physically delivered inputs")
+	t.near(g.resource_activity("chemicals", 1).produced, 4, "Coal chemistry produces one batch")
+	t.near(g.resource_activity("chemicals", 1).consumed, 2, "The second factory consumes only its delivered chemicals")
+	t.near(g.resource_activity("raw_water", 1).consumed, 4, "Both stages pay their own raw-water recipe")
+	t.near(g.resource_activity(3, 1).consumed, 2, "Coal is consumed once by the first stage")
+	t.near(g.resource_inventory().cleaner, 4, "Unsold cleaner remains real stock rather than an applied effect")
+
 	# Sheep remain alive between wool harvests; slaughter cannot regenerate livestock.
 	t.fixtures.scenario("Sheep wool, queued slaughter and permanent removal", 1)
 	t.fixtures.station("barn", P)
@@ -215,7 +229,7 @@ func check_industry(t) -> void:
 	g.adjust_production(P, 1)
 	g.simulate(g.DAY_SECONDS)
 	g.select_entity(P)
-	t.check(g.entity_details.text.contains("羊 0"), "The barn remains empty after slaughter, including after midnight")
+	t.check(t.inventory_description("sheep").contains("数量 0"), "The barn remains empty after slaughter, including after midnight")
 	t.near(g.resource_inventory().meat + g.resource_activity("meat", 1).consumed + g.resource_activity("meat", 2).consumed, g.SHEEP_MEAT, "Repeated slaughter cannot duplicate meat")
 	t.near(g.resource_inventory().wool, 2, "An empty barn cannot regrow wool")
 

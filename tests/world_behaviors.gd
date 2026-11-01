@@ -193,7 +193,7 @@ func run(t) -> void:
 	g.place_building(p, "bed")
 	t.advance_until(func():
 		g.select_worker(0)
-		return g.entity_details.text.contains("搬运  砂岩"), 5, "The worker really picks up material before cancellation")
+		return t.inventory_description(1).contains("搬运"), 5, "The worker really picks up material before cancellation")
 	g.cancel_site(p)
 	t.advance_until(func(): return g.player_blocks == 6, 20, "Carried and uncollected materials both return exactly once")
 	g.simulate(10)
@@ -205,7 +205,7 @@ func run(t) -> void:
 	g.place_building(p, "bed")
 	t.advance_until(func():
 		g.select_worker(0)
-		return g.entity_details.text.contains("搬运  砂岩"), 10, "A real delivery leaves the source warehouse")
+		return t.inventory_description(1).contains("搬运"), 10, "A real delivery leaves the source warehouse")
 	g.update_ui()
 	t.check(not g.tool_buttons.bed.disabled and g.material_requirements_text(g.building_materials("bed"), true).contains("6 / 6"), "In-flight goods are still physical inventory, leaving exactly one free bed recipe")
 	t.advance_until(func(): return g.report_totals(1, 0)["工作"] > 0, 60, "The first bed receives its full recipe and starts building")
@@ -326,7 +326,7 @@ func check_direct_supply(t) -> void:
 		g.designate(ore, ore)
 		t.advance_until(func():
 			g.select_entity(Vector2i(36, 12))
-			return g.entity_details.text.contains("砂岩 ×"), 25, "The miner loads the blueprint's real sandstone onto the connected track")
+			return t.inventory_description(1).contains("搬运"), 25, "The miner loads the blueprint's real sandstone onto the connected track")
 		t.near(g.resource_inventory()[1], 7, "Track cargo is counted once alongside existing remote stock")
 		if cancelled:
 			g.cancel_site(target)

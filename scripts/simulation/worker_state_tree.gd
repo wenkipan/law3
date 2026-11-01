@@ -74,7 +74,7 @@ func select(g, w: Dictionary) -> void:
 		var activity
 		match option.kind:
 			"mine", "build", "produce", "operate": activity = Work.new()
-			"eat", "sleep", "rest", "use_item": activity = Life.new()
+			"eat", "sleep", "rest", "use_item", "bathe": activity = Life.new()
 			"purchase", "borrow", "payroll": activity = Economy.new()
 			"deliver": activity = Delivery.new()
 		if activity.enter(g, w, option):
@@ -101,6 +101,7 @@ func report_action(g) -> String:
 		return "吃饭"
 	match active.option.kind:
 		"use_item": return "吃饭" if active.option.data.item in ["ale", "meat"] else "空闲"
+		"bathe": return "通勤" if active.phase == "approach" else "空闲"
 		"mine": return "通勤" if active.phase == "approach" else "挖掘"
 		"build": return "通勤" if active.phase == "approach" else "工作"
 		"produce", "operate":
@@ -127,6 +128,9 @@ func presentation(g) -> Dictionary:
 		"use_item":
 			result.state = "use_item"
 			result.item = a.option.data.item
+		"bathe":
+			result.state = "to_bath" if a.phase == "approach" else "bathe"
+			result.station = p
 		"mine":
 			result.state = "walk" if a.phase == "approach" else "dig"
 			result.job = p

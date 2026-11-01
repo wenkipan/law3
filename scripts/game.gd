@@ -68,8 +68,15 @@ const WORKER_NAMES := ["阿麦", "米粒", "石头", "小满", "青禾", "阿砾
 const WORKER_COLORS := [Color("#d6ba72"), Color("#a4cbb5"), Color("#d99987")]
 # 开局面包存于传送门。工厂库存与个人面包分别归属，支付转移所有权，进食消耗实物。
 const STARTING_BREAD := 300.0
-const RESOURCE_ITEMS := [1, 2, 3, 4, 7, 8, "bread", "wheat", "raw_water", "clean_water", "bench", "workbench", "wool", "cloth", "clothes", "ale", "iron", "planks", "tools", "meat"]
-const PROCESSING_KINDS := ["bench", "workbench", "purifier", "mill", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy"]
+const RESOURCE_ITEMS := [1, 2, 3, 4, 7, 8, "bread", "wheat", "raw_water", "clean_water", "bench", "workbench", "wool", "cloth", "clothes", "ale", "iron", "planks", "tools", "meat", "chemicals", "cleaner"]
+const PROCESSING_KINDS := ["bench", "workbench", "purifier", "mill", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy", "chemical_plant", "soapworks"]
+# Clothing cleanliness changes its benefit, never its remaining lifetime.
+const CLOTHES_DIRTY_HOURS := 48.0
+const CLEANER_RECOVERY := 60.0
+const WASH_HOURS := 0.5
+const BATH_HOURS := 0.5
+const BATH_PRICE := 2.0
+const BATH_MATERIALS := {"clean_water": 1, "cleaner": 1, 3: 1}
 const SHEEP_GROWTH_HOURS := 12.0
 const SHEEP_MEAT := 6
 const MEAT_HUNGER := 20.0
@@ -101,6 +108,9 @@ const NEW_BUILDINGS := {
 	"smelter": {"name": "熔炉", "materials": {1: 8, 4: 4}, "hours": 6.0},
 	"sawmill": {"name": "锯木厂", "materials": {1: 6, 7: 2}, "hours": 4.0},
 	"smithy": {"name": "铁匠铺", "materials": {1: 6, "iron": 2}, "hours": 4.0},
+	"chemical_plant": {"name": "化工厂", "materials": {1: 8, "iron": 2}, "hours": 6.0},
+	"soapworks": {"name": "日化厂", "materials": {1: 6, "planks": 2}, "hours": 4.0},
+	"bathhouse": {"name": "澡堂", "materials": {1: 8, "planks": 2}, "hours": 4.0},
 	"farm": {"name": "农田", "materials": {1: 4}, "hours": 4.0},
 	"power_plant": {"name": "燃煤发电站", "materials": {4: 12, 2: 6}, "hours": 8.0},
 	"high_line": {"name": "粗电线", "materials": {2: 2}, "hours": 0.5},
@@ -116,7 +126,7 @@ const NEW_BUILDINGS := {
 	"canteen": {"name": "食堂", "materials": {1: 8, 4: 2}, "hours": 4.0},
 }
 const FREIGHT_CAPACITY := 4
-const BUILDING_KINDS := ["bed", "bench", "workbench", "pump", "purifier", "printer", "bank", "belt", "farm", "power_plant", "high_line", "low_line", "transformer", "grow_light", "fountain", "electric_belt", "drill", "manual_generator", "spotlight", "daylight", "canteen", "mill", "barn", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy"]
+const BUILDING_KINDS := ["bed", "bench", "workbench", "pump", "purifier", "printer", "bank", "belt", "farm", "power_plant", "high_line", "low_line", "transformer", "grow_light", "fountain", "electric_belt", "drill", "manual_generator", "spotlight", "daylight", "canteen", "mill", "barn", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy", "chemical_plant", "soapworks", "bathhouse"]
 # 生产批次的产物、工时与售价；原料见 production_materials，建材见 building_materials。
 const PRODUCTS := {
 	"mill": {"name": "面包", "unit": "份", "hours": 2.0, "amount": 8, "item": "bread", "materials": {"wheat": 4}},
@@ -127,6 +137,8 @@ const PRODUCTS := {
 	"smelter": {"name": "铁锭", "unit": "块", "hours": 2.0, "amount": 2, "item": "iron", "materials": {8: 2, 3: 1}},
 	"sawmill": {"name": "木板", "unit": "块", "hours": 1.0, "amount": 2, "item": "planks", "materials": {7: 1}},
 	"smithy": {"name": "铁工具", "unit": "套", "hours": 2.0, "amount": 1, "item": "tools", "price": 5.0, "materials": {"iron": 1, "planks": 1}},
+	"chemical_plant": {"name": "基础化学品", "unit": "份", "hours": 2.0, "amount": 4, "item": "chemicals", "materials": {3: 2, "raw_water": 2}},
+	"soapworks": {"name": "清洁用品", "unit": "份", "hours": 2.0, "amount": 4, "item": "cleaner", "price": 2.0, "materials": {"chemicals": 2, "raw_water": 2}},
 	"farm": {"name": "小麦", "unit": "份", "hours": 2.0, "amount": 8, "item": "wheat"},
 	"bench": {"name": "矿枪", "unit": "把", "hours": GUN_WORK_HOURS, "price": GUN_PRICE, "uses": GUN_USES, "durability": "gun_uses"},
 	"workbench": {"name": "背包", "unit": "个", "hours": BACKPACK_WORK_HOURS, "price": BACKPACK_PRICE, "uses": BACKPACK_USES, "durability": "backpack_uses"},
@@ -388,7 +400,7 @@ func create_worker(p: Vector2i) -> Dictionary:
 		"bread": 0.0, "earned_today": 0.0, "eaten_today": 0.0, "hunger": STARTING_HUNGER, "meal_bread": 0.0,
 		"bed_spent_today": 0.0, "shop_spent_today": 0.0, "fatigue": 0.0,
 		"gun_uses": 0, "backpack_uses": 0, "water": 0,
-		"items": {}, "equipment": {}, "buffs": WorkerBuffs.new(),
+		"items": {}, "equipment": {}, "clothes_cleanliness": 100.0, "buffs": WorkerBuffs.new(),
 		"mood": WorkerMood.new(), "loan_principal": 0.0, "loan_interest": 0.0, "loan_day": 0, "loan_bank": null,
 		"unloaded_this_trip": 0, "payroll": 0.0}
 	workers.append(worker)
@@ -1461,6 +1473,7 @@ func building_effects_text(kind: String, p = null) -> String:
 		"spotlight": return "耗电 200W\n%d 格内商品售价 +%.0f%%\n多灯不叠加" % [EFFECT_RADIUS, LIGHT_BONUS * 100]
 		"daylight": return "耗电 200W\n%d 格内建筑工资 +%.0f%%\n多灯不叠加" % [EFFECT_RADIUS, LIGHT_BONUS * 100]
 		"canteen": return "座位 2\n每餐疲劳恢复 %.0f" % CANTEEN_RECOVERY
+		"bathhouse": return "沐浴 %.1fh · 收费 %s 面包\n心情 +%.0f · 持续 %.0fh\n每次消耗  %s" % [BATH_HOURS, String.num(BATH_PRICE, 1), WorkerBuffs.BATH_MOOD, WorkerBuffs.BATH_EFFECT_HOURS, material_requirements_text(BATH_MATERIALS)]
 		"fountain": return "耗电 200W · 每日原水 ×10\n三格内疲劳恢复 5 / h\n多喷泉不叠加"
 		"electric_belt": return "每件货物耗电 25W\n速度 +20% · 断电暂停"
 		"drill": return "一人操作 · 耗电 400W\n三格内致密矿 1 块 / 2h\n可移动 · 需重新接电"
@@ -1476,12 +1489,13 @@ func building_effects_text(kind: String, p = null) -> String:
 func product_effects_text(kind: String, p = null) -> String:
 	if kind == "barn":
 		return "建成带 1 只羊\n屠宰 1h → 肉 ×%d\n肉售价 %s 面包 · 饱食 +%.0f" % [SHEEP_MEAT, String.num(sale_price(p, "meat") if p != null else MEAT_PRODUCT.price, 1), MEAT_HUNGER]
-	if kind in ["tailor", "brewery", "smithy"]:
+	if kind in ["tailor", "brewery", "smithy", "soapworks"]:
 		var price: float = sale_price(p) if p != null else PRODUCTS[kind].price
 		var effect: String = {
-			"tailor": "穿着 %.0fh · 心情 +%.0f" % [ITEM_USES.clothes.uses / HOUR_SECONDS, WorkerBuffs.CLOTHES_MOOD],
+			"tailor": "穿着 %.0fh · 洁净时心情 +%.0f\n清洁度随穿着下降，心情加成同比减弱" % [ITEM_USES.clothes.uses / HOUR_SECONDS, WorkerBuffs.CLOTHES_MOOD],
 			"brewery": "疲劳 -%.0f · 酒意 %.0fh\n心情 +%.0f · 工作效率 -%.0f%%" % [WorkerBuffs.ALE_RECOVERY, WorkerBuffs.ALE_HOURS, WorkerBuffs.ALE_MOOD, (1 - WorkerBuffs.ALE_RATE) * 100],
 			"smithy": "农田劳动/加工效率 +%.0f%%\n耐久 %d 次劳动阶段" % [(WorkerBuffs.TOOL_RATE - 1) * 100, ITEM_USES.tools.uses],
+			"soapworks": "清洗 %.1fh · 衣物清洁度 +%.0f" % [WASH_HOURS, CLEANER_RECOVERY],
 		}[kind]
 		return "售价 %s 面包\n%s" % [String.num(price, 1), effect]
 	if kind == "farm":
@@ -1683,6 +1697,8 @@ func available_at(p: Vector2i, item) -> float:
 			return maxf(0.0, stock_at(p, item) - 2.0)
 		if benches[p].kind == "fountain" and is_same(item, "raw_water"):
 			return maxf(0.0, stock_at(p, item) - FOUNTAIN_WATER)
+		if benches[p].kind == "bathhouse" and BATH_MATERIALS.has(item):
+			return maxf(0.0, stock_at(p, item) - BATH_MATERIALS[item])
 	if benches.has(p) and has_production_order(p):
 		var recipe := production_materials(building_kind(p))
 		if recipe.has(item) or (item is int and recipe.has(0)):
@@ -1693,7 +1709,7 @@ func item_name(item) -> String:
 	if item is int:
 		return ORES[item].name
 	return {"bread": "面包", "wheat": "小麦", "raw_water": "原水",
-		"clean_water": "清水", "bench": "矿枪", "workbench": "背包", "wool": "羊毛", "cloth": "布", "clothes": "衣物", "ale": "麦酒", "iron": "铁锭", "planks": "木板", "tools": "铁工具", "meat": "肉", "loan": "贷款"}.get(item, str(item))
+		"clean_water": "清水", "bench": "矿枪", "workbench": "背包", "wool": "羊毛", "cloth": "布", "clothes": "衣物", "ale": "麦酒", "iron": "铁锭", "planks": "木板", "tools": "铁工具", "meat": "肉", "loan": "贷款", "chemicals": "基础化学品", "cleaner": "清洁用品"}.get(item, str(item))
 
 func storage_contents(p: Vector2i) -> Dictionary:
 	var contents: Dictionary = stores.get(p, {}).duplicate()
@@ -1740,6 +1756,8 @@ func delivery_requirements(p: Vector2i) -> Dictionary:
 		return {3: fuel + 2.0} if fuel <= 1.0 else {}
 	if b.kind == "fountain" and b.water_day != day:
 		return {"raw_water": FOUNTAIN_WATER}
+	if b.kind == "bathhouse":
+		return BATH_MATERIALS
 	return {}
 
 func delivery_need(p: Vector2i, item) -> float:
@@ -2330,6 +2348,7 @@ func wants_item(w: Dictionary, item: String) -> bool:
 	if purchase_capacity(w, item) <= 0: return false
 	if item == "clean_water": return w.water == 0 and w.buffs.remaining("hydrated") <= 0 and not has_debt(w)
 	if item == "ale": return w.buffs.remaining("tipsy") <= 0 and not has_debt(w) and w.fatigue >= WorkerBuffs.ALE_RECOVERY
+	if item == "cleaner": return needs_clothes_wash(w) and not has_debt(w)
 	if item == "meat": return w.hunger < 70
 	return true
 
@@ -2340,6 +2359,7 @@ func use_item(w: Dictionary, item: String) -> bool:
 		var rule: Dictionary = ITEM_USES[item]
 		if item in ["bench", "workbench"]: w[rule.slot] = rule.uses
 		else: w.equipment[rule.slot] = rule.uses
+		if item == "clothes": w.clothes_cleanliness = 100.0
 	elif item == "ale":
 		if w.buffs.remaining("tipsy") > 0: return false
 		w.fatigue = maxf(0.0, w.fatigue - WorkerBuffs.ALE_RECOVERY)
@@ -2348,6 +2368,10 @@ func use_item(w: Dictionary, item: String) -> bool:
 	elif item == "meat":
 		w.hunger = minf(MAX_HUNGER, w.hunger + MEAT_HUNGER)
 		record_resource_use(item, 1)
+	elif item == "cleaner":
+		if w.equipment.get("clothes", 0) <= 0 or w.clothes_cleanliness >= 100.0: return false
+		w.clothes_cleanliness = minf(100.0, w.clothes_cleanliness + CLEANER_RECOVERY)
+		record_resource_use(item, 1)
 	else:
 		return false
 	w.items[item] -= 1
@@ -2355,8 +2379,32 @@ func use_item(w: Dictionary, item: String) -> bool:
 
 func wear_clothes(w: Dictionary, delta: float) -> void:
 	if w.equipment.get("clothes", 0) <= 0: return
+	w.clothes_cleanliness = maxf(0.0, w.clothes_cleanliness - 100.0 * minf(delta, w.equipment.clothes) / (CLOTHES_DIRTY_HOURS * HOUR_SECONDS))
 	w.equipment.clothes = maxf(0.0, w.equipment.clothes - delta)
 	if w.equipment.clothes == 0: record_resource_use("clothes", 1)
+
+func needs_clothes_wash(w: Dictionary) -> bool:
+	return w.equipment.get("clothes", 0) > 0 and w.clothes_cleanliness <= 100.0 - CLEANER_RECOVERY
+
+func item_use_hours(item: String) -> float:
+	return WASH_HOURS if item == "cleaner" else DRINK_HOURS
+
+func wants_bath(w: Dictionary) -> bool:
+	return w.buffs.remaining("bathed") <= 0 and not has_debt(w)
+
+func can_bathe(w: Dictionary, p: Vector2i) -> bool:
+	return benches.has(p) and building_kind(p) == "bathhouse" and wants_bath(w) and w.bread >= BATH_PRICE and recipe_ready(p, BATH_MATERIALS)
+
+func finish_bath(w: Dictionary, p: Vector2i) -> bool:
+	# One exclusive bath slot protects use; payment and local ingredients settle together.
+	if not can_bathe(w, p) or slot_owner("bath", p) != w.id or w.pos.distance_to(Vector2(p)) > 0.01:
+		return false
+	consume_recipe(p, BATH_MATERIALS)
+	w.bread -= BATH_PRICE
+	w.shop_spent_today += BATH_PRICE
+	add_stock(p, "bread", BATH_PRICE)
+	w.buffs.apply("bathed", WorkerBuffs.BATH_EFFECT_HOURS * HOUR_SECONDS)
+	return true
 
 func rent_bed(w: Dictionary, p: Vector2i) -> bool:
 	if not beds.has(p) or w.bread < BED_PRICE or slot_owner("bed", p) != w.id:

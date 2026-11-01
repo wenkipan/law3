@@ -41,9 +41,17 @@ func report_seconds(worker := -1, report_day := 1) -> float:
 		total += value
 	return total
 
+func effect_description(id: String) -> String:
+	var entries: Dictionary = game.get_node("UI").effect_icons.entries
+	return entries[id].description if entries.has(id) and entries[id].visible else ""
+
+func inventory_description(item) -> String:
+	var entries: Dictionary = game.get_node("UI").inventory_icons.entries
+	return entries[item].description if entries.has(item) and entries[item].visible else ""
+
 func track_shows_item(item) -> bool:
 	for p in game.belts:
 		game.select_entity(p)
-		if game.entity_details.text.contains(game.item_name(item) + " ×"):
+		if inventory_description(item).contains("搬运"):
 			return true
 	return false

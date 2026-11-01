@@ -65,6 +65,11 @@ static func life_options(c, choices: Array) -> void:
 			add(c, choices, "use_item", c.origin, 0.8 + 0.2 * w.fatigue / g.MAX_FATIGUE, {"item": item})
 		elif item == "meat" and w.hunger < 70:
 			add(c, choices, "use_item", c.origin, 1.05 * pow(c.food_need, 2), {"item": item})
+		elif item == "cleaner" and g.needs_clothes_wash(w):
+			add(c, choices, "use_item", c.origin, 0.8, {"item": item})
+	for p in g.smart_objects.query("bath"):
+		if g.can_bathe(w, p) and w.carry == 0 and w.freight.is_empty():
+			add(c, choices, "bathe", p, 0.55 if w.mood.shopping > 0 else 0.4, {}, [Slots.key("bath", p)])
 	var meal := minf(maxf(0, w.bread), maxf(0, g.MAX_HUNGER - w.hunger) / g.HUNGER_PER_BREAD)
 	if meal <= 0 or w.hunger >= 70:
 		c.reject("eat", c.origin, "no_food" if meal <= 0 else "above_meal_threshold",
@@ -129,6 +134,8 @@ static func shopping_options(c, choices: Array) -> void:
 				score = (0.65 if w.mood.shopping > 0 else 0.5) * product.price / price
 			elif item == "meat":
 				score = 1.05 * pow(c.food_need, 2)
+			elif item == "cleaner":
+				score = 0.8 * (1.0 - w.clothes_cleanliness / 100.0) * product.price / price
 			add(c, choices, "purchase", p, score, {"kind": kind, "item": item, "amount": amount, "identity": g.benches[p]})
 
 static func work_options(c, choices: Array) -> void:

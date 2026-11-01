@@ -33,6 +33,8 @@ func sync(game) -> void:
 		if game.building_kind(p) == "canteen":
 			for seat in game.building_cells(p, "canteen"):
 				register(present, key("seat", seat), game.benches[p], seat)
+		if game.building_kind(p) == "bathhouse":
+			register(present, key("bath", p), game.benches[p], p)
 	for p in game.mining_contracts:
 		register(present, key("mine", p), game.mining_contracts[p], p)
 	for p in game.banks:

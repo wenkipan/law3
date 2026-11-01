@@ -6,11 +6,11 @@ const Art = preload("res://scripts/view/art.gd")
 const InspectorIcons = preload("res://scripts/view/inspector_icons.gd")
 const BUILD_CATEGORIES := {
 	"food": {"name": "农业与食品", "icon": "wheat", "kinds": ["farm", "barn", "mill", "brewery", "grow_light"]},
-	"industry": {"name": "工业与装备", "icon": "tools", "kinds": ["drill", "smelter", "sawmill", "smithy", "weaver", "tailor", "bench", "workbench"]},
+	"industry": {"name": "工业与装备", "icon": "tools", "kinds": ["drill", "smelter", "sawmill", "smithy", "weaver", "tailor", "bench", "workbench", "chemical_plant", "soapworks"]},
 	"water": {"name": "水务", "icon": "water", "kinds": ["pump", "purifier"]},
 	"power": {"name": "电力", "icon": "electricity", "kinds": ["manual_generator", "power_plant", "low_line", "high_line", "transformer"]},
 	"logistics": {"name": "物流", "icon": "freight", "kinds": ["belt", "electric_belt"]},
-	"life": {"name": "生活与环境", "icon": "furniture", "kinds": ["bed", "canteen", "fountain", "spotlight", "daylight"]},
+	"life": {"name": "生活与环境", "icon": "furniture", "kinds": ["bed", "canteen", "fountain", "spotlight", "daylight", "bathhouse"]},
 	"society": {"name": "人口与金融", "icon": "population-finance", "kinds": ["printer", "bank"]},
 }
 
@@ -86,7 +86,11 @@ func update_entity_panel() -> void:
 		elif w.state == "drink":
 			state_name = "饮水"
 		elif w.state == "use_item":
-			state_name = "使用" + game.item_name(w.item)
+			state_name = "清洗衣物" if w.item == "cleaner" else "使用" + game.item_name(w.item)
+		elif w.state == "to_bath":
+			state_name = "前往澡堂"
+		elif w.state == "bathe":
+			state_name = "沐浴中"
 		elif w.state == "to_meal":
 			state_name = "前往食堂"
 		game.entity_details.text = state_name
@@ -104,6 +108,10 @@ func update_entity_panel() -> void:
 			progress = w.progress / game.MEAL_SECONDS
 		elif w.state == "drink":
 			progress = w.drink_progress / (game.DRINK_HOURS * game.HOUR_SECONDS)
+		elif w.state == "use_item":
+			progress = w.progress / (game.item_use_hours(w.item) * game.HOUR_SECONDS)
+		elif w.state == "bathe":
+			progress = w.progress / (game.BATH_HOURS * game.HOUR_SECONDS)
 		elif w.state == "work" and game.benches.has(w.station):
 			var task: Dictionary = game.benches[w.station].task
 			if not task.is_empty():
@@ -157,6 +165,8 @@ func update_entity_panel() -> void:
 				status += "\n输出  %.0fW" % game.power_output.get(p, 0.0)
 			elif kind == "canteen":
 				status = "用餐中" if game.workers.any(func(w): return game.worker_display(w).canteen == p) else "空闲"
+			elif kind == "bathhouse":
+				status = "使用中" if game.slot_owner("bath", p) >= 0 else ("空闲" if game.recipe_ready(p, game.BATH_MATERIALS) else "等待用品")
 			game.entity_details.text = status + "\n\n" + game.building_effects_text(kind, p)
 			return
 		var product: Dictionary = game.PRODUCTS[kind]

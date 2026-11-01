@@ -33,6 +33,11 @@ func _init(world, person: Dictionary) -> void:
 			products[item] = minf(products.get(item, INF), game.sale_price(p, item) * quantity)
 	for price in products.values():
 		desired_cash += price
+	if game.wants_bath(person):
+		for p in game.smart_objects.query("bath"):
+			if game.recipe_ready(p, game.BATH_MATERIALS) and not path_to(p).is_empty():
+				desired_cash += game.BATH_PRICE
+				break
 	desired_cash += minf(4.0, person.loan_principal + person.loan_interest)
 	income_need = clampf((desired_cash - person.bread) / maxf(4.0, desired_cash), 0.0, 1.0)
 

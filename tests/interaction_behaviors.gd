@@ -60,7 +60,7 @@ func run(t) -> void:
 	t.fixtures.scenario("Ground orders, cancellation, and rapid clicks")
 	t.fixtures.materials(6, 2)
 	await t.input.settle()
-	await t.input.click(g.furniture_button.get_global_rect().get_center())
+	await t.input.click(ui.category_buttons.life.get_global_rect().get_center())
 	await t.input.click(g.tool_buttons.bed.get_global_rect().get_center())
 	t.check(g.tool_buttons.bed.disabled and g.tool == "dig", "Clicking a material-short icon cannot select its building tool")
 	await t.input.click_world(g.tile_center(P))
@@ -162,7 +162,7 @@ func run(t) -> void:
 		t.tree.root.size = size
 		await t.input.settle()
 		if not g.build_tray.visible:
-			await t.input.click(g.furniture_button.get_global_rect().get_center())
+			await t.input.click(ui.category_buttons.society.get_global_rect().get_center())
 		t.check(g.build_tray.visible and g.tool_buttons.bank.disabled, "The building tray remains open with unaffordable icons disabled")
 		t.check(t.tree.root.get_visible_rect().encloses(g.build_tray.get_global_rect()), "Expanded building list fits the window")
 		await t.input.click_world(g.tile_center(P + Vector2i.RIGHT))
@@ -171,7 +171,7 @@ func run(t) -> void:
 		t.check(t.tree.root.get_visible_rect().encloses(g.entity_panel.get_global_rect()), "Bank inspector fits the viewport")
 		t.check(g.entity_panel.get_global_rect().encloses(g.entity_details.get_global_rect()), "Bank terms are not clipped")
 		await t.input.screenshot("/tmp/law3-behaviors-bank-%d.png" % size.x)
-		await t.input.click(g.furniture_button.get_global_rect().get_center())
+		await t.input.close_build_tray()
 
 	# The report must refresh the same metric for dates and people, including zero results.
 	t.fixtures.scenario("Daily report excavation counts and filters", 2)
@@ -258,11 +258,12 @@ func check_industry_controls(t) -> void:
 	# The expanded tray must keep later buildings selectable without click-through.
 	t.fixtures.scenario("Industry tray scroll and livestock commands", 1)
 	t.fixtures.clear_area(Rect2i(25, 7, 18, 12))
-	t.fixtures.building_materials("smithy")
+	t.fixtures.building_materials("soapworks")
 	t.fixtures.station("barn", P)
 	for entry in [{"kind": "weaver", "pos": Vector2i(31, 9)}, {"kind": "tailor", "pos": Vector2i(34, 9)},
 			{"kind": "brewery", "pos": Vector2i(37, 9)}, {"kind": "smelter", "pos": Vector2i(31, 11)},
-			{"kind": "sawmill", "pos": Vector2i(34, 11)}, {"kind": "mill", "pos": Vector2i(37, 11)}]:
+			{"kind": "sawmill", "pos": Vector2i(34, 11)}, {"kind": "mill", "pos": Vector2i(37, 11)},
+			{"kind": "chemical_plant", "pos": Vector2i(25, 9)}, {"kind": "bathhouse", "pos": Vector2i(25, 11)}]:
 		t.fixtures.station(entry.kind, entry.pos)
 	g.workers[0].water = 1
 	g.workers[0].fatigue = 40
@@ -272,25 +273,61 @@ func check_industry_controls(t) -> void:
 		g.terrain[entry.pos] = entry.ore
 		g.navigation.set_point_solid(entry.pos, true)
 	g.world_view.rebuild(g)
-	await t.input.choose_building("smithy")
-	t.check(g.tool == "smithy", "Mouse wheel reaches and selects a later industry icon")
+	await t.input.choose_building("soapworks")
+	t.check(g.tool == "soapworks", "Mouse wheel reaches and selects the last industry icon")
 	await t.input.click_world(g.tile_center(Vector2i(37, 14)))
-	t.check(g.building_kind(Vector2i(37, 14)) == "smithy", "Scrolled selection places the requested industry blueprint")
+	t.check(g.building_kind(Vector2i(37, 14)) == "soapworks", "Scrolled selection places the requested industry blueprint")
 	g.set_tool("dig")
-	if g.build_tray.visible: await t.input.click(g.furniture_button.get_global_rect().get_center())
+	await t.input.close_build_tray()
 	await t.input.click_exposed_building(P, "畜棚")
-	t.check(g.entity_title.text == "畜棚" and ui.slaughter.visible and g.entity_details.text.contains("羊 1"), "A live sheep is inspectable through its barn")
+	t.check(g.entity_title.text == "畜棚" and ui.slaughter.visible and t.inventory_description("sheep").contains("数量 1"), "A live sheep is inspectable through its barn")
 	await t.input.screenshot("/tmp/law3-industry-1440.png")
 	await t.input.click(ui.slaughter.get_global_rect().get_center())
 	t.advance_until(func(): return g.resource_activity("meat", 1).produced == g.SHEEP_MEAT, 120, "The inspector's slaughter button issues a real paid job")
 	await t.input.click_exposed_building(P, "畜棚")
-	t.check(g.entity_details.text.contains("羊 0") and ui.slaughter.disabled, "Completed slaughter updates live details and disables duplicate commands")
+	t.check(t.inventory_description("sheep").contains("数量 0") and ui.slaughter.disabled, "Completed slaughter updates live details and disables duplicate commands")
 	for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
 		t.tree.root.size = size
 		await t.input.settle()
 		await t.input.click_world(g.tile_center(g.workers[0].pos) + Vector2(0, -8))
-		t.check(g.selected_worker == 0 and g.entity_details.text.contains("铁工具"), "A worker's owned equipment remains inspectable in both layouts")
+		t.check(g.selected_worker == 0 and t.effect_description("tools").contains("铁工具"), "A worker's owned equipment remains inspectable in both layouts")
 		await t.input.screenshot("/tmp/law3-buffs-%d.png" % size.x)
+	t.tree.root.size = Vector2i(1440, 900)
+	await t.input.settle()
+
+	# One real service covers the new building, action animation and live effect tooltip.
+	t.fixtures.scenario("Cleaning facilities and a completed bath in the inspector", 1)
+	t.fixtures.clear_area(Rect2i(25, 7, 18, 12))
+	t.fixtures.station("bathhouse", P)
+	t.fixtures.station("chemical_plant", Vector2i(31, 11), 4)
+	t.fixtures.station("soapworks", Vector2i(34, 11), 4)
+	t.fixtures.stock_recipe(P, g.BATH_MATERIALS)
+	var w: Dictionary = g.workers[0]
+	w.pos = Vector2(P)
+	w.hunger = 100
+	w.bread = g.BATH_PRICE
+	w.equipment.clothes = g.ITEM_USES.clothes.uses
+	w.clothes_cleanliness = 65.0
+	g.world_view.rebuild(g)
+	g.simulate(g.BATH_HOURS * g.HOUR_SECONDS * 0.5)
+	await t.input.click_world(g.tile_center(w.pos) + Vector2(0, -8))
+	t.check(g.entity_details.text == "沐浴中", "A real bath displays the activity, not an idle or production label")
+	await t.input.screenshot("/tmp/law3-bathing.png")
+	t.advance_until(func(): return w.shop_spent_today == g.BATH_PRICE, 20, "The inspected bath completes normally")
+	for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
+		t.tree.root.size = size
+		await t.input.settle()
+		await t.input.click_exposed_building(P + Vector2i.RIGHT, "澡堂")
+		t.check(g.entity_title.text == "澡堂" and g.entity_details.text.contains("心情 +15"), "The bathhouse shows its actual service effect")
+		await t.input.screenshot("/tmp/law3-cleaning-facilities-%d.png" % size.x)
+		await t.input.click_world(g.tile_center(w.pos) + Vector2(0, -8))
+		t.check(t.effect_description("bathed").contains("心情 +15") and t.effect_description("clothes").contains("清洁度"), "The selected worker shows separate bath and clothing effects")
+		await t.input.move_to(ui.effect_icons.entries.clothes.get_global_rect().get_center())
+		if t.native: await t.tree.create_timer(0.7).timeout
+		await t.input.screenshot("/tmp/law3-clothing-cleanliness-%d.png" % size.x)
+		await t.input.move_to(ui.effect_icons.entries.bathed.get_global_rect().get_center())
+		if t.native: await t.tree.create_timer(0.7).timeout
+		await t.input.screenshot("/tmp/law3-bathing-buff-%d.png" % size.x)
 	t.tree.root.size = Vector2i(1440, 900)
 	await t.input.settle()
 
@@ -385,8 +422,7 @@ func check_power_interactions(t) -> void:
 	g.navigation.set_point_solid(Vector2i(39, 11), true)
 	g.world_view.rebuild(g)
 	g.simulate(3)
-	if g.build_tray.visible:
-		await t.input.click(g.furniture_button.get_global_rect().get_center())
+	await t.input.close_build_tray()
 	for width in [1440, 960]:
 		t.tree.root.size = Vector2i(width, 900 if width == 1440 else 640)
 		g.camera.position = g.tile_center(Vector2i(34, 10))
@@ -541,17 +577,17 @@ func check_material_delivery(t) -> void:
 		t.fixtures.station(entry.target, target)
 		g.add_stock(source, entry.item, entry.amount)
 		g.adjust_production(target, 1)
-		var carried := "搬运  %s × %s" % [g.item_name(entry.item), String.num(entry.amount, 1)]
+		var carried := "搬运 " + str(entry.amount)
 		t.advance_until(func():
 			g.select_worker(0)
-			return g.entity_details.text.contains(carried) and g.workers[0].pos.distance_to(Vector2(source)) > 0.8, 15, "Worker picks up the requested material and leaves its source")
+			return t.inventory_description(entry.item).contains(carried) and g.workers[0].pos.distance_to(Vector2(source)) > 0.8, 15, "Worker picks up the requested material and leaves its source")
 		for width in [1440, 960]:
 			t.tree.root.size = Vector2i(width, 900 if width == 1440 else 640)
 			g.camera.zoom = Vector2.ONE * 2.0
 			g.camera.position = g.tile_center(g.workers[0].pos)
 			await t.input.settle()
 			await t.input.click_world(g.tile_center(g.workers[0].pos) + Vector2(0, -7))
-			t.check(g.entity_details.text.contains(carried), "Clicking the visible carrier shows the correct item and quantity")
+			t.check(t.inventory_description(entry.item).contains(carried), "Clicking the visible carrier shows the correct item and quantity")
 			t.check(t.tree.root.get_visible_rect().encloses(g.entity_panel.get_global_rect()), "Cargo details stay within the viewport")
 			await t.input.screenshot("/tmp/law3-material-%s-%d.png" % [entry.target, width])
 		g.camera.zoom = Vector2.ONE
@@ -560,7 +596,7 @@ func check_material_delivery(t) -> void:
 		t.advance_until(func(): return g.stock_at(target, entry.item) == entry.amount, 10, "Carried material reaches the destination without being consumed by a stopped order")
 		await t.input.settle()
 		await t.input.click_world(g.tile_center(target + Vector2i.RIGHT) + Vector2(0, 16))
-		t.check(g.entity_title.text == g.building_name(entry.target) and g.entity_details.text.contains(g.item_name(entry.item)), "Destination inspector shows the material in its own warehouse")
+		t.check(g.entity_title.text == g.building_name(entry.target) and not t.inventory_description(entry.item).is_empty(), "Destination inspector shows the material in its own warehouse")
 		t.tree.root.size = Vector2i(1440, 900)
 
 func check_building_rows(t) -> void:
@@ -685,9 +721,7 @@ func check_tracks(t) -> void:
 	g.workers[0].pos = Vector2(P)
 	t.fixtures.materials(7)
 	await t.input.settle()
-	if not g.build_tray.visible:
-		await t.input.click(g.furniture_button.get_global_rect().get_center())
-	await t.input.click(g.tool_buttons.belt.get_global_rect().get_center())
+	await t.input.choose_building("belt")
 	var path: Array[Vector2i] = [Vector2i(36, 15), Vector2i(35, 15), Vector2i(35, 14), Vector2i(35, 13), Vector2i(34, 13), Vector2i(33, 13), g.BASE]
 	await t.input.drag_world(path)
 	t.check(g.player_blocks == 7, "Dragging a route leaves construction materials in storage")
@@ -771,7 +805,7 @@ func check_tracks(t) -> void:
 		t.tree.root.size = size
 		await t.input.settle()
 		await t.input.click_world(g.tile_center(Vector2i(36, 13)) + Vector2(16, 16))
-		t.check(g.entity_title.text == "矿道" and g.entity_details.text.contains(g.workers[0].name), "Loaded track details identify the ore owner")
+		t.check(g.entity_title.text == "矿道" and t.inventory_description(1).contains(g.workers[0].name), "Loaded track details identify the ore owner")
 		t.check(ui.remove_track.disabled, "Occupied track disables destructive controls")
 		t.check(t.tree.root.get_visible_rect().encloses(g.entity_panel.get_global_rect()) and g.entity_panel.get_global_rect().encloses(ui.belt_controls.get_global_rect()), "Track details and controls fit both window sizes")
 		await t.input.screenshot("/tmp/law3-behaviors-belt-%d.png" % size.x)
@@ -815,14 +849,14 @@ func check_track_receivers(t) -> void:
 		var loaded := endpoint + Vector2i.DOWN
 		t.advance_until(func():
 			g.select_entity(loaded)
-			return g.entity_details.text.contains(g.item_name(entry.item) + " ×"), 5, "Cargo travels away from its carrier to the receiving end of the track")
+			return t.inventory_description(entry.item).contains("搬运"), 5, "Cargo travels away from its carrier to the receiving end of the track")
 		for width in [1440, 960]:
 			t.tree.root.size = Vector2i(width, 900 if width == 1440 else 640)
 			g.camera.zoom = Vector2.ONE * 2.0
 			g.camera.position = g.tile_center(loaded)
 			await t.input.settle()
 			await t.input.click_world(g.tile_center(loaded) + Vector2(16, 16))
-			t.check(g.entity_title.text == "矿道" and g.entity_details.text.contains(g.item_name(entry.item) + " ×"), "Clicking loaded track shows the matching material at both viewport sizes")
+			t.check(g.entity_title.text == "矿道" and t.inventory_description(entry.item).contains("搬运"), "Clicking loaded track shows the matching material at both viewport sizes")
 			t.check(g.get_node("UI").remove_track.disabled, "Track carrying production materials cannot be dismantled")
 			t.check(t.tree.root.get_visible_rect().encloses(g.entity_panel.get_global_rect()), "Generic freight details fit the viewport")
 			await t.input.screenshot("/tmp/law3-track-%s-%d.png" % [entry.target, width])
@@ -831,5 +865,5 @@ func check_track_receivers(t) -> void:
 		g.camera.position = g.tile_center(g.BASE)
 		await t.input.settle()
 		await t.input.click_world(g.tile_center(endpoint) + Vector2(0, 16))
-		t.check(g.entity_title.text == g.building_name(entry.target) and g.entity_details.text.contains(g.item_name(entry.item)), "Clicking the receiving footprint shows the delivered goods in its warehouse")
+		t.check(g.entity_title.text == g.building_name(entry.target) and not t.inventory_description(entry.item).is_empty(), "Clicking the receiving footprint shows the delivered goods in its warehouse")
 		t.tree.root.size = Vector2i(1440, 900)

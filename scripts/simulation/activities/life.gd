@@ -23,13 +23,20 @@ func tick(g, w: Dictionary, delta: float) -> String:
 				return "failure"
 			if option.kind == "sleep" and not g.rent_bed(w, option.target):
 				return "failure"
+			if option.kind == "bathe" and not g.can_bathe(w, option.target):
+				return "failure"
 			phase = "use"
 		return "running"
 	match option.kind:
 		"use_item":
 			elapsed += delta
-			if elapsed < g.DRINK_HOURS * g.HOUR_SECONDS: return "running"
+			if elapsed < g.item_use_hours(option.data.item) * g.HOUR_SECONDS: return "running"
 			return "success" if g.use_item(w, option.data.item) else "failure"
+		"bathe":
+			if not g.can_bathe(w, option.target): return "failure"
+			elapsed += delta
+			if elapsed < g.BATH_HOURS * g.HOUR_SECONDS: return "running"
+			return "success" if g.finish_bath(w, option.target) else "failure"
 		"eat":
 			var seconds := minf(delta, g.MEAL_SECONDS - elapsed)
 			g.eat_portion(w, option, seconds)
