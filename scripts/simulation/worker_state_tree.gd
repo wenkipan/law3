@@ -1,6 +1,7 @@
 extends RefCounted
 
 const Selection = preload("res://scripts/simulation/activity_selection.gd")
+const Parameters = preload("res://scripts/simulation/activity_parameters.gd")
 const Work = preload("res://scripts/simulation/activities/work.gd")
 const Life = preload("res://scripts/simulation/activities/life.gd")
 const Economy = preload("res://scripts/simulation/activities/economy.gd")
@@ -51,21 +52,21 @@ func tick(g, w: Dictionary, delta: float) -> Dictionary:
 		# A completed duty segment is a choice point, not a mandatory power outage.
 		if result == "success" and active.option.kind == "operate":
 			var choices: Array = Selection.options(g, w, "period_completed")
-			if not choices.is_empty() and choices[0].same_activity(active.option) and g.begin_work(active.option, w, active.segment):
+			if not choices.is_empty() and active.matches_option(choices[0]) and g.begin_work(active.option, w, active.segment):
 				active.fatigue_factor = active.segment.fatigue_factor
 				active.age = 0.0
 				return experience
 		exit(g, w, result)
 	else:
 		review_elapsed += delta
-		if review_elapsed >= g.HOUR_SECONDS and active is Work and (w.fatigue >= g.MAX_FATIGUE * 0.75 or (w.hunger < 20 and w.bread >= 4)):
+		if review_elapsed >= Parameters.REVIEW_HOURS * g.HOUR_SECONDS and (active is Work or active is Delivery):
 			review_elapsed = 0.0
-			var choices: Array = Selection.options(g, w, "needs_review")
+			var choices: Array = Selection.options(g, w, "activity_review")
 			var continuation := 0.0
 			for option in choices:
-				if option.same_activity(active.option):
-					continuation = option.score
-			if not choices.is_empty() and not choices[0].same_activity(active.option) and choices[0].score > continuation + 0.15:
+				if active.matches_option(option):
+					continuation = maxf(continuation, option.score)
+			if not choices.is_empty() and not active.matches_option(choices[0]) and choices[0].score > continuation + Parameters.SWITCH_MARGIN:
 				exit(g, w, "reconsidered")
 	return experience
 
@@ -74,7 +75,7 @@ func select(g, w: Dictionary) -> void:
 		var activity
 		match option.kind:
 			"mine", "build", "produce", "operate": activity = Work.new()
-			"eat", "sleep", "rest", "use_item", "bathe": activity = Life.new()
+			"eat", "sleep", "rest", "use_item", "service": activity = Life.new()
 			"purchase", "borrow", "payroll": activity = Economy.new()
 			"deliver": activity = Delivery.new()
 		if activity.enter(g, w, option):
@@ -101,7 +102,7 @@ func report_action(g) -> String:
 		return "吃饭"
 	match active.option.kind:
 		"use_item": return "吃饭" if active.option.data.item in ["ale", "meat"] else "空闲"
-		"bathe": return "通勤" if active.phase == "approach" else "空闲"
+		"service": return "通勤" if active.phase == "approach" else "空闲"
 		"mine": return "通勤" if active.phase == "approach" else "挖掘"
 		"build": return "通勤" if active.phase == "approach" else "工作"
 		"produce", "operate":
@@ -128,8 +129,9 @@ func presentation(g) -> Dictionary:
 		"use_item":
 			result.state = "use_item"
 			result.item = a.option.data.item
-		"bathe":
-			result.state = "to_bath" if a.phase == "approach" else "bathe"
+		"service":
+			result.state = "to_service" if a.phase == "approach" else "service"
+			result.service = a.option.data.kind
 			result.station = p
 		"mine":
 			result.state = "walk" if a.phase == "approach" else "dig"

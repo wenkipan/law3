@@ -6,11 +6,11 @@ const Art = preload("res://scripts/view/art.gd")
 const InspectorIcons = preload("res://scripts/view/inspector_icons.gd")
 const BUILD_CATEGORIES := {
 	"food": {"name": "农业与食品", "icon": "wheat", "kinds": ["farm", "barn", "mill", "brewery", "grow_light"]},
-	"industry": {"name": "工业与装备", "icon": "tools", "kinds": ["drill", "smelter", "sawmill", "smithy", "weaver", "tailor", "bench", "workbench", "chemical_plant", "soapworks"]},
+	"industry": {"name": "工业与装备", "icon": "tools", "kinds": ["drill", "smelter", "sawmill", "smithy", "weaver", "tailor", "bench", "workbench", "chemical_plant", "soapworks", "pharmacy"]},
 	"water": {"name": "水务", "icon": "water", "kinds": ["pump", "purifier"]},
 	"power": {"name": "电力", "icon": "electricity", "kinds": ["manual_generator", "power_plant", "low_line", "high_line", "transformer"]},
 	"logistics": {"name": "物流", "icon": "freight", "kinds": ["belt", "electric_belt"]},
-	"life": {"name": "生活与环境", "icon": "furniture", "kinds": ["bed", "canteen", "fountain", "spotlight", "daylight", "bathhouse"]},
+	"life": {"name": "生活与环境", "icon": "furniture", "kinds": ["bed", "canteen", "fountain", "spotlight", "daylight", "bathhouse", "laundry", "hospital"]},
 	"society": {"name": "人口与金融", "icon": "population-finance", "kinds": ["printer", "bank"]},
 }
 
@@ -29,6 +29,7 @@ var belt_controls: HBoxContainer
 var remove_track: Button
 var move_drill: Button
 var slaughter: Button
+var pollution_button: Button
 
 func update_entity_panel() -> void:
 	if not is_instance_valid(game.entity_panel):
@@ -63,6 +64,7 @@ func update_entity_panel() -> void:
 		if not details.is_empty():
 			game.entity_title.text = details.title
 			game.entity_details.text = details.text
+			game.entity_details.text += "\n污染  %.1f" % game.pollution.at(game.selected_tile)
 		return
 	if game.worker_attributes.visible:
 		var w: Dictionary = game.worker_display(game.workers[game.selected_worker])
@@ -86,11 +88,11 @@ func update_entity_panel() -> void:
 		elif w.state == "drink":
 			state_name = "饮水"
 		elif w.state == "use_item":
-			state_name = "清洗衣物" if w.item == "cleaner" else "使用" + game.item_name(w.item)
-		elif w.state == "to_bath":
-			state_name = "前往澡堂"
-		elif w.state == "bathe":
-			state_name = "沐浴中"
+			state_name = "使用" + game.item_name(w.item)
+		elif w.state == "to_service":
+			state_name = "前往" + game.building_name(w.service)
+		elif w.state == "service":
+			state_name = game.SERVICES[w.service].action + "中"
 		elif w.state == "to_meal":
 			state_name = "前往食堂"
 		game.entity_details.text = state_name
@@ -99,6 +101,8 @@ func update_entity_panel() -> void:
 		game.worker_bars["饥饿值"][1].value = w.hunger / game.MAX_HUNGER * 100
 		game.worker_bars["疲劳"][0].text = "疲劳  %.1f / %.0f" % [w.fatigue, game.MAX_FATIGUE]
 		game.worker_bars["疲劳"][1].value = w.fatigue / game.MAX_FATIGUE * 100
+		game.worker_bars["污染"][0].text = "污染  %.1f / 100" % w.pollution
+		game.worker_bars["污染"][1].value = w.pollution
 		var progress := -1.0
 		if w.state == "dig" and game.terrain.get(w.job, 0) != 0:
 			progress = w.progress / game.mining_seconds(w.job)
@@ -110,8 +114,8 @@ func update_entity_panel() -> void:
 			progress = w.drink_progress / (game.DRINK_HOURS * game.HOUR_SECONDS)
 		elif w.state == "use_item":
 			progress = w.progress / (game.item_use_hours(w.item) * game.HOUR_SECONDS)
-		elif w.state == "bathe":
-			progress = w.progress / (game.BATH_HOURS * game.HOUR_SECONDS)
+		elif w.state == "service":
+			progress = w.progress / (game.SERVICES[w.service].hours * game.HOUR_SECONDS)
 		elif w.state == "work" and game.benches.has(w.station):
 			var task: Dictionary = game.benches[w.station].task
 			if not task.is_empty():
@@ -165,9 +169,12 @@ func update_entity_panel() -> void:
 				status += "\n输出  %.0fW" % game.power_output.get(p, 0.0)
 			elif kind == "canteen":
 				status = "用餐中" if game.workers.any(func(w): return game.worker_display(w).canteen == p) else "空闲"
-			elif kind == "bathhouse":
-				status = "使用中" if game.slot_owner("bath", p) >= 0 else ("空闲" if game.recipe_ready(p, game.BATH_MATERIALS) else "等待用品")
+			elif game.SERVICES.has(kind):
+				var service: Dictionary = game.SERVICES[kind]
+				status = "使用中" if game.slot_owner(service.slot, p) >= 0 else ("空闲" if game.recipe_ready(p, service.materials) else "等待用品")
 			game.entity_details.text = status + "\n\n" + game.building_effects_text(kind, p)
+			if game.pollution.wastewater.get(p, 0.0) > 0:
+				game.entity_details.text += "\n废水污染  %.1f" % game.pollution.wastewater[p]
 			return
 		var product: Dictionary = game.PRODUCTS[kind]
 		game.entity_title.text = game.building_name(kind)
@@ -405,6 +412,16 @@ func build_ui(controller: Node) -> void:
 	root.add_child(report_button)
 	report_button.position = Vector2(284, 34)
 	report_button.custom_minimum_size = Vector2(46, 42)
+	pollution_button = make_button("", "污染图层\n绿：0 · 黄：30 · 红：70及以上", func():
+		game.pollution_visible = not game.pollution_visible
+		game.world_view.sync_dynamic())
+	pollution_button.icon = Art.texture("res://assets/icons/pollution.svg")
+	pollution_button.expand_icon = true
+	pollution_button.add_theme_constant_override("icon_max_width", 26)
+	pollution_button.toggle_mode = true
+	root.add_child(pollution_button)
+	pollution_button.position = Vector2(338, 34)
+	pollution_button.custom_minimum_size = Vector2(46, 42)
 	var actions := panel(root, Rect2(-98, 220, 78, 120), true)
 	var time_controls := panel(root, Rect2(20, 20, 248, 68))
 	var tools := HBoxContainer.new()
@@ -554,7 +571,7 @@ func build_ui(controller: Node) -> void:
 	game.worker_attributes = VBoxContainer.new()
 	game.worker_attributes.add_theme_constant_override("separation", 6)
 	inspector.add_child(game.worker_attributes)
-	for attribute in ["饥饿值", "疲劳", "动作进度"]:
+	for attribute in ["饥饿值", "疲劳", "污染", "动作进度"]:
 		var caption := make_label(attribute, 13)
 		var bar := ProgressBar.new()
 		bar.custom_minimum_size = Vector2(0, 8)
@@ -572,6 +589,7 @@ func build_ui(controller: Node) -> void:
 	game.set_tool("dig")
 
 func update_ui() -> void:
+	pollution_button.set_pressed_no_signal(game.pollution_visible)
 	var available: Dictionary = game.building_available_materials()
 	for kind in game.BUILDING_KINDS:
 		game.tool_buttons[kind].disabled = not game.can_plan_building(kind, available)

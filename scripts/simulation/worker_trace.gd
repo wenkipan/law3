@@ -147,8 +147,10 @@ func components(w: Dictionary) -> Dictionary:
 		activity.merge({"phase": a.phase, "age": a.age, "elapsed": a.elapsed,
 			"destination": cell(a.destination), "path_remaining": a.path.size(),
 			"claims": a.handles.duplicate(true), "drink_elapsed": w.activity.drink_elapsed})
+		if a.option.kind == "deliver": activity.receiver = cell(a.receiver)
 	return {"position": [w.pos.x, w.pos.y],
-		"needs": {"hunger": w.hunger, "fatigue": w.fatigue},
+		"needs": {"hunger": w.hunger, "fatigue": w.fatigue,
+			"pollution": w.pollution, "clothes_pollution": w.clothes_pollution},
 		"economy": {"bread": w.bread, "bread_raw": String.num(w.bread, 17),
 			"bread_display": "%.1f" % w.bread, "whole_bread": floori(w.bread),
 			"meal_bread": w.meal_bread, "payroll": w.payroll,
@@ -170,7 +172,7 @@ static func proposal(option) -> Dictionary:
 	for key in ["amount", "bed", "kind", "mined"]:
 		if option.data.has(key):
 			result["product" if key == "kind" else key] = option.data[key]
-	for key in ["job", "canteen", "source", "target", "receiver"]:
+	for key in ["job", "canteen", "source", "target"]:
 		if option.data.has(key):
 			result["delivery_target" if key == "target" else key] = cell(option.data[key])
 	if option.data.has("shipment"):

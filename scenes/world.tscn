@@ -27,6 +27,9 @@ z_index = 30
 y_sort_enabled = true
 [node name="Fog" type="TileMapLayer" parent="."]
 z_index = 40
+[node name="Pollution" type="TileMapLayer" parent="."]
+z_index = 35
+visible = false
 [node name="Overlays" type="Node2D" parent="."]
 z_index = 50
 [node name="Orders" type="TileMapLayer" parent="Overlays"]

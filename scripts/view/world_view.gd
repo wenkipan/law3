@@ -15,6 +15,9 @@ var building_previews: Array[Sprite2D] = []
 var line_previews: Array[Node2D] = []
 var fog_cells: Dictionary = {}
 var order_cells: Dictionary = {}
+var pollution_cells: Dictionary = {}
+var pollution_revision := -1
+var pollution_explored := -1
 var cell_updates := 0
 var portal: Area2D
 var hovered: Area2D
@@ -33,6 +36,7 @@ func _ready() -> void:
 	$Blocks.tile_set = tiles
 	$Fog.tile_set = Art.tile_set("res://assets/world/fog-atlas.svg", 2)
 	$Overlays/Orders.tile_set = Art.tile_set("res://assets/world/order.svg", 1)
+	$Pollution.tile_set = Art.tile_set("res://assets/world/pollution-atlas.svg", 11)
 	portal = Area2D.new()
 	portal.name = "Portal"
 	portal.z_index = 20
@@ -86,7 +90,7 @@ func rebuild(controller: Node) -> void:
 	for index in chunks.keys():
 		release_chunk(index)
 	view_chunks = Rect2i()
-	for layer in [$TerrainBackground, $Blocks, $Fog, $Overlays/Orders]:
+	for layer in [$TerrainBackground, $Blocks, $Fog, $Pollution, $Overlays/Orders]:
 		layer.clear()
 	for node in worker_nodes.values() + building_nodes.values() + cargo_nodes.values() + line_nodes.values():
 		node.free()
@@ -96,6 +100,8 @@ func rebuild(controller: Node) -> void:
 	cargo_nodes.clear()
 	fog_cells.clear()
 	order_cells.clear()
+	pollution_cells.clear()
+	pollution_revision = -1
 	portal.position = game.tile_center(game.BASE) + Vector2(0, -4)
 	initialized = true
 	sync_chunks()
@@ -116,7 +122,7 @@ func block_changed(p: Vector2i) -> void:
 
 func make_chunk() -> Dictionary:
 	var chunk: Dictionary = {}
-	for entry in [["background", $TerrainBackground], ["blocks", $Blocks], ["fog", $Fog], ["orders", $Overlays/Orders]]:
+	for entry in [["background", $TerrainBackground], ["blocks", $Blocks], ["fog", $Fog], ["pollution", $Pollution], ["orders", $Overlays/Orders]]:
 		var layer := TileMapLayer.new()
 		layer.tile_set = entry[1].tile_set
 		entry[1].add_child(layer)
@@ -128,7 +134,7 @@ func make_chunk() -> Dictionary:
 
 func release_chunk(index: Vector2i) -> void:
 	var chunk: Dictionary = chunks[index]
-	for key in ["background", "blocks", "fog", "orders"]:
+	for key in ["background", "blocks", "fog", "pollution", "orders"]:
 		chunk[key].clear()
 		chunk[key].hide()
 	chunk.water.hide()
@@ -137,6 +143,7 @@ func release_chunk(index: Vector2i) -> void:
 		for x in game.MapGenerator.CHUNK_SIZE:
 			fog_cells.erase(origin + Vector2i(x, y))
 			order_cells.erase(origin + Vector2i(x, y))
+			pollution_cells.erase(origin + Vector2i(x, y))
 	chunk_pool.append(chunk)
 	chunks.erase(index)
 
@@ -150,6 +157,7 @@ func refresh_chunk(index: Vector2i) -> void:
 		for x in game.MapGenerator.CHUNK_SIZE:
 			var local := Vector2i(x, y)
 			var cell := origin + local
+			pollution_cells.erase(cell)
 			chunk.background.set_cell(local, 0, Vector2i.ZERO)
 			var material: int = game.terrain.get(cell, 0)
 			if material != 0:
@@ -173,6 +181,21 @@ func refresh_chunk(index: Vector2i) -> void:
 				water_count += 1
 	for i in range(water_count, chunk.water.get_child_count()):
 		chunk.water.get_child(i).hide()
+	pollution_revision = -1
+
+func sync_pollution() -> void:
+	$Pollution.visible = game.pollution_visible
+	if not game.pollution_visible: return
+	if pollution_revision == game.pollution.revision and pollution_explored == game.explored.size(): return
+	pollution_revision = game.pollution.revision
+	pollution_explored = game.explored.size()
+	for p in game.explored:
+		var index: Vector2i = game.MapGenerator.chunk_at(p)
+		if not chunks.has(index): continue
+		var band := clampi(ceili(game.pollution.at(p) / 10.0), 0, 10)
+		if pollution_cells.get(p, -1) == band: continue
+		pollution_cells[p] = band
+		chunks[index].pollution.set_cell(p - index * game.MapGenerator.CHUNK_SIZE, 0, Vector2i(band, 0))
 
 func sync_chunks() -> void:
 	if not initialized:
@@ -324,6 +347,7 @@ func sync_dynamic() -> void:
 	if not initialized:
 		return
 	sync_chunks()
+	sync_pollution()
 	sync_buildings()
 	sync_belt_cargo()
 	for w in game.workers:

@@ -5,13 +5,6 @@ const LIMIT := 100.0
 const RECOVERY_PER_HOUR := 1.5
 const BED_GAIN_PER_HOUR := 6.0
 const COMFORTABLE_MEAL_GAIN := 18.0
-const NOISY_SLEEP_LOSS_PER_HOUR := 8.0
-const NOISY_MEAL_LOSS := 12.0
-const MACHINE_NOISE := {
-	"power_plant": {"radius": 3, "strength": 1.0},
-	"drill": {"radius": 3, "strength": 1.0},
-	"electric_belt": {"radius": 1, "strength": 0.4},
-}
 const WORK_STRESS := {"power_plant": 9.0, "transformer": 6.0, "drill": 9.0}
 const EFFICIENCY_THRESHOLD := 10.0
 const MAX_EFFICIENCY_CHANGE := 0.15
@@ -54,12 +47,12 @@ func experience(amount: float) -> void:
 func worked(kind: String, hours: float) -> void:
 	experience(-WORK_STRESS.get(kind, 0.0) * hours)
 
-func slept(hours: float, bed_hours: float, noise: float) -> void:
-	experience(BED_GAIN_PER_HOUR * bed_hours - NOISY_SLEEP_LOSS_PER_HOUR * noise * hours)
+func slept(bed_hours: float) -> void:
+	experience(BED_GAIN_PER_HOUR * bed_hours)
 
-func ate_meal(meal_fraction: float, comfortable: bool, noise: float) -> void:
+func ate_meal(meal_fraction: float, comfortable: bool) -> void:
 	var comfort := COMFORTABLE_MEAL_GAIN if comfortable else 0.0
-	experience((comfort - NOISY_MEAL_LOSS * noise) * meal_fraction)
+	experience(comfort * meal_fraction)
 
 func accepts_work(kind: String) -> bool:
 	return not avoids_machines or not WORK_STRESS.has(kind)

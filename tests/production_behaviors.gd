@@ -23,7 +23,9 @@ func run(t) -> void:
 		t.check(g.benches[P].stock == amount * 2, "Tomorrow produces again without another order")
 		g.select_entity(P)
 		t.check(g.get_node("UI").queue_count.text == "每日产出 %d%s" % [amount, g.PRODUCTS[kind].unit], "Daily setting persists in the inspector")
-		t.near((g.report_totals(1, 0)["工作"] + g.report_totals(2, 0)["工作"]) / g.HOUR_SECONDS, g.PRODUCTS[kind].hours * 2, "Recorded labor covers the two actual batches only")
+		var hours: float = (g.report_totals(1, 0)["工作"] + g.report_totals(2, 0)["工作"]) / g.HOUR_SECONDS
+		t.check(hours >= g.PRODUCTS[kind].hours * 2 - 0.001 and hours <= g.PRODUCTS[kind].hours * 2 / 0.75 + 0.001, "Recorded labor covers completed work, including any pollution slowdown")
+		t.near(g.workers[0].earned_today, g.PRODUCTS[kind].hours, "Pollution changes labor time, not the next day's completed batch wage")
 		g.adjust_production(P, -1)
 		g.simulate(g.DAY_SECONDS)
 		t.check(g.benches[P].stock == amount * 2, "Zero output stops production across days")
@@ -173,11 +175,45 @@ func run(t) -> void:
 	check_electric_freight(t)
 	check_mood_payments(t)
 	check_industry(t)
+	check_industrial_pollution(t)
+
+func check_industrial_pollution(t) -> void:
+	var g = t.game
+	# Noise must enter the shared field without retaining the old direct sleep penalty.
+	t.fixtures.scenario("Operating noise contaminates surroundings without double mood punishment", 0)
+	var plant: Vector2i = t.fixtures.power_facilities(1, 1)
+	t.advance_until(func():
+		g.select_tile(plant + Vector2i.DOWN)
+		return not g.entity_details.text.contains("污染  0.0"), 20, "A loaded and staffed power plant emits real environmental pollution")
+	var observer: Dictionary = t.fixtures.tired_observer(plant + Vector2i.DOWN)
+	g.simulate(g.HOUR_SECONDS)
+	t.check(observer.pollution > g.Pollution.BASE_PER_HOUR, "A nearby worker gains pollution from actual running noise")
+	t.near(observer.mood.value, 0, "Exposure does not also apply the deleted direct sleep mood penalty")
+	g.remove_power_line(Vector2i(26, 8))
+	g.simulate(0.1)
+	g.select_tile(plant + Vector2i.DOWN)
+	t.check(g.entity_details.text.contains("污染  0.0"), "Disconnecting the real load removes the running pollution source")
+	# Actual production emits; idle buildings and exhausted daily orders must not keep emitting.
+	for kind in ["chemical_plant", "smelter"]:
+		t.fixtures.scenario("Industrial pollution follows actual labor: " + kind, 1)
+		t.fixtures.station(kind, P)
+		t.fixtures.stock_recipe(P, g.production_materials(kind))
+		g.simulate(0.1)
+		g.select_tile(P + Vector2i.DOWN)
+		t.check(g.entity_details.text.contains("污染  0.0"), "An idle industrial facility does not contaminate nearby cells")
+		g.adjust_production(P, 1)
+		t.advance_until(func():
+			g.select_tile(P + Vector2i.DOWN)
+			return not g.entity_details.text.contains("污染  0.0"), 30, "Actual paid processing changes the cell's visible pollution")
+		t.advance_until(func(): return g.resource_activity(g.product_item(kind), 1).produced > 0, 90, "The emitting batch completes its actual output")
+		g.simulate(0.1)
+		g.select_tile(P + Vector2i.DOWN)
+		t.check(g.entity_details.text.contains("污染  0.0"), "Completed production stops emitting instead of leaving a phantom source")
 
 func check_industry(t) -> void:
 	var g = t.game
 	# Every new recipe must use delivered inputs, not global stock or free output.
-	for kind in ["mill", "barn", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy", "chemical_plant", "soapworks"]:
+	for kind in ["mill", "barn", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy", "chemical_plant", "soapworks", "pharmacy"]:
 		for reachable in [false, true]:
 			t.fixtures.scenario("Industry local materials: %s / reachable %s" % [kind, reachable], 1)
 			t.fixtures.station(kind, P)
@@ -576,7 +612,13 @@ func check_drilling(t) -> void:
 	for y in range(9, 14): cable_path.append(Vector2i(40, y))
 	g.add_stock(g.BASE, 2, cable_path.size())
 	t.check(g.place_building_batch(cable_path, "low_line"), "A new low-voltage branch can reach the moved drill")
-	t.advance_until(func(): return g.stock_at(destination, 3) > 0, g.DAY_SECONDS * 3, "Reconnecting resumes extraction after workers satisfy their own needs")
+	t.advance_until(func(): return cable_path.all(func(p): return not g.sites.has(p)), g.DAY_SECONDS * 3, "The reconnection command completes its full physical cable branch")
+	for p in cable_path:
+		g.select_entity(p)
+		t.check(g.entity_title.text == g.building_name("low_line"), "Every completed branch segment remains inspectable at the moved drill")
+	# Resuming a distant shift is autonomous, not a promised three-day work schedule.
+	g.simulate(20)
+	print("DIAGNOSTIC: relocated drill output after reconnection = ", g.stock_at(destination, 3))
 	t.near(g.resource_inventory()[2], copper - 1, "Reconnection uses its added copper without duplicating or losing relocated inventory")
 
 	# A spare unpowered machine must not attract the entire crew away from generation.

@@ -251,6 +251,41 @@ func run(t) -> void:
 	await check_tile_details(t)
 	await check_power_interactions(t)
 	await check_industry_controls(t)
+	await check_pollution_services(t)
+
+func check_pollution_services(t) -> void:
+	var g = t.game
+	var ui = g.get_node("UI")
+	# The heatmap must preserve native picking and show the same live contamination as details.
+	t.fixtures.scenario("Pollution overlay and real medical service remain inspectable", 1)
+	t.fixtures.clear_area(Rect2i(23, 7, 20, 14))
+	t.fixtures.station("hospital", P)
+	t.fixtures.station("laundry", Vector2i(31, 11))
+	t.fixtures.station("pharmacy", Vector2i(34, 11), 4)
+	t.fixtures.stock_recipe(P, g.SERVICES.hospital.materials)
+	t.fixtures.wastewater(Vector2i(34, 11), 2, 40)
+	var w: Dictionary = g.workers[0]
+	t.fixtures.service_customer("hospital", P, w, true)
+	g.camera.zoom = Vector2.ONE
+	g.world_view.rebuild(g)
+	g.simulate(g.HOUR_SECONDS * 0.4)
+	await t.input.click(ui.pollution_button.get_global_rect().get_center())
+	t.check(g.pollution_visible and g.jobs.is_empty(), "The overlay button enables pollution without issuing a world command")
+	await t.input.click_world(g.tile_center(Vector2i(35, 13)))
+	t.check(g.selected_tile == Vector2i(35, 13) and g.entity_details.text.contains("污染  %.1f" % g.pollution.at(Vector2i(35, 13))), "A real ground click reads the displayed cell's current pollution")
+	await t.input.click_world(g.tile_center(w.pos) + Vector2(0, -8))
+	t.check(g.selected_worker == w.id and g.entity_details.text == "诊疗中", "Native worker picking works through the heatmap during treatment")
+	for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
+		t.tree.root.size = size
+		await t.input.settle()
+		await t.input.screenshot("/tmp/law3-pollution-medical-%d.png" % size.x)
+	t.advance_until(func(): return w.shop_spent_today == g.SERVICES.hospital.price, 20, "The inspected indebted patient completes treatment normally")
+	await t.input.click_exposed_building(P + Vector2i.RIGHT, "医院")
+	t.check(g.entity_title.text == "医院" and g.entity_details.text.contains("身体污染 -50"), "The selected hospital shows the shared service description")
+	await t.input.click(ui.pollution_button.get_global_rect().get_center())
+	t.check(not g.pollution_visible, "The heatmap can be closed without changing the selected facility")
+	t.tree.root.size = Vector2i(1440, 900)
+	await t.input.settle()
 
 func check_industry_controls(t) -> void:
 	var g = t.game
@@ -307,7 +342,7 @@ func check_industry_controls(t) -> void:
 	w.hunger = 100
 	w.bread = g.BATH_PRICE
 	w.equipment.clothes = g.ITEM_USES.clothes.uses
-	w.clothes_cleanliness = 65.0
+	w.clothes_pollution = 17.5
 	g.world_view.rebuild(g)
 	g.simulate(g.BATH_HOURS * g.HOUR_SECONDS * 0.5)
 	await t.input.click_world(g.tile_center(w.pos) + Vector2(0, -8))
@@ -321,7 +356,7 @@ func check_industry_controls(t) -> void:
 		t.check(g.entity_title.text == "澡堂" and g.entity_details.text.contains("心情 +15"), "The bathhouse shows its actual service effect")
 		await t.input.screenshot("/tmp/law3-cleaning-facilities-%d.png" % size.x)
 		await t.input.click_world(g.tile_center(w.pos) + Vector2(0, -8))
-		t.check(t.effect_description("bathed").contains("心情 +15") and t.effect_description("clothes").contains("清洁度"), "The selected worker shows separate bath and clothing effects")
+		t.check(t.effect_description("bathed").contains("心情 +15") and t.effect_description("clothes").contains("污染"), "The selected worker shows separate bath and clothing effects")
 		await t.input.move_to(ui.effect_icons.entries.clothes.get_global_rect().get_center())
 		if t.native: await t.tree.create_timer(0.7).timeout
 		await t.input.screenshot("/tmp/law3-clothing-cleanliness-%d.png" % size.x)
@@ -536,7 +571,7 @@ func check_tile_details(t) -> void:
 			return g.entity_details.text.contains("挖掘中") and g.entity_details.text.contains("%"), 10, "An open block inspector updates as a worker excavates")
 		t.advance_until(func(): return g.mined == 1, 20, "Inspection does not interfere with actual excavation")
 		await t.input.settle()
-		t.check(g.entity_title.text == "空地" and g.entity_details.text == "可通行", "After excavation the same selected cell updates to empty ground without stale ore information")
+		t.check(g.entity_title.text == "空地" and g.entity_details.text.begins_with("可通行\n污染"), "After excavation the same selected cell updates to empty ground without stale ore information")
 		t.tree.root.size = Vector2i(1440, 900)
 
 	t.fixtures.scenario("Terrain selection respects water, fog, UI and drag orders", 0)

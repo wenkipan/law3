@@ -12,8 +12,8 @@ var experience: Dictionary = {}
 
 func enter(g, w: Dictionary, proposal) -> bool:
 	option = proposal
-	destination = option.destination
-	path = option.path.duplicate()
+	destination = option.approach_position
+	path = option.approach_path.duplicate()
 	handles = g.smart_objects.acquire(option.slots, w.id)
 	return handles.size() == option.slots.size()
 
@@ -22,6 +22,9 @@ func valid(g, _w: Dictionary) -> bool:
 		if not g.smart_objects.valid(handle):
 			return false
 	return true
+
+func matches_option(proposal) -> bool:
+	return option.same_activity(proposal)
 
 func exit(g, _w: Dictionary, _reason: String) -> void:
 	g.smart_objects.release(handles)

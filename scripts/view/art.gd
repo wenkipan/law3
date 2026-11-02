@@ -7,7 +7,7 @@ static func item_texture(item) -> Texture2D:
 		"clean_water": "water", "bench": "mining-gun", "workbench": "backpack",
 		"wool": "wool", "cloth": "cloth", "clothes": "clothes", "ale": "ale",
 		"iron": "iron", "planks": "planks", "tools": "tools", "meat": "meat", "loan": "loan",
-		"chemicals": "chemicals", "cleaner": "cleaner"}
+		"chemicals": "chemicals", "cleaner": "cleaner", "medical": "medical", "wastewater": "wastewater"}
 	if icons.has(item):
 		return texture("res://assets/icons/%s.svg" % icons[item])
 	var key := "item:" + str(item)

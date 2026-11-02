@@ -2,6 +2,7 @@ extends "res://scripts/simulation/activities/activity.gd"
 
 var mined := false
 var shipment: Dictionary = {}
+var receiver: Vector2i
 
 func enter(g, w: Dictionary, proposal) -> bool:
 	if not super.enter(g, w, proposal):
@@ -17,16 +18,20 @@ func enter(g, w: Dictionary, proposal) -> bool:
 	shipment.owner = w.id
 	if not mined:
 		w.freight = shipment
-	option.data.receiver = shipment.target
+	receiver = shipment.target
 	phase = "transport" if shipment.picked else "pickup"
 	return true
 
 func valid(g, w: Dictionary) -> bool:
 	return (not mined or w.carry > 0) and g.shipments.has(shipment) and not shipment.get("on_belt", false) and shipment.owner == w.id
 
+func matches_option(proposal) -> bool:
+	# Pickup, transport and redirected routes still fulfill the same world shipment.
+	return proposal.kind == "deliver" and is_same(proposal.data.get("shipment"), shipment)
+
 func tick(g, w: Dictionary, delta: float) -> String:
 	# Cancellation can redirect an in-flight shipment, never its physical contents.
-	if phase != "pickup" and option.data.get("receiver", shipment.target) != shipment.target:
+	if phase != "pickup" and receiver != shipment.target:
 		if not transport_route(g, w):
 			return "failure"
 	if phase == "handoff":
@@ -60,7 +65,7 @@ func transport_route(g, w: Dictionary, use_belts := true) -> bool:
 	var leg: Dictionary = g.delivery_route(Vector2i(w.pos.round()), target, use_belts)
 	destination = leg.stop
 	path = leg.path
-	option.data.receiver = target
+	receiver = target
 	phase = "transport"
 	return not path.is_empty()
 

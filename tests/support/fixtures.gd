@@ -56,6 +56,35 @@ func stock_recipe(p: Vector2i, recipe: Dictionary) -> void:
 	for item in recipe:
 		game.add_stock(p, item, recipe[item])
 
+func service_customer(kind: String, p: Vector2i, person: Dictionary, debt := false) -> void:
+	person.pos = Vector2(p)
+	person.hunger = 100
+	person.bread = game.SERVICES[kind].price
+	person.loan_principal = 1.0 if debt else 0.0
+	if kind == "laundry":
+		person.equipment.clothes = game.ITEM_USES.clothes.uses
+		person.clothes_pollution = 50.0
+	else:
+		person.pollution = 80.0 if kind == "hospital" else 60.0
+
+func shop_customer(kind: String, p: Vector2i, person: Dictionary, debt: bool, affordable: bool) -> void:
+	person.pos = Vector2(p)
+	person.hunger = 100
+	person.fatigue = 40.0 if kind == "brewery" else 0.0
+	person.bread = game.PRODUCTS[kind].price - (0.0 if affordable else 0.25)
+	person.loan_principal = 1.0 if debt else 0.0
+	person.loan_interest = 0.2 if debt else 0.0
+
+func wastewater(p: Vector2i, water: float, load: float) -> void:
+	game.add_stock(p, "wastewater", water)
+	game.pollution.add_waste(p, load)
+
+func tired_observer(p: Vector2i) -> Dictionary:
+	var person: Dictionary = game.create_worker(p)
+	person.hunger = 100
+	person.fatigue = game.MAX_FATIGUE
+	return person
+
 func building_materials(kind: String, count := 1) -> void:
 	materials(0)
 	for ore in game.building_materials(kind):
