@@ -28,12 +28,30 @@ func near(actual: float, expected: float, result: String, tolerance := 0.001) ->
 	check(absf(actual - expected) <= tolerance, "%s (got %.3f, expected %.3f)" % [result, actual, expected])
 
 func advance_until(outcome: Callable, seconds: float, result: String) -> float:
+	var elapsed := observe_until(outcome, seconds)
+	check(outcome.call(), result)
+	return elapsed
+
+func observe_until(outcome: Callable, seconds: float) -> float:
 	var elapsed := 0.0
 	while not outcome.call() and elapsed < seconds:
 		game.simulate(0.1)
 		elapsed += 0.1
-	check(outcome.call(), result)
 	return elapsed
+
+func measure_power(plants: Array, seconds: float) -> Dictionary:
+	var energy := 0.0
+	var peak := 0.0
+	var elapsed := 0.0
+	while elapsed < seconds - 0.000001:
+		var step := minf(0.05, seconds - elapsed)
+		game.simulate(step)
+		var output := 0.0
+		for p in plants: output += game.power_output.get(p, 0.0)
+		energy += output * step / game.HOUR_SECONDS
+		peak = maxf(peak, output)
+		elapsed += step
+	return {"energy": energy, "peak": peak}
 
 func report_seconds(worker := -1, report_day := 1) -> float:
 	var total := 0.0

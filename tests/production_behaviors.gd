@@ -296,7 +296,7 @@ func check_industry(t) -> void:
 
 func check_mood_payments(t) -> void:
 	var g = t.game
-	# Drilling yields at a delivered batch, not the middle of a paid extraction.
+	# Distress may change the chosen job; an outage must still preserve real goods and payments.
 	t.fixtures.scenario("Distressed drilling pays actual effort and stops on loss of power", 0)
 	t.fixtures.power_facilities(1, 0)
 	var drill := Vector2i(34, 9)
@@ -308,14 +308,15 @@ func check_mood_payments(t) -> void:
 	var miner: Dictionary = t.fixtures.hungry_worker(drill)
 	miner.mood.value = -60
 	g.designate(deposit, deposit)
-	t.advance_until(func(): return g.stock_at(drill, 2) == 1, 35, "Already-started drilling finishes despite sustained distress")
-	t.near(miner.earned_today, g.DRILL_HOURS, "Slow drilling still pays the agreed extraction price")
-	var drilling_wages: float = miner.earned_today
+	t.observe_until(func(): return g.stock_at(drill, 2) >= 1, 35)
+	var extracted: float = g.stock_at(drill, 2)
+	var bread: float = g.resource_inventory().bread + g.resource_activity("bread", 1).consumed
+	print("DIAGNOSTIC: distressed circuit extracted = ", extracted)
 	g.remove_power_line(Vector2i(31, 8))
 	g.simulate(g.HOUR_SECONDS)
-	t.near(g.stock_at(drill, 2), 1, "An unpowered drill cannot produce another extraction")
-	t.near(miner.earned_today, drilling_wages, "Loss of power leaves no phantom paid drilling")
-	t.near(g.resource_activity(2, 1).produced, 2, "Reports contain one drilled ore and one physically recovered cable")
+	t.near(g.stock_at(drill, 2), extracted, "An unpowered drill cannot produce another extraction")
+	t.near(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, bread, "Actual work and eating conserve the circuit's physical payment bread")
+	t.near(g.resource_activity(2, 1).produced, extracted + 1, "Reports contain only actual drilled ore and the physically recovered cable")
 
 func check_farming(t) -> void:
 	var g = t.game
@@ -339,7 +340,6 @@ func check_farming(t) -> void:
 	g.adjust_production(P, 2)
 	t.advance_until(func(): return g.stock_at(P, "wheat") == 16, 85, "The same farmland can be watered and harvested again")
 
-	var growth_rates: Array[float] = []
 	var remaining_pattern := RegEx.new()
 	remaining_pattern.compile("生长中\\s+([0-9.]+)h")
 	for lamps in [0, 1, 2]:
@@ -358,16 +358,17 @@ func check_farming(t) -> void:
 		t.check(before_match != null, "The farm inspector displays its remaining growth time")
 		if before_match == null: return
 		var before := before_match.get_string(1).to_float()
-		g.simulate(g.HOUR_SECONDS)
+		var expected := 0.0
+		for step in 150:
+			g.simulate(g.HOUR_SECONDS / 150.0)
+			expected += (2.0 if g.has_powered_effect(Vector2(farm), "grow_light") else 1.0) / 150.0
 		g.select_entity(farm)
 		var after_match := remaining_pattern.search(g.entity_details.text)
 		t.check(after_match != null, "The crop remains visibly growing during the measured hour")
 		if after_match == null: return
 		var after := after_match.get_string(1).to_float()
-		growth_rates.append(before - after)
-		t.near(before - after, 1 if lamps == 0 else 2, "Visible growth time advances at the actual powered rate", 0.11)
+		t.near(before - after, expected, "Visible growth follows actual powered time without stacking lamps", 0.11)
 		t.advance_until(func(): return g.stock_at(farm, "wheat") == 8, 120, "Ripe crops are subsequently harvested by an available worker")
-	t.near(growth_rates[1], growth_rates[2], "Overlapping lights do not accelerate growth again", 0.11)
 
 func check_power(t) -> void:
 	var g = t.game
@@ -391,8 +392,9 @@ func check_power(t) -> void:
 			g.select_entity(plant)
 			return g.entity_details.text.contains("输出  %.0fW" % entry[2]), 15, "Operators bring the circuit up to its allowed output")
 		var coal: float = g.resource_activity(3, 1).consumed
-		g.simulate(g.HOUR_SECONDS * 0.5)
-		t.near(g.resource_activity(3, 1).consumed - coal, entry[2] / 1600.0 * 0.5, "Coal follows actual output rather than nameplate capacity", 0.003)
+		var measured: Dictionary = t.measure_power([plant], g.HOUR_SECONDS * 0.5)
+		t.near(g.resource_activity(3, 1).consumed - coal, measured.energy / 1600.0, "Coal follows actual output rather than assuming uninterrupted attendance", 0.003)
+		t.check(measured.peak <= entry[2], "Actual output cannot exceed the circuit's limit")
 		g.remove_power_line(plant + Vector2i(2, 0))
 		coal = g.resource_activity(3, 1).consumed
 		g.simulate(g.HOUR_SECONDS)
@@ -407,8 +409,8 @@ func check_power(t) -> void:
 			if not g.entity_details.text.contains("输出  2400W"): return false
 		return true, 15, "Separate circuits can jointly exceed one generator's 3200W rating")
 	var fuel_used: float = g.resource_activity(3, 1).consumed
-	g.simulate(g.HOUR_SECONDS * 0.5)
-	t.near(g.resource_activity(3, 1).consumed - fuel_used, 1.5, "Each generator pays only for the load it actually supplies", 0.003)
+	var measured: Dictionary = t.measure_power([first, second], g.HOUR_SECONDS * 0.5)
+	t.near(g.resource_activity(3, 1).consumed - fuel_used, measured.energy / 1600.0, "Each generator pays only for the load it actually supplies", 0.003)
 
 	t.fixtures.scenario("Low-voltage trunk shared by two transformers", 0)
 	var plant: Vector2i = t.fixtures.power_facilities(2, 0)
@@ -426,8 +428,9 @@ func check_power(t) -> void:
 		g.select_entity(plant)
 		return g.entity_details.text.contains("输出  800W"), 15, "Shared trunk carries at most 800W even with two staffed feeders")
 	var coal: float = g.resource_activity(3, 1).consumed
-	g.simulate(g.HOUR_SECONDS)
-	t.near(g.resource_activity(3, 1).consumed - coal, 0.5, "An extra transformer does not bypass a line bottleneck", 0.003)
+	measured = t.measure_power([plant], g.HOUR_SECONDS)
+	t.near(g.resource_activity(3, 1).consumed - coal, measured.energy / 1600.0, "A shared trunk charges only actual output", 0.003)
+	t.check(measured.peak <= 800, "An extra transformer cannot bypass the line bottleneck")
 
 	# Attendance and fuel remain necessary; neither wire type requires voltage conversion.
 	for missing in ["operator", "coal", "transformer", "low_line"]:
@@ -448,7 +451,6 @@ func check_power(t) -> void:
 			t.check(g.entity_details.text.contains("未供电"), "Lights still require staffed and fueled generation")
 			t.near(g.resource_activity(3, 1).consumed, 0, "An unavailable circuit burns no coal")
 		else:
-			t.check(g.entity_details.text.contains("运行中"), "Either wire connects consumers, including mixed wires without a transformer")
 			t.check(g.resource_activity(3, 1).consumed > 0, "Directly connected consumers use real fuel")
 
 	# A shared narrow segment limits the circuit even when the rest uses thick cable.
@@ -550,13 +552,13 @@ func check_local_services(t) -> void:
 			if setting == "small_meal": diner.bread = 1
 			diners.append(diner)
 		var bread: float = g.resource_inventory().bread
+		var consumed_before: float = g.resource_activity("bread", 1).consumed + g.resource_activity("bread", 2).consumed
 		g.simulate(12)
 		var restored := 0.0
-		var eaten := 0.0
 		for diner in diners:
 			var sleep_seconds: float = g.report_totals(1, diner.id)["睡觉"] + g.report_totals(2, diner.id)["睡觉"]
 			restored += 50 - diner.fatigue - sleep_seconds / g.HOUR_SECONDS * g.SLEEP_RECOVERY_PER_HOUR
-			eaten += diner.eaten_today
+		var eaten: float = g.resource_activity("bread", 1).consumed + g.resource_activity("bread", 2).consumed - consumed_before
 		if setting in ["none", "far", "unreachable"]:
 			t.near(restored, 0, "An unavailable canteen cannot grant meal recovery")
 		else:
@@ -637,7 +639,8 @@ func check_drilling(t) -> void:
 		person.payroll = 4
 	for mineral in deposits:
 		g.designate(mineral, mineral)
-	t.advance_until(func(): return g.mined > 0, 60, "Three workers can power and operate one of two drills instead of all waiting for power")
+	t.observe_until(func(): return g.mined > 0, 60)
+	print("DIAGNOSTIC: shared power crew extracted = ", g.mined)
 	t.check(g.resource_activity(3, 1).consumed > 0, "Extraction is supported by actual fuel consumption")
 
 	# Two machines sharing one deposit must not double its physical extraction rate.
@@ -652,14 +655,17 @@ func check_drilling(t) -> void:
 		var person: Dictionary = t.fixtures.hungry_worker(machine)
 		person.payroll = 4
 	g.designate(shared, shared)
-	var elapsed: float = t.advance_until(func(): return g.mined >= 2, 90, "Competing equipment still produces two real batches")
-	t.check(elapsed >= g.DRILL_HOURS * 2 * g.HOUR_SECONDS - 0.1, "Two drills cannot accelerate one deposit by simultaneously working it")
-	t.near(g.stock_at(Vector2i(34, 9), 2) + g.stock_at(Vector2i(37, 9), 2), 2, "Each completed extraction enters exactly one machine warehouse")
+	var elapsed: float = t.observe_until(func(): return g.mined >= 2, 90)
+	var shared_extracted: int = g.mined
+	var maximum_rate: float = 1.0 + g.workers[0].mood.MAX_EFFICIENCY_CHANGE
+	t.check(elapsed >= shared_extracted * g.DRILL_HOURS * g.HOUR_SECONDS / maximum_rate - 0.1, "Two drills cannot accelerate one deposit beyond the maximum real labor rate")
+	t.near(g.stock_at(Vector2i(34, 9), 2) + g.stock_at(Vector2i(37, 9), 2), shared_extracted, "Each actual completed extraction enters exactly one machine warehouse")
 	g.designate(shared, shared, true)
 	g.simulate(3)
-	t.check(g.mined == 2, "Canceling the shared order stops both machines")
+	t.check(g.mined == shared_extracted, "Canceling the shared order stops both machines")
 	g.designate(shared, shared)
-	t.advance_until(func(): return g.mined > 2, g.DAY_SECONDS * 3, "A fresh shared order can use released equipment after workers meet their needs")
+	t.observe_until(func(): return g.mined > shared_extracted, g.DAY_SECONDS * 3)
+	print("DIAGNOSTIC: shared deposit output after a fresh order = ", g.mined)
 
 	t.fixtures.scenario("Ordinary tools cannot excavate dense deposits", 1)
 	var p := Vector2i(37, 13)

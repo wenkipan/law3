@@ -1,123 +1,106 @@
 extends RefCounted
 
 const Parameters = preload("res://scripts/simulation/activity_parameters.gd")
+const Needs = preload("res://scripts/simulation/evaluation/needs.gd")
+const EnvironmentEvaluation = preload("res://scripts/simulation/evaluation/environment.gd")
+const Resources = preload("res://scripts/simulation/evaluation/resources.gd")
+const Life = preload("res://scripts/simulation/evaluation/life.gd")
+const Items = preload("res://scripts/simulation/evaluation/items.gd")
+const Labor = preload("res://scripts/simulation/evaluation/labor.gd")
+const Economy = preload("res://scripts/simulation/evaluation/economy.gd")
+const Delivery = preload("res://scripts/simulation/evaluation/delivery.gd")
+
+static var ACTIONS = {"eat": Life.meal, "sleep": Life.sleep, "rest": Life.rest,
+	"use_item": Items.use, "purchase": Economy.purchase, "borrow": Economy.borrow,
+	"payroll": Economy.payroll, "mine": Labor.mining, "build": Labor.construction,
+	"produce": Labor.production, "operate": Labor.operation, "deliver": Delivery.evaluate}
+static var SERVICES = {"hospital": Life.treatment, "bathhouse": Life.bath, "laundry": Life.laundry}
+static var SERVICE_EFFECTS = {"hospital": Life.treatment_effects, "bathhouse": Life.bath_effects, "laundry": Life.laundry_effects}
+static var ITEM_EFFECTS = {"meat": Items.food, "ale": Items.ale, "clothes": Items.clothing,
+	"bench": Items.mining_equipment, "workbench": Items.cargo_equipment,
+	"tools": Items.production_equipment, "clean_water": Items.hydration}
+const ITEM_GROUPS = {"meat": "food", "ale": "mood", "clothes": "clothing",
+	"bench": "equipment", "workbench": "equipment", "tools": "equipment", "clean_water": "fatigue"}
 
 var context
+var needs
+var environment
+var resources
 var food_need := 0.0
-var income_need := 0.0
-var desired_cash := 0.0
 var tracing := false
 var rejected: Array[Dictionary] = []
 var proposals: Array[Dictionary] = []
+var _work_facts: Array[Dictionary] = []
+var _work_ready := false
 
 func _init(facts) -> void:
 	context = facts
-	var g = context.game
-	var w: Dictionary = context.worker
-	tracing = g.ai_trace.watches(w.id)
-	food_need = clampf((g.MAX_HUNGER - w.hunger) / g.MAX_HUNGER, 0.0, 1.0)
-	desired_cash = income_target()
-	income_need = clampf((desired_cash - w.bread) / maxf(Parameters.INCOME_REFERENCE, desired_cash), 0.0, 1.0)
+	needs = Needs.new(facts)
+	environment = EnvironmentEvaluation.new(facts, needs)
+	resources = Resources.new(self)
+	food_need = clampf(1.0 - facts.worker.hunger / facts.game.MAX_HUNGER, 0, 1)
+	tracing = facts.game.ai_trace.watches(facts.worker.id)
+	resources.prepare()
 
-func income_target() -> float:
-	var g = context.game
-	var w: Dictionary = context.worker
-	var target := maxf(0.0, (g.MAX_HUNGER - w.hunger) / g.HUNGER_PER_BREAD)
-	for p in g.beds:
-		if g.beds[p].assigned in [-1, w.id] and not context.path_to(p).is_empty():
-			target += g.BED_PRICE * clampf(w.fatigue / (g.MAX_FATIGUE * Parameters.BED_RESERVE_FATIGUE), 0.0, 1.0)
-			break
-	var products: Dictionary = {}
-	for p in g.benches:
-		if context.path_to(p).is_empty(): continue
-		for item in g.shop_goods(p):
-			if g.stock_at(p, item) <= 0 or not g.wants_item(w, item): continue
-			if item == "clean_water" and w.mood.shopping <= 0: continue
-			var quantity: int = mini(Parameters.WATER_RESERVE, g.stock_at(p, item)) if item == "clean_water" else 1
-			products[item] = minf(products.get(item, INF), g.sale_price(p, item) * quantity)
-	for price in products.values():
-		target += price
-	for kind in g.SERVICES:
-		if not g.wants_service(w, kind): continue
-		var service: Dictionary = g.SERVICES[kind]
-		for p in g.smart_objects.query(service.slot):
-			if g.recipe_ready(p, service.materials) and not context.path_to(p).is_empty():
-				target += service.price
-				break
-	return target + minf(Parameters.DEBT_RESERVE, w.loan_principal + w.loan_interest)
+func evaluate(op: Dictionary) -> Dictionary:
+	if op.kind == "service": return SERVICES[op.data.kind].call(self, op)
+	return ACTIONS[op.kind].call(self, op)
 
-func travel_factor(path: Array, onward: Array = []) -> float:
-	var distance := maxf(0, path.size() - 1) + maxf(0, onward.size() - 1)
-	var hours: float = distance / Parameters.WALK_SPEED / context.game.HOUR_SECONDS
-	return 1.0 / (1.0 + hours * Parameters.TRAVEL_COST)
+func item_effects(item: String, state: Dictionary, amount := 1) -> Dictionary:
+	return ITEM_EFFECTS[item].call(self, state, amount) if ITEM_EFFECTS.has(item) else {}
 
-func labor_score(p = null, task: Dictionary = {}) -> float:
-	var g = context.game
-	var w: Dictionary = context.worker
-	var wage: float = task.reward / (task.seconds / g.HOUR_SECONDS) if task.has("reward") else g.station_wage(p)
-	var rate: float = wage / g.WAGE_PER_HOUR
-	var comfort := 1.0
-	if p != null and not w.mood.accepts_work(g.building_kind(p)):
-		comfort = Parameters.AVOIDED_WORK
-	var stamina := 1.0 - Parameters.LABOR_FATIGUE * pow(w.fatigue / g.MAX_FATIGUE, 2)
-	return Parameters.LABOR * income_need * rate * stamina * comfort
+func service_effects(kind: String, state: Dictionary) -> Dictionary:
+	return SERVICE_EFFECTS[kind].call(self, state, context.game.SERVICES[kind])
 
-func item_score(item: String) -> float:
-	if item == "ale":
-		return Parameters.ALE_USE + Parameters.ALE_FATIGUE * context.worker.fatigue / context.game.MAX_FATIGUE
-	if item == "meat": return Parameters.FOOD * pow(food_need, Parameters.FOOD_EXPONENT)
-	return Parameters.EQUIP
+func item_group(item: String) -> String:
+	return ITEM_GROUPS.get(item, "equipment")
 
-func service_score(kind: String) -> float:
-	var g = context.game
-	var w: Dictionary = context.worker
-	if kind == "hospital": return Parameters.HOSPITAL + w.pollution / Parameters.POLLUTION_REFERENCE
-	if kind == "laundry": return Parameters.LAUNDRY + w.clothes_pollution / Parameters.POLLUTION_REFERENCE
-	if w.pollution > g.Pollution.DISCOMFORT: return Parameters.DIRTY_BATH + w.pollution / Parameters.POLLUTION_REFERENCE
-	return Parameters.SERVICE_MOOD if w.mood.shopping > 0 else Parameters.SERVICE
+func result(forecast: Dictionary, benefits: Dictionary, cash := 0.0, excluded: Array = []) -> Dictionary:
+	var parts := benefits.duplicate()
+	parts.environment = forecast.environment
+	parts.payment = -resources.cost(cash, excluded) if cash > 0 else 0.0
+	var value: float = Resources.total(parts)
+	return {"score": value / (1.0 + Parameters.TIME_COST * forecast.hours), "hours": forecast.hours, "parts": parts}
 
 func meal_amount() -> float:
-	var g = context.game
-	var w: Dictionary = context.worker
-	return minf(maxf(0, w.bread), maxf(0, g.MAX_HUNGER - w.hunger) / g.HUNGER_PER_BREAD)
-
-func meal_score(amount: float, canteen := false) -> float:
-	var score := pow(food_need, Parameters.FOOD_EXPONENT) * minf(1.0, amount / Parameters.MEAL_REFERENCE)
-	if canteen: score = score + Parameters.CANTEEN + Parameters.CANTEEN_FATIGUE * context.worker.fatigue / context.game.MAX_FATIGUE
-	return score
-
-func meal_environment_bonus(p: Vector2i) -> float:
-	return Parameters.CANTEEN_FOUNTAIN if context.game.has_powered_effect(Vector2(p), "fountain") else 0.0
-
-func sleep_score(bed := false) -> float:
-	var fatigue: float = context.worker.fatigue / context.game.MAX_FATIGUE
-	var score := Parameters.EXHAUSTED_SLEEP if fatigue >= 1.0 else Parameters.SLEEP * pow(fatigue, Parameters.SLEEP_EXPONENT)
-	return score * Parameters.BED if bed else score
+	return minf(maxf(0, context.worker.bread), maxf(0, context.game.MAX_HUNGER - context.worker.hunger) / context.game.HUNGER_PER_BREAD)
 
 func food_shortfall() -> float:
 	return maxf(0, Parameters.BORROW_FOOD_RESERVE - context.worker.hunger / context.game.HUNGER_PER_BREAD - context.worker.bread)
 
-func borrow_score() -> float:
-	return Parameters.BORROW * food_need
-
-func shopping_score(item: String, product: Dictionary, price: float) -> float:
-	var optional := Parameters.OPTIONAL_SHOP_MOOD if context.worker.mood.shopping > 0 else Parameters.OPTIONAL_SHOP
-	if item == "clean_water": return optional / price
-	if item == "ale": return optional * product.price / price
-	if item == "meat": return item_score(item)
-	return Parameters.SHOP * float(product.price) / price
-
-func shopping_amount(p: Vector2i, item: String, price: float) -> int:
-	if item != "clean_water": return 1
+func work_facts() -> Array[Dictionary]:
+	if _work_ready: return _work_facts
+	_work_ready = true
 	var g = context.game
-	var w: Dictionary = context.worker
-	return mini(w.mood.water_limit(g.WATER_CAPACITY), mini(g.stock_at(p, item), floori(w.bread / price)))
+	for p in g.smart_objects.query("mine"):
+		if g.terrain[p] in [5, 6]: continue
+		for direction in g.DIRS:
+			if not context.path_to(p + direction).is_empty():
+				var task: Dictionary = g.mining_contracts[p]
+				_work_facts.append({"kind": "mine", "target": p, "position": p + direction, "station": "", "hours": maxf(0, task.seconds - task.progress) / g.HOUR_SECONDS})
+				break
+	for p in g.smart_objects.query("work"):
+		var kind: String = g.building_kind(p)
+		if context.path_to(p).is_empty(): continue
+		if kind in g.OPERATED_KINDS:
+			if g.operation_needed(p) and (kind != "drill" or g.ready_drills.has(p)):
+				_work_facts.append({"kind": "operate", "target": p, "position": p, "station": kind, "hours": 1.0})
+			continue
+		if not g.PRODUCTS.has(kind) or g.benches[p].growth > 0: continue
+		if context.path_to(p).is_empty() or not g.has_production_order(p): continue
+		var task: Dictionary = g.benches[p].task
+		if task.is_empty() and not (kind == "barn" and g.benches[p].slaughter) and not g.recipe_ready(p, g.production_materials(kind)): continue
+		var hours: float = maxf(0, task.seconds - task.progress) / g.HOUR_SECONDS if not task.is_empty() else (1.0 if kind in ["farm", "barn"] else g.PRODUCTS[kind].hours)
+		_work_facts.append({"kind": "produce", "target": p, "position": p, "station": kind, "hours": hours})
+	for p in g.smart_objects.query("build"):
+		if g.site_cleared(p) and g.site_supplied(p) and not context.path_to(p).is_empty():
+			_work_facts.append({"kind": "build", "target": p, "position": p, "station": "", "hours": maxf(0, g.sites[p].seconds - g.sites[p].progress) / g.HOUR_SECONDS})
+	return _work_facts
 
-func freight_score() -> float:
-	return Parameters.FREIGHT + Parameters.FREIGHT_INCOME * income_need
-
-func mined_delivery_score(full: bool) -> float:
-	return Parameters.COMMITTED_DELIVERY if full else Parameters.PARTIAL_DELIVERY
+func work_hours() -> float:
+	var hours := 0.0
+	for work in work_facts(): hours += work.hours
+	return minf(Parameters.FORECAST_HOURS, hours)
 
 func reject(kind: String, p, reason: String, details: Dictionary = {}) -> void:
 	if tracing:
@@ -129,24 +112,16 @@ func trace_selection(choices: Array, reason: String) -> void:
 	if not tracing: return
 	var g = context.game
 	var ranked: Array[Dictionary] = []
-	for option in choices:
-		ranked.append(g.WorkerTrace.proposal(option))
+	for option in choices: ranked.append(g.WorkerTrace.proposal(option))
 	var evaluated: Array[Dictionary] = []
 	for entry in proposals:
 		var row: Dictionary = g.WorkerTrace.proposal(entry.option)
-		row.merge({"base_score": entry.base_score, "travel_factor": entry.travel_factor,
-			"steps": entry.steps, "eligible": choices.has(entry.option)})
+		row.merge({"components": entry.result.parts, "hours": entry.result.hours,
+			"base_score": entry.result.score, "inertia_bonus": entry.inertia_bonus,
+			"eligible": choices.has(entry.option)})
 		if not row.eligible: row.reason = "needs_employer_cash"
 		evaluated.append(row)
-	var sites := 0
-	for site in g.sites.values():
-		if not site.get("cancelled", false): sites += 1
-	var production_orders := 0
-	for p in g.benches:
-		if g.PRODUCTS.has(g.building_kind(p)) and g.has_production_order(p): production_orders += 1
-	g.ai_trace.selection(g, context.worker, {"trigger": reason,
-		"food_need": food_need, "desired_cash": desired_cash, "income_need": income_need,
+	g.ai_trace.selection(g, context.worker, {"trigger": reason, "food_need": food_need,
 		"ranked": ranked, "candidates": evaluated, "rejected": rejected,
-		"opportunities": {"mines": g.mining_contracts.size(), "sites": sites,
-			"production_orders": production_orders, "facilities": g.benches.size(),
-			"shipments": g.shipments.size()}})
+		"opportunities": {"mines": g.mining_contracts.size(), "sites": g.sites.size(),
+			"facilities": g.benches.size(), "shipments": g.shipments.size()}})

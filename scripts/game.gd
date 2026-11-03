@@ -11,7 +11,7 @@ const MAX_HUNGER := 180.0
 const STARTING_HUNGER := MAX_HUNGER
 const HUNGER_DECAY_PER_DAY := 80.0
 # 挖掘、建造与生产增加疲劳，通勤和搬运不增加；疲劳提高睡眠意愿，满后强制休息。
-const MAX_FATIGUE := 120.0
+const MAX_FATIGUE := 180.0
 const FATIGUE_PER_HOUR := 10.0
 const SLEEP_RECOVERY_PER_HOUR := 15.0
 const HOUR_SECONDS := DAY_SECONDS / 24.0
@@ -47,6 +47,8 @@ const WATER_CAPACITY := 4
 const DRINK_HOURS := 0.1
 const WATER_EFFECT_HOURS := 4.0
 const WATER_FATIGUE_REDUCTION := 0.3
+const FOUNTAIN_RECOVERY_PER_HOUR := 5.0
+const PAYROLL_COLLECTION := 4.0
 const PRINTER_BLOCKS := 12
 const PRINTER_BUILD_HOURS := 6.0
 # 打印仓按有限订单消耗矿石与劳动，完成后在右侧生成工人，出生后参与模拟与日报。
@@ -1245,7 +1247,7 @@ func simulate_workers(delta: float) -> void:
 			experience.pos = w.pos
 			experiences.append(experience)
 		if has_powered_effect(w.pos, "fountain"):
-			w.fatigue = maxf(0, w.fatigue - 5.0 * delta / HOUR_SECONDS)
+			w.fatigue = maxf(0, w.fatigue - FOUNTAIN_RECOVERY_PER_HOUR * delta / HOUR_SECONDS)
 		ai_trace.observe(self, w)
 	for experience in experiences:
 		if experience.has("hours"):
@@ -2315,7 +2317,7 @@ func purchase(w: Dictionary, p: Vector2i, limit: int, item = null) -> void:
 	else: w.items[item] = w.items.get(item, 0) + count
 
 func collect_payroll(w: Dictionary, p: Vector2i) -> void:
-	var cash := minf(4.0, stock_at(p, "bread"))
+	var cash := minf(PAYROLL_COLLECTION, stock_at(p, "bread"))
 	add_stock(p, "bread", -cash)
 	w.payroll += cash
 

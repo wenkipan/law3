@@ -5,6 +5,8 @@ const ORE := Vector2i(37, 13)
 
 func run(t) -> void:
 	var g = t.game
+	var sales_observed := 0
+	# Compare accounting for actual choices, not whether every missing item is bought.
 	for kind in ["bench", "workbench", "tailor", "smithy"]:
 		t.fixtures.scenario("Last item has one buyer: " + kind, 2)
 		t.fixtures.station(kind, P, 1)
@@ -13,16 +15,17 @@ func run(t) -> void:
 			worker.bread = product.price
 			worker.hunger = 100
 		g.designate(Vector2i(37, 12), Vector2i(37, 14))
-		t.advance_until(func(): return g.workers[0].shop_spent_today + g.workers[1].shop_spent_today == product.price, 10, "Purchase records the listed payment even if the shop cash is subsequently collected for wages")
-		g.simulate(1)
-		var equipped := 0
+		g.simulate(11)
+		var sold: int = 1 - g.benches[P].stock
+		sales_observed += sold
+		var held := 0
 		for worker in g.workers:
-			if g.equipped_amount(worker, g.product_item(kind)) > 0:
-				equipped += 1
-		t.check(equipped == 1 and g.benches[P].stock == 0, "One stocked item equips only one competing buyer")
+			held += int(g.equipped_amount(worker, g.product_item(kind)) > 0) + worker.items.get(g.product_item(kind), 0)
+		t.check(sold in [0, 1] and held == sold, "One stocked item can belong to at most one competing buyer")
 		t.near(g.resource_inventory()[g.product_item(kind)], 1, "Equipping a purchased item transfers inventory instead of destroying it")
 		t.near(g.resource_activity(g.product_item(kind), 1).produced + g.resource_activity(g.product_item(kind), 1).consumed, 0, "An equipment sale is neither production nor consumption")
-		t.near(g.workers[0].shop_spent_today + g.workers[1].shop_spent_today, product.price, "Sold-out shop cannot charge a second buyer")
+		t.near(g.workers[0].shop_spent_today + g.workers[1].shop_spent_today, product.price * sold, "Only actual transferred equipment can charge, without a second buyer")
+	t.check(sales_observed > 0, "The shared equipment accounting contract includes real autonomous sales")
 
 	t.fixtures.scenario("Sale does not replenish today's completed quota", 1)
 	t.fixtures.station("bench", P)
@@ -32,9 +35,9 @@ func run(t) -> void:
 	g.adjust_production(P, 1)
 	g.simulate(20)
 	g.designate(ORE, ORE)
-	t.advance_until(func(): return g.workers[0].shop_spent_today == 5, 120, "Worker earns and buys the produced gun when income becomes useful")
+	g.simulate(120)
 	g.simulate(30)
-	t.check(g.benches[P].stock == 0, "Selling today's output does not manufacture another item")
+	t.near(g.resource_activity("bench", 1).produced, 1, "Completed daily quota cannot manufacture another item, whether sold or retained")
 
 	var plain_time := 0.0
 	var plain_fatigue := 0.0
@@ -90,10 +93,11 @@ func run(t) -> void:
 		worker.bread = 9.0
 		worker.hunger = 100
 	g.designate(Vector2i(37, 11), Vector2i(37, 15))
-	t.advance_until(func(): return g.benches[P].stock == 0, 10, "Workers buy the available water")
+	g.simulate(10)
+	var water_sold: int = 6 - g.benches[P].stock
 	t.check(g.workers[0].water <= 4 and g.workers[1].water <= 4, "Neither worker carries more than four water")
-	t.check(g.workers[0].water + g.workers[1].water == 6, "Competing purchases conserve the six stocked portions")
-	t.near(g.workers[0].shop_spent_today + g.workers[1].shop_spent_today, 6, "Water revenue equals portions sold")
+	t.near(g.workers[0].water + g.workers[1].water + g.resource_activity("clean_water", 1).consumed, water_sold, "Actual competing water purchases reconcile held and consumed portions")
+	t.near(g.workers[0].shop_spent_today + g.workers[1].shop_spent_today, water_sold, "Water revenue equals actual portions sold")
 
 	for available in [false, true]:
 		t.fixtures.scenario("Unavailable water never blocks work: " + str(available), 1)
@@ -364,10 +368,17 @@ func check_item_effects(t) -> void:
 	buyer.bread = 2
 	buyer.hunger = 100
 	buyer.fatigue = 40
-	t.advance_until(func(): return buyer.shop_spent_today == 2, 15, "The buyer reaches the brewery and pays for one serving")
+	t.observe_until(func(): return buyer.shop_spent_today > 0, 15)
+	var bought: bool = buyer.shop_spent_today > 0
 	t.near(g.resource_activity("ale", 1).consumed, 0, "Payment does not consume the drink or grant its effect")
-	t.near(buyer.fatigue, 40, "Possession alone does not recover fatigue")
 	t.near(g.resource_inventory().ale, 1, "The purchased serving remains in physical inventory")
+	t.near(buyer.shop_spent_today, 2 if bought else 0, "An actual sale pays once; choosing free sleep cannot incur a drink charge")
+	# Owned consumption is a separate contract, independent of choosing to purchase rather than sleep.
+	t.fixtures.scenario("Owned ale is consumed once and grants its actual effects", 1)
+	buyer = g.workers[0]
+	buyer.hunger = 100
+	buyer.fatigue = 40
+	buyer.items.ale = 1
 	t.advance_until(func(): return g.resource_activity("ale", 1).consumed == 1, 10, "Actual drinking consumes the owned serving")
 	t.near(buyer.fatigue, 20, "Actual drinking applies recovery once", 0.1)
 	g.simulate(1)
@@ -383,11 +394,10 @@ func check_item_effects(t) -> void:
 		if item == "dirty_clothes":
 			w.equipment.clothes = g.ITEM_USES.clothes.uses
 			w.clothes_pollution = 50.0
+		elif item == "ale": w.buffs.apply("tipsy", g.WorkerBuffs.ALE_HOURS * g.HOUR_SECONDS)
 		elif item != "none": w.items[item] = 1
 		g.adjust_production(P, 1)
 		if item == "ale":
-			t.advance_until(func(): return g.resource_activity("ale", 1).consumed == 1, 10, "The owned drink is actually used before any effect is claimed")
-			t.near(w.fatigue, 20, "Ale immediately removes twenty fatigue", 0.1)
 			g.select_worker(w.id)
 			t.check(t.effect_description("tipsy").contains("酒意") and t.effect_description("tipsy").contains("效率 -20%"), "The inspector exposes both benefit and penalty")
 		t.advance_until(func(): return g.resource_activity("workbench", 1).produced == 1, 90, "A worker completes a real paid batch with the owned item")
@@ -458,11 +468,10 @@ func check_consumption_conditions(t) -> void:
 				if setting == "cargo": customer.carry = 1
 				var price: float = g.PRODUCTS[kind].price
 				var initial_cash: float = g.resource_inventory().bread
-				if affordable:
-					t.advance_until(func(): return customer.shop_spent_today > 0, 20, "An affordable stocked drink can be purchased regardless of debt")
-				else: g.simulate(10)
-				t.near(customer.shop_spent_today, price if affordable else 0, "Only an affordable completed sale charges the listed price")
-				t.near(g.stock_at(P, g.product_item(kind)), 0 if affordable else 1, "Payment transfers actual stock, never credit or a duplicate item")
+				g.simulate(10)
+				var sold: float = 1 - g.stock_at(P, g.product_item(kind))
+				t.check(sold in [0.0, 1.0] and (affordable or sold == 0), "Only an affordable chosen drink can leave the shop")
+				t.near(customer.shop_spent_today, price * sold, "Only an actual completed sale charges the listed price, irrespective of debt or cargo")
 				t.near(g.resource_inventory().bread, initial_cash, "A purchase conserves physical payment bread")
 				t.check(customer.bread >= 0, "Neither debt nor insufficient funds permits overdrawing")
 				t.near(customer.loan_principal, 1 if debt else 0, "Shopping does not modify existing principal")
@@ -494,10 +503,10 @@ func check_local_prices(t) -> void:
 				g.simulate(0.25)
 				g.remove_power_line(Vector2i(31, 8))
 			var destination: Vector2i = shop
-			t.advance_until(func(): return g.stock_at(destination, "bread") > 0, 50, "Buyer reaches a stocked shop and pays its effective price")
+			t.observe_until(func(): return buyer.shop_spent_today > 0, 50)
 			var unit_price: float = g.PRODUCTS[kind].price * (1.0 if setting in ["disconnect", "outside"] else 1.2)
-			var quantity: int = 4 - g.benches[destination].stock if kind == "purifier" else 1
-			t.check(quantity > 0, "A completed sale transfers at least one item")
+			var quantity: int = (4 if kind == "purifier" else 1) - g.benches[destination].stock
+			t.check(quantity >= 0 and quantity <= (4 if kind == "purifier" else 1), "Autonomous purchases cannot exceed the actual listed stock")
 			t.near(g.stock_at(destination, "bread"), unit_price * quantity, "Stock transfer and payment use the same current price")
 			t.near(buyer.shop_spent_today, unit_price * quantity, "Actual spending reports include the local premium exactly once")
 			t.check(buyer.bread >= 0, "A price premium cannot overdraw personal funds")

@@ -11,9 +11,12 @@ var active = null
 var drink_elapsed := -1.0
 var decision_wait := 0.0
 var review_elapsed := 0.0
+var inertia_group := ""
+var inertia_hours := 0.0
 
 func tick(g, w: Dictionary, delta: float) -> Dictionary:
 	var experience: Dictionary = {}
+	inertia_hours += delta / g.HOUR_SECONDS
 	if active != null and (not active.valid(g, w) or (w.fatigue >= g.MAX_FATIGUE and active.option.kind != "sleep")):
 		exit(g, w, "invalidated")
 	decision_wait -= delta
@@ -62,13 +65,39 @@ func tick(g, w: Dictionary, delta: float) -> Dictionary:
 		if review_elapsed >= Parameters.REVIEW_HOURS * g.HOUR_SECONDS and (active is Work or active is Delivery):
 			review_elapsed = 0.0
 			var choices: Array = Selection.options(g, w, "activity_review")
-			var continuation := 0.0
+			var continuation := -INF
 			for option in choices:
 				if active.matches_option(option):
 					continuation = maxf(continuation, option.score)
-			if not choices.is_empty() and not active.matches_option(choices[0]) and choices[0].score > continuation + Parameters.SWITCH_MARGIN:
+			if not choices.is_empty() and not active.matches_option(choices[0]) and choices[0].score > continuation and not is_equal_approx(choices[0].score, continuation):
 				exit(g, w, "reconsidered")
 	return experience
+
+func activity_group(kind: String, data: Dictionary) -> String:
+	match kind:
+		"mine", "build", "produce", "operate", "payroll": return "labor"
+		"deliver":
+			# Unloading mined goods is a labor interlude, not a new preference.
+			return "labor" if data.get("mined", false) and inertia_group == "labor" else "delivery"
+		"use_item":
+			if data.item in ["bench", "workbench", "tools", "clothes"] and inertia_group == "labor":
+				return "labor"
+		"rest": return "rest"
+	return ""
+
+func inertia_bonus(proposal) -> float:
+	if active != null:
+		return Parameters.INERTIA_BONUS if active.matches_option(proposal) else 0.0
+	if inertia_group == "" or activity_group(proposal.kind, proposal.data) != inertia_group:
+		return 0.0
+	return Parameters.INERTIA_BONUS * clampf(1.0 - inertia_hours / Parameters.INERTIA_HOURS, 0.0, 1.0)
+
+func remember_choice(option) -> void:
+	var group := activity_group(option.kind, option.data)
+	# Repeated short tasks must not refresh the same preference indefinitely.
+	if group != inertia_group:
+		inertia_group = group
+		inertia_hours = 0.0
 
 func select(g, w: Dictionary) -> void:
 	for option in Selection.options(g, w):
@@ -81,6 +110,7 @@ func select(g, w: Dictionary) -> void:
 		if activity.enter(g, w, option):
 			active = activity
 			review_elapsed = 0.0
+			remember_choice(option)
 			g.ai_trace.entered(g, w)
 			return
 		activity.exit(g, w, "rejected")
@@ -91,6 +121,9 @@ func exit(g, w: Dictionary, reason: String) -> void:
 	if active != null:
 		g.ai_trace.record(g, w, "state_tree", "exiting", {"reason": reason})
 		active.exit(g, w, reason)
+	if reason in ["cancelled", "invalidated", "failure"]:
+		inertia_group = ""
+		inertia_hours = 0.0
 	active = null
 	drink_elapsed = -1.0
 	decision_wait = 0.0

@@ -24,6 +24,11 @@ func run(t) -> void:
 	g.simulate(20)
 	t.check(g.delivered == 1 and g.terrain[next] != 0, "Cancellation stops excavation and extra delivery")
 	t.near(g.workers[0].earned_today, earned, "Cancellation keeps earned wages but pays no idle wages")
+	# Retained preferences must neither revive canceled orders nor pay resumed labor twice.
+	t.check(g.designate(next, next) == 1, "A canceled block can receive a new player order")
+	t.advance_until(func(): return g.delivered == 2, 60, "A new order remains executable after cancellation and idle time")
+	t.near(g.workers[0].earned_today, earned + 1.0, "Restart pays the new block once in addition to the canceled order's actual labor")
+	t.near(g.resource_activity(mined_item, 1).produced, 2, "Cancellation and restart create only the two completed blocks")
 
 	# New map blocks are ordinary finite resources, never drill-only deposits.
 	for mineral in [7, 8]:
@@ -165,7 +170,8 @@ func run(t) -> void:
 		t.check(not g.building_at(ore) and g.terrain[ore + Vector2i.RIGHT] != 0, "Cancellation removes the blueprint and its remaining automatic excavation")
 		if manual == "none":
 			t.check(g.mined == 0 and g.terrain[ore] != 0, "Canceling an active blueprint stops its miner")
-			t.near(g.workers[0].bread, paid, "Canceled excavation retains earned wages but accrues no more")
+			t.near(g.workers[0].earned_today, paid, "Canceled excavation accrues no additional wages")
+			t.near(g.workers[0].bread + g.workers[0].meal_bread + g.workers[0].eaten_today, paid, "Eating may spend the settled wage but cannot duplicate or reclaim it")
 		else:
 			t.check(g.delivered == 1 and g.player_blocks == 7, "Independent dig order survives blueprint cancellation and delivers once")
 			t.near(g.workers[0].earned_today, 1, "Preserved mining retains partial work without paying twice")
@@ -782,12 +788,27 @@ func check_loans(t) -> void:
 	w.pos = Vector2(bank)
 	w.bread = 7
 	w.hunger = 0
-	t.advance_until(func(): return g.portal.lent_bread > 0, 3, "A real advance creates the loan")
+	t.advance_until(func(): return g.portal.lent_bread > 0, g.DAY_SECONDS, "An actual urgent food shortage can obtain a real advance")
 	var principal: float = g.portal.lent_bread
 	g.designate(Vector2i(37, 11), Vector2i(40, 15))
-	t.advance_until(func(): return g.banks[bank].interest_received >= principal * g.LOAN_INTEREST_RATE - 0.00001, g.DAY_SECONDS * 3, "Work eventually repays principal and the one-time interest")
-	t.near(g.portal.repaid_principal, principal, "Principal is repaid once")
-	t.near(g.banks[bank].interest_received, principal * g.LOAN_INTEREST_RATE, "The final installment does not overpay interest")
+	t.advance_until(func(): return w.earned_today > 0, minf(90, g.DAY_SECONDS - g.day_elapsed - 1), "Actual work supplies income to the existing repayment rule")
+	var withheld: float = minf(w.earned_today * g.LOAN_REPAYMENT_RATE, principal * (1.0 + g.LOAN_INTEREST_RATE))
+	t.near(g.portal.repaid_principal, minf(principal, withheld), "Actual income repays principal first, without a debt-driven work quota")
+	t.near(g.banks[bank].interest_received, maxf(0, withheld - principal), "Interest receives only actual withholding remaining after principal")
+
+	# A legitimate nearly-paid starting loan checks the last installment without forcing a long work schedule.
+	t.fixtures.scenario("The final wage deduction is capped at the remaining debt", 1)
+	t.fixtures.bank(bank)
+	w = g.workers[0]
+	w.loan_principal = 0.1
+	w.loan_interest = 0.05
+	w.loan_bank = bank
+	w.loan_day = g.day
+	g.designate(Vector2i(37, 13), Vector2i(37, 13))
+	t.advance_until(func(): return w.earned_today > 0, 30, "One real wage settles the small remaining debt")
+	t.near(g.portal.repaid_principal, 0.1, "The last installment pays remaining principal exactly once")
+	t.near(g.banks[bank].interest_received, 0.05, "The last installment cannot overpay remaining interest")
+	t.near(w.loan_principal + w.loan_interest, 0, "No residual debt remains after the capped deduction")
 	var interest: float = g.banks[bank].interest_received
 	g.simulate(10)
 	t.near(g.banks[bank].interest_received, interest, "Paid debt stops withholding interest")
