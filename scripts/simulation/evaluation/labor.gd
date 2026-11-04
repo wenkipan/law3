@@ -5,11 +5,11 @@ const P = preload("res://scripts/simulation/activity_parameters.gd")
 static func task(e, op: Dictionary) -> Dictionary:
 	var g = e.context.game
 	match op.kind:
-		"mine": return g.mining_contracts[op.target]
-		"build": return g.sites[op.target]
+		"mine": return g.world.mining_contracts[op.target]
+		"build": return g.world.sites[op.target]
 		"operate":
-			if op.data.get("job") != null: return g.mining_contracts[op.data.job]
-	return g.benches[op.target].task
+			if op.data.get("job") != null: return g.world.mining_contracts[op.data.job]
+	return g.world.benches[op.target].task
 
 static func profile(e, op: Dictionary) -> Dictionary:
 	var g = e.context.game
@@ -42,7 +42,7 @@ static func evaluate(e, op: Dictionary) -> Dictionary:
 	parts.mood = e.needs.mood_gain(f.after.mood, -stress, P.FORECAST_HOURS)
 	if op.kind == "mine":
 		var shortest: Array = []
-		for p in g.smart_objects.query("store"):
+		for p in g.world.smart_objects.query("store"):
 			var leg: Dictionary = g.delivery_route(op.position, p)
 			if not leg.path.is_empty() and (shortest.is_empty() or leg.path.size() < shortest.size()): shortest = leg.path
 		f.hours += e.environment.walk_hours(shortest) / g.carry_capacity(w)

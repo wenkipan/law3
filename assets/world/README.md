@@ -2,8 +2,9 @@
 
 Original, editable SVG game assets. No remote assets or runtime downloads.
 
-- `terrain-atlas.svg`: five 40px tiles (background, sandstone, copper, coal,
-  granite), used by TileMapLayer atlas resources.
+- `terrain-atlas.svg`: ten 40px tiles (background, sandstone, copper, coal,
+  granite, dense copper, dense coal, timber, iron and mineable water), used by
+  TileMapLayer atlas resources. Mineable water is distinct from `water-source.svg`.
 - `fog-atlas.svg`: opaque unexplored and translucent explored fog tiles.
 - `miner-parts.svg`: 32px rig-part atlas; head, clothing, boots, arms, pickaxe,
   bread, hammer, carried ore. Worker scenes animate sprite transforms.

@@ -11,27 +11,27 @@ func run(t) -> void:
 		t.fixtures.scenario("Last item has one buyer: " + kind, 2)
 		t.fixtures.station(kind, P, 1)
 		var product: Dictionary = g.PRODUCTS[kind]
-		for worker in g.workers:
+		for worker in g.world.workers:
 			worker.bread = product.price
 			worker.hunger = 100
 		g.designate(Vector2i(37, 12), Vector2i(37, 14))
 		g.simulate(11)
-		var sold: int = 1 - g.benches[P].stock
+		var sold: int = 1 - g.world.benches[P].stock
 		sales_observed += sold
 		var held := 0
-		for worker in g.workers:
+		for worker in g.world.workers:
 			held += int(g.equipped_amount(worker, g.product_item(kind)) > 0) + worker.items.get(g.product_item(kind), 0)
 		t.check(sold in [0, 1] and held == sold, "One stocked item can belong to at most one competing buyer")
 		t.near(g.resource_inventory()[g.product_item(kind)], 1, "Equipping a purchased item transfers inventory instead of destroying it")
 		t.near(g.resource_activity(g.product_item(kind), 1).produced + g.resource_activity(g.product_item(kind), 1).consumed, 0, "An equipment sale is neither production nor consumption")
-		t.near(g.workers[0].shop_spent_today + g.workers[1].shop_spent_today, product.price * sold, "Only actual transferred equipment can charge, without a second buyer")
+		t.near(g.world.workers[0].shop_spent_today + g.world.workers[1].shop_spent_today, product.price * sold, "Only actual transferred equipment can charge, without a second buyer")
 	t.check(sales_observed > 0, "The shared equipment accounting contract includes real autonomous sales")
 
 	t.fixtures.scenario("Sale does not replenish today's completed quota", 1)
 	t.fixtures.station("bench", P)
 	t.fixtures.materials(1, 2)
-	g.workers[0].bread = 3.0
-	g.workers[0].hunger = 100
+	g.world.workers[0].bread = 3.0
+	g.world.workers[0].hunger = 100
 	g.adjust_production(P, 1)
 	g.simulate(20)
 	g.designate(ORE, ORE)
@@ -43,12 +43,12 @@ func run(t) -> void:
 	var plain_fatigue := 0.0
 	for equipment in ["none", "gun", "water"]:
 		t.fixtures.scenario("Mining outcome with " + equipment, 1)
-		var w: Dictionary = g.workers[0]
+		var w: Dictionary = g.world.workers[0]
 		w.pos = Vector2(36, 13)
 		w.gun_uses = 1 if equipment == "gun" else 0
 		w.water = 1 if equipment == "water" else 0
 		g.designate(ORE, ORE)
-		var elapsed: float = t.advance_until(func(): return g.mined == 1, 20, "Equipped worker actually excavates ore")
+		var elapsed: float = t.advance_until(func(): return g.world.mined == 1, 20, "Equipped worker actually excavates ore")
 		if equipment == "none":
 			plain_time = elapsed
 			plain_fatigue = w.fatigue
@@ -59,51 +59,54 @@ func run(t) -> void:
 			t.near(w.fatigue, plain_fatigue * 0.7, "Drinking reduces labor fatigue by 30%", 0.15)
 			t.check(w.water == 0 and elapsed > plain_time, "Drinking consumes water and takes time")
 			t.near(g.resource_activity("clean_water", 1).consumed, 1, "Drinking records the actual portion consumed")
-		t.advance_until(func(): return g.delivered == 1, 10, "Ore is delivered after using equipment")
+		t.advance_until(func(): return g.world.delivered == 1, 10, "Ore is delivered after using equipment")
 
 	t.fixtures.scenario("Backpack delivers two blocks; exhaustion restores single trips", 1)
-	var w: Dictionary = g.workers[0]
+	var w: Dictionary = g.world.workers[0]
 	w.pos = Vector2(36, 13)
 	w.backpack_uses = 1
 	w.gun_uses = 4
-	g.terrain[ORE] = 1
-	g.terrain[ORE + Vector2i.RIGHT] = 2
+	g.world.terrain[ORE] = 1
+	g.world.terrain[ORE + Vector2i.RIGHT] = 2
 	g.designate(ORE, ORE + Vector2i.RIGHT)
-	t.advance_until(func(): return g.delivered == 2, 25, "Backpack delivers both items of its first load")
-	t.check(g.delivered == 2 and g.player_blocks == 2 and w.backpack_uses == 0, "First trip delivers two blocks and spends one backpack use")
+	t.advance_until(func(): return g.world.delivered >= 1, 25, "Backpack starts unloading its first load")
+	# One receiver accepts the whole load; a per-item re-selection used to strand the second ore here.
+	g.simulate(0.7)
+	t.check(g.world.delivered == 2, "The same-receiver load continues unloading without another activity between items")
+	t.check(g.world.delivered == 2 and g.player_blocks == 2 and w.backpack_uses == 0, "First trip delivers two blocks and spends one backpack use")
 	t.near(g.resource_activity("workbench", 1).consumed, 1, "An exhausted backpack is consumed once, not once per ore delivered")
 	t.check(g.materials.get(1, 0) == 1 and g.materials.get(2, 0) == 1, "Backpack preserves both mineral types after delivery")
 	g.designate(Vector2i(39, 13), Vector2i(40, 13))
-	t.advance_until(func(): return g.delivered > 2, 25, "Worker continues after backpack wears out")
-	t.check(g.delivered == 3, "Worn-out backpack delivers only one block per trip")
+	t.advance_until(func(): return g.world.delivered > 2, 25, "Worker continues after backpack wears out")
+	t.check(g.world.delivered == 3, "Worn-out backpack delivers only one block per trip")
 
 	t.fixtures.scenario("Cancelled second block still delivers a partial load", 1)
-	w = g.workers[0]
+	w = g.world.workers[0]
 	w.pos = Vector2(36, 13)
 	w.backpack_uses = 1
 	g.designate(ORE, ORE + Vector2i.RIGHT)
-	t.advance_until(func(): return g.mined == 1, 20, "First block is excavated")
+	t.advance_until(func(): return g.world.mined == 1, 20, "First block is excavated")
 	g.designate(ORE + Vector2i.RIGHT, ORE + Vector2i.RIGHT, true)
-	t.advance_until(func(): return g.delivered == 1, 10, "Cancellation does not strand cargo")
+	t.advance_until(func(): return g.world.delivered == 1, 10, "Cancellation does not strand cargo")
 	t.check(w.backpack_uses == 1, "Single-block delivery does not spend a backpack use")
 
 	t.fixtures.scenario("Water sales conserve stock and respect carrying capacity", 2)
 	t.fixtures.station("purifier", P, 6)
-	for worker in g.workers:
+	for worker in g.world.workers:
 		worker.bread = 9.0
 		worker.hunger = 100
 	g.designate(Vector2i(37, 11), Vector2i(37, 15))
 	g.simulate(10)
-	var water_sold: int = 6 - g.benches[P].stock
-	t.check(g.workers[0].water <= 4 and g.workers[1].water <= 4, "Neither worker carries more than four water")
-	t.near(g.workers[0].water + g.workers[1].water + g.resource_activity("clean_water", 1).consumed, water_sold, "Actual competing water purchases reconcile held and consumed portions")
-	t.near(g.workers[0].shop_spent_today + g.workers[1].shop_spent_today, water_sold, "Water revenue equals actual portions sold")
+	var water_sold: int = 6 - g.world.benches[P].stock
+	t.check(g.world.workers[0].water <= 4 and g.world.workers[1].water <= 4, "Neither worker carries more than four water")
+	t.near(g.world.workers[0].water + g.world.workers[1].water + g.resource_activity("clean_water", 1).consumed, water_sold, "Actual competing water purchases reconcile held and consumed portions")
+	t.near(g.world.workers[0].shop_spent_today + g.world.workers[1].shop_spent_today, water_sold, "Water revenue equals actual portions sold")
 
 	for available in [false, true]:
 		t.fixtures.scenario("Unavailable water never blocks work: " + str(available), 1)
 		t.fixtures.station("purifier", P, 4 if available else 0)
 		g.designate(ORE, ORE)
-		t.advance_until(func(): return g.delivered == 1, 30, "Worker mines without money or available water")
+		t.advance_until(func(): return g.world.delivered == 1, 30, "Worker mines without money or available water")
 
 	check_local_prices(t)
 	check_consumption_conditions(t)
@@ -118,7 +121,7 @@ func check_cleaning(t) -> void:
 	var g = t.game
 	# The garment absorbs pollution before the body, without gaining lifetime from a wash.
 	t.fixtures.scenario("Clothes absorb fifty pollution before it reaches the body", 1)
-	var w: Dictionary = g.workers[0]
+	var w: Dictionary = g.world.workers[0]
 	w.equipment.clothes = g.ITEM_USES.clothes.uses
 	g.simulate(24 * g.HOUR_SECONDS)
 	t.near(w.clothes_pollution, 25, "A day of base exposure fills half the external slot")
@@ -139,7 +142,7 @@ func check_cleaning(t) -> void:
 		t.fixtures.station("laundry", P)
 		t.fixtures.station("soapworks", Vector2i(31, 11), 4)
 		t.fixtures.stock_recipe(P, g.SERVICES.laundry.materials)
-		w = g.workers[0]
+		w = g.world.workers[0]
 		t.fixtures.service_customer("laundry", P, w)
 		if setting == "unclothed": w.equipment.clear()
 		if setting == "expires": w.equipment.clothes = 1.0
@@ -157,7 +160,7 @@ func check_services(t) -> void:
 		for setting in ["local", "delivered", "remote", "missing", "unaffordable", "debt", "cargo"]:
 			t.fixtures.scenario("Service settlement: %s / %s" % [kind, setting], 1)
 			t.fixtures.station(kind, P)
-			var w: Dictionary = g.workers[0]
+			var w: Dictionary = g.world.workers[0]
 			t.fixtures.service_customer(kind, P, w, setting == "debt")
 			if setting == "cargo": w.carry = 1
 			var stock: Dictionary = service.materials.duplicate()
@@ -185,7 +188,7 @@ func check_services(t) -> void:
 					t.check(w.pollution < 50, "The completed bath or treatment actually reduces body pollution")
 				if kind != "hospital":
 					t.near(g.resource_inventory().wastewater, 1, "One consumed clean-water portion becomes one wastewater portion")
-					t.near(g.pollution.wastewater.get(P, 0.0), 25, "Fifty removed pollution becomes twenty-five wastewater pollution after cleaner")
+					t.near(g.world.wastewater.get(P, 0.0), 25, "Fifty removed pollution becomes twenty-five wastewater pollution after cleaner")
 				else:
 					t.near(g.resource_inventory().wastewater, 0, "Medical treatment does not invent a water recipe")
 				t.near(w.loan_principal, 1 if setting == "debt" else 0, "A service neither blocks on nor changes existing debt")
@@ -208,14 +211,14 @@ func check_delivery_recovery(t) -> void:
 	t.fixtures.station("hospital", P)
 	t.fixtures.stock_recipe(P, g.SERVICES.hospital.materials)
 	t.fixtures.building_materials("bed")
-	var person: Dictionary = g.workers[0]
+	var person: Dictionary = g.world.workers[0]
 	person.hunger = 100
 	person.bread = g.SERVICES.hospital.price
 	person.pollution = 69.0
 	var initial_cash: float = g.resource_inventory().bread
 	t.check(g.place_building(target, "bed"), "The player orders a distant bed with physical materials available")
 	t.advance_until(func(): return g.resource_activity("medical", 1).consumed > 0, 150, "Illness arising after the order can receive real treatment")
-	t.advance_until(func(): return g.beds.has(target), 150, "The ordered bed can still receive all materials and finish")
+	t.advance_until(func(): return g.world.beds.has(target), 150, "The ordered bed can still receive all materials and finish")
 	t.near(g.resource_activity("medical", 1).consumed, 1, "One treatment consumes one medical supply")
 	t.near(person.shop_spent_today, g.SERVICES.hospital.price, "Treatment charges once, independently of the delivery")
 	t.near(g.resource_activity(1, 1).consumed, g.building_blocks("bed"), "Construction consumes exactly its delivered recipe")
@@ -228,7 +231,7 @@ func check_pollution(t) -> void:
 	for initial in [0.0, 40.0, 80.0]:
 		t.fixtures.scenario("Pollution changes paid labor duration: " + str(initial), 1)
 		t.fixtures.station("workbench", P)
-		var person: Dictionary = g.workers[0]
+		var person: Dictionary = g.world.workers[0]
 		person.pollution = initial
 		g.adjust_production(P, 1)
 		t.advance_until(func(): return g.resource_activity("workbench", 1).produced == 1, 60, "A real ordered batch completes under the initial pollution condition")
@@ -239,11 +242,11 @@ func check_pollution(t) -> void:
 	t.fixtures.scenario("A partial wash transfers only actual pollution", 1)
 	t.fixtures.station("bathhouse", P)
 	t.fixtures.stock_recipe(P, g.BATH_MATERIALS)
-	var lightly_dirty: Dictionary = g.workers[0]
+	var lightly_dirty: Dictionary = g.world.workers[0]
 	t.fixtures.service_customer("bathhouse", P, lightly_dirty)
 	lightly_dirty.pollution = 10.0
 	var elapsed: float = t.advance_until(func(): return lightly_dirty.shop_spent_today > 0, 20, "The lightly dirty customer finishes an actual bath")
-	var transferred: float = g.pollution.wastewater.get(P, 0.0)
+	var transferred: float = g.world.wastewater.get(P, 0.0)
 	t.near(lightly_dirty.pollution + transferred * 2, 10.0 + elapsed * g.Pollution.BASE_PER_HOUR / g.HOUR_SECONDS, "Removed pollution is conserved between remaining dirt, wastewater and the cleaner's equal share", 0.03)
 	t.check(transferred < 6, "A partial wash cannot invent a full fifty-pollution transfer")
 	# Compare actual exposure from a real pollutant, not an assigned activity or private AI state.
@@ -253,32 +256,32 @@ func check_pollution(t) -> void:
 		t.fixtures.clear_area(Rect2i(23, 7, 20, 14))
 		if polluted: t.fixtures.wastewater(g.BASE, 2, 40)
 		g.simulate(g.HOUR_SECONDS)
-		var total: float = g.workers[0].pollution + g.workers[1].pollution
+		var total: float = g.world.workers[0].pollution + g.world.workers[1].pollution
 		if polluted:
 			t.check(total > baseline, "Stored wastewater exposes nearby workers through the shared field")
-			t.near(g.pollution.wastewater.get(g.BASE, 0.0), 40, "Ambient exposure does not accidentally consume or duplicate wastewater load")
+			t.near(g.world.wastewater.get(g.BASE, 0.0), 40, "Ambient exposure does not accidentally consume or duplicate wastewater load")
 		else: baseline = total
 
 	var healthy_total := 0.0
 	for sick in [false, true]:
 		t.fixtures.scenario("Nearby illness adds exposure: " + str(sick), 2)
-		g.workers[0].pollution = 80.0 if sick else 0.0
+		g.world.workers[0].pollution = 80.0 if sick else 0.0
 		g.simulate(g.HOUR_SECONDS)
-		if sick: t.check(g.workers[1].pollution > healthy_total, "A diseased worker transmits through the environment")
-		else: healthy_total = g.workers[1].pollution
+		if sick: t.check(g.world.workers[1].pollution > healthy_total, "A diseased worker transmits through the environment")
+		else: healthy_total = g.world.workers[1].pollution
 
 	# Clean surroundings do not heal a patient, and a bath cannot replace medical treatment.
 	t.fixtures.scenario("Disease requires medicine, with death still a placeholder", 1)
 	t.fixtures.station("bathhouse", P)
 	t.fixtures.stock_recipe(P, g.BATH_MATERIALS)
-	var w: Dictionary = g.workers[0]
+	var w: Dictionary = g.world.workers[0]
 	t.fixtures.service_customer("hospital", P, w)
 	g.simulate(g.HOUR_SECONDS * 2)
 	t.check(w.pollution >= 80 and w.shop_spent_today == 0, "Fresh surroundings and a stocked bath cannot heal disease")
 	t.near(g.resource_activity("cleaner", 1).consumed, 0, "A bath cannot consume supplies pretending to treat disease")
 	g.simulate(24 * g.HOUR_SECONDS)
 	t.near(w.pollution, 100, "Body pollution caps at one hundred")
-	t.check(g.workers.size() == 1, "The death placeholder does not remove the worker")
+	t.check(g.world.workers.size() == 1, "The death placeholder does not remove the worker")
 
 func check_bathing(t) -> void:
 	var g = t.game
@@ -286,7 +289,7 @@ func check_bathing(t) -> void:
 	t.fixtures.scenario("One bath recipe serves one competing customer", 2)
 	t.fixtures.station("bathhouse", P)
 	t.fixtures.stock_recipe(P, g.BATH_MATERIALS)
-	for w in g.workers:
+	for w in g.world.workers:
 		w.hunger = 100
 		w.bread = g.BATH_PRICE
 	var cash: float = g.resource_inventory().bread
@@ -296,7 +299,7 @@ func check_bathing(t) -> void:
 		t.near(g.resource_activity(item, 1).consumed, 0, "An incomplete bath does not consume supplies")
 	t.advance_until(func(): return g.stock_at(P, "bread") == g.BATH_PRICE, 30, "A completed bath pays the facility once")
 	var bathed := 0
-	for w in g.workers:
+	for w in g.world.workers:
 		g.select_worker(w.id)
 		if t.effect_description("bathed").contains("心情 +15\n剩余"):
 			bathed += 1
@@ -306,7 +309,7 @@ func check_bathing(t) -> void:
 		t.near(g.resource_activity(item, 1).consumed, g.BATH_MATERIALS[item], "Each local bath ingredient is consumed exactly once")
 	t.near(g.resource_inventory().bread, cash, "The service transfers bread rather than creating or consuming it")
 	g.simulate(g.WorkerBuffs.BATH_EFFECT_HOURS * g.HOUR_SECONDS + 0.1)
-	for w in g.workers:
+	for w in g.world.workers:
 		g.select_worker(w.id)
 		t.check(t.effect_description("bathed").is_empty(), "The bath effect expires without becoming permanent mood")
 	t.near(g.stock_at(P, "bread"), g.BATH_PRICE, "A missing recipe cannot charge a second customer")
@@ -317,7 +320,7 @@ func check_bathing(t) -> void:
 	var supplies: Dictionary = g.BATH_MATERIALS.duplicate()
 	for item in supplies: supplies[item] *= 2
 	t.fixtures.stock_recipe(P, supplies)
-	var customer: Dictionary = g.workers[0]
+	var customer: Dictionary = g.world.workers[0]
 	customer.hunger = 100
 	customer.bread = g.BATH_PRICE * 2
 	customer.equipment.clothes = g.ITEM_USES.clothes.uses
@@ -340,7 +343,7 @@ func check_bathing(t) -> void:
 			var recipe: Dictionary = g.BATH_MATERIALS.duplicate()
 			if setting == "missing": recipe.erase("cleaner")
 			t.fixtures.stock_recipe(P, recipe)
-		var w: Dictionary = g.workers[0]
+		var w: Dictionary = g.world.workers[0]
 		w.hunger = 100
 		w.bread = 0.0 if setting == "unaffordable" else g.BATH_PRICE
 		g.simulate(15)
@@ -352,7 +355,7 @@ func check_bathing(t) -> void:
 	t.fixtures.scenario("Bathhouse restocks through normal worker delivery", 2)
 	t.fixtures.station("bathhouse", P)
 	t.fixtures.stock_recipe(g.BASE, g.BATH_MATERIALS)
-	for w in g.workers:
+	for w in g.world.workers:
 		w.hunger = 100
 		w.bread = g.BATH_PRICE
 	t.advance_until(func(): return g.stock_at(P, "bread") >= g.BATH_PRICE, 50, "Delivered supplies enable a completed paid bath")
@@ -364,7 +367,7 @@ func check_item_effects(t) -> void:
 	# Buying is only a transfer; the effect belongs to a later actual use.
 	t.fixtures.scenario("Ale is bought, held and then consumed", 1)
 	t.fixtures.station("brewery", P, 1)
-	var buyer: Dictionary = g.workers[0]
+	var buyer: Dictionary = g.world.workers[0]
 	buyer.bread = 2
 	buyer.hunger = 100
 	buyer.fatigue = 40
@@ -375,7 +378,7 @@ func check_item_effects(t) -> void:
 	t.near(buyer.shop_spent_today, 2 if bought else 0, "An actual sale pays once; choosing free sleep cannot incur a drink charge")
 	# Owned consumption is a separate contract, independent of choosing to purchase rather than sleep.
 	t.fixtures.scenario("Owned ale is consumed once and grants its actual effects", 1)
-	buyer = g.workers[0]
+	buyer = g.world.workers[0]
 	buyer.hunger = 100
 	buyer.fatigue = 40
 	buyer.items.ale = 1
@@ -388,7 +391,7 @@ func check_item_effects(t) -> void:
 	for item in ["none", "tools", "clothes", "dirty_clothes", "ale"]:
 		t.fixtures.scenario("Owned item use changes real production: " + item, 1)
 		t.fixtures.station("workbench", P)
-		var w: Dictionary = g.workers[0]
+		var w: Dictionary = g.world.workers[0]
 		w.pos = Vector2(P)
 		w.fatigue = 40
 		if item == "dirty_clothes":
@@ -421,18 +424,18 @@ func check_item_effects(t) -> void:
 	for kind in ["farm", "workbench", "printer"]:
 		t.fixtures.scenario("Tool wear follows eligible labor: " + kind, 1)
 		t.fixtures.station(kind, P)
-		var w: Dictionary = g.workers[0]
+		var w: Dictionary = g.world.workers[0]
 		w.equipment.tools = 1
 		if kind == "farm": t.fixtures.stock_recipe(P, {"raw_water": 4})
 		if kind == "printer": t.fixtures.stock_recipe(P, {1: 10})
 		g.adjust_production(P, 1)
-		t.advance_until(func(): return g.workers.size() == 2 if kind == "printer" else g.resource_activity(g.product_item(kind), 1).produced > 0, 150, "Ordered production completes with initially equipped tools")
+		t.advance_until(func(): return g.world.workers.size() == 2 if kind == "printer" else g.resource_activity(g.product_item(kind), 1).produced > 0, 150, "Ordered production completes with initially equipped tools")
 		t.near(g.resource_activity("tools", 1).consumed, 0 if kind == "printer" else 1, "Only farm and processing labor wear out tools; printing does not")
 		if kind == "farm":
 			t.near(g.report_totals(1)["工作"] / g.HOUR_SECONDS, 1.0 / 1.3 + 1.0, "One remaining use accelerates watering but not later growth or unequipped harvesting", 0.02)
 
 	t.fixtures.scenario("Clothing expiration removes its condition and consumes one item", 1)
-	var w: Dictionary = g.workers[0]
+	var w: Dictionary = g.world.workers[0]
 	w.equipment.clothes = 2.0
 	g.select_worker(w.id)
 	t.check(t.effect_description("clothes").contains("衣物"), "Initially worn clothes appear in live details")
@@ -446,7 +449,7 @@ func check_item_effects(t) -> void:
 	t.fixtures.scenario("Meat sale and actual consumption conserve inventory", 1)
 	t.fixtures.station("barn", P)
 	t.fixtures.stock_recipe(P, {"meat": 1})
-	w = g.workers[0]
+	w = g.world.workers[0]
 	w.bread = 1
 	w.hunger = 60
 	t.advance_until(func(): return g.resource_activity("meat", 1).consumed == 1, 40, "A hungry buyer purchases and eats meat from the barn")
@@ -463,7 +466,7 @@ func check_consumption_conditions(t) -> void:
 				var debt: bool = setting == "debt"
 				t.fixtures.scenario("Goods depend on cash and stock: %s / %s / affordable %s" % [kind, setting, affordable], 1)
 				t.fixtures.station(kind, P, 1)
-				var customer: Dictionary = g.workers[0]
+				var customer: Dictionary = g.world.workers[0]
 				t.fixtures.shop_customer(kind, P, customer, debt, affordable)
 				if setting == "cargo": customer.carry = 1
 				var price: float = g.PRODUCTS[kind].price
@@ -476,7 +479,7 @@ func check_consumption_conditions(t) -> void:
 				t.check(customer.bread >= 0, "Neither debt nor insufficient funds permits overdrawing")
 				t.near(customer.loan_principal, 1 if debt else 0, "Shopping does not modify existing principal")
 				t.near(customer.loan_interest, 0.2 if debt else 0, "Shopping does not modify existing interest")
-				t.near(g.portal.lent_bread, 0, "Optional consumption does not issue an extra loan")
+				t.near(g.world.portal.lent_bread, 0, "Optional consumption does not issue an extra loan")
 				if setting == "cargo":
 					t.near(g.resource_inventory()[1], 1, "Shopping and delivery choices preserve the initial carried ore")
 
@@ -492,7 +495,7 @@ func check_local_prices(t) -> void:
 			if setting == "two": t.fixtures.station("spotlight", Vector2i(35, 9))
 			t.advance_until(func():
 				g.select_entity(Vector2i(32, 9))
-				return g.entity_details.text.contains("运行中"), 15, "A staffed circuit supplies the sale light")
+				return g.hud.entity_details.text.contains("运行中"), 15, "A staffed circuit supplies the sale light")
 			var shop := Vector2i(34, 10) if setting != "outside" else Vector2i(40, 10)
 			t.fixtures.station(kind, shop, 4 if kind == "purifier" else 1)
 			var buyer: Dictionary = g.create_worker(Vector2i(35, 13))
@@ -505,7 +508,7 @@ func check_local_prices(t) -> void:
 			var destination: Vector2i = shop
 			t.observe_until(func(): return buyer.shop_spent_today > 0, 50)
 			var unit_price: float = g.PRODUCTS[kind].price * (1.0 if setting in ["disconnect", "outside"] else 1.2)
-			var quantity: int = (4 if kind == "purifier" else 1) - g.benches[destination].stock
+			var quantity: int = (4 if kind == "purifier" else 1) - g.world.benches[destination].stock
 			t.check(quantity >= 0 and quantity <= (4 if kind == "purifier" else 1), "Autonomous purchases cannot exceed the actual listed stock")
 			t.near(g.stock_at(destination, "bread"), unit_price * quantity, "Stock transfer and payment use the same current price")
 			t.near(buyer.shop_spent_today, unit_price * quantity, "Actual spending reports include the local premium exactly once")

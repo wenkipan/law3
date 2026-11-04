@@ -13,7 +13,7 @@ func prepare() -> void:
 	var g = e.context.game
 	var w: Dictionary = e.context.worker
 	var state: Dictionary = e.environment.initial()
-	for p in g.smart_objects.query("shop"):
+	for p in g.world.smart_objects.query("shop"):
 		if e.context.path_to(p).is_empty(): continue
 		for item in g.shop_goods(p):
 			if g.stock_at(p, item) <= 0 or not g.wants_item(w, item): continue
@@ -22,14 +22,14 @@ func prepare() -> void:
 	for kind in g.SERVICES:
 		if not g.wants_service(w, kind): continue
 		var rule: Dictionary = g.SERVICES[kind]
-		for p in g.smart_objects.query(rule.slot):
+		for p in g.world.smart_objects.query(rule.slot):
 			if not g.recipe_ready(p, rule.materials) or e.context.path_to(p).is_empty(): continue
 			var parts: Dictionary = e.service_effects(kind, state)
 			offers.append({"group": "clothing" if kind == "laundry" else "pollution", "price": rule.price, "value": total(parts)})
 			break
 	if w.fatigue >= g.MAX_FATIGUE * e.Parameters.SLEEP_START:
-		for p in g.smart_objects.query("bed"):
-			if g.beds[p].assigned not in [-1, w.id] or e.context.path_to(p).is_empty(): continue
+		for p in g.world.smart_objects.query("bed"):
+			if g.world.beds[p].assigned not in [-1, w.id] or e.context.path_to(p).is_empty(): continue
 			var hours: float = minf(g.BED_LEASE_HOURS, w.fatigue / g.BED_RECOVERY_PER_HOUR)
 			var saved: float = hours * (g.BED_RECOVERY_PER_HOUR / g.SLEEP_RECOVERY_PER_HOUR - 1.0)
 			offers.append({"group": "fatigue", "price": g.BED_PRICE,

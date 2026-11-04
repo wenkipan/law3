@@ -1,6 +1,10 @@
 extends RefCounted
 
-var option
+const ActivityRecord = preload("res://scripts/simulation/activity_record.gd")
+
+var record: ActivityRecord
+# Runtime binding preserves replacement checks without copying an order into the record.
+var source_identity: Dictionary = {}
 var handles: Array[Dictionary] = []
 var path: Array[Vector2i] = []
 var destination: Vector2i
@@ -11,23 +15,26 @@ var labor_seconds := 0.0
 var experience: Dictionary = {}
 
 func enter(g, w: Dictionary, proposal) -> bool:
-	option = proposal
-	destination = option.approach_position
-	path = option.approach_path.duplicate()
-	handles = g.smart_objects.acquire(option.slots, w.id)
-	return handles.size() == option.slots.size()
+	record = ActivityRecord.new(proposal.kind, proposal.target, proposal.data)
+	var identity = proposal.data.get("identity")
+	if identity is Dictionary:
+		source_identity = identity
+	destination = proposal.approach_position
+	path = proposal.approach_path.duplicate()
+	handles = g.world.smart_objects.acquire(proposal.slots, w.id)
+	return handles.size() == proposal.slots.size()
 
 func valid(g, _w: Dictionary) -> bool:
 	for handle in handles:
-		if not g.smart_objects.valid(handle):
+		if not g.world.smart_objects.valid(handle):
 			return false
 	return true
 
 func matches_option(proposal) -> bool:
-	return option.same_activity(proposal)
+	return proposal != null and record.kind == proposal.kind and record.target == proposal.target and record.data.get("job") == proposal.data.get("job")
 
 func exit(g, _w: Dictionary, _reason: String) -> void:
-	g.smart_objects.release(handles)
+	g.world.smart_objects.release(handles)
 	handles.clear()
 	path.clear()
 
@@ -35,7 +42,7 @@ func tick(_g, _w: Dictionary, _delta: float) -> String:
 	return "success"
 
 func navigate(g, w: Dictionary, delta: float, pace := 3.0) -> int:
-	if path.any(func(cell): return g.terrain.get(cell, 1) != 0 or g.water_sources.has(cell)):
+	if path.any(func(cell): return g.world.terrain.get(cell, 1) != 0 or g.world.water_sources.has(cell)):
 		path = g.route(Vector2i(w.pos.round()), destination)
 		g.ai_trace.record(g, w, "navigation", "replanned", {"destination": g.WorkerTrace.cell(destination), "steps": path.size()})
 	if path.is_empty():

@@ -56,7 +56,7 @@ func reset(g) -> void:
 	decisions.clear()
 	next_sample.clear()
 	evaluations.clear()
-	record(g, {}, "world", "reset", {"seed": g.world_seed, "max_hunger": g.MAX_HUNGER,
+	record(g, {}, "world", "reset", {"seed": g.world.world_seed, "max_hunger": g.MAX_HUNGER,
 		"hunger_per_bread": g.HUNGER_PER_BREAD, "filter": worker_id})
 
 func begin_decision(id: int) -> void:
@@ -66,7 +66,7 @@ func begin_decision(id: int) -> void:
 func observe(g, w: Dictionary) -> void:
 	if not watches(w.id):
 		return
-	var now: float = (g.day - 1) * g.DAY_SECONDS + g.day_elapsed
+	var now: float = (g.world.day - 1) * g.DAY_SECONDS + g.world.day_elapsed
 	if now < next_sample.get(w.id, -1.0):
 		return
 	next_sample[w.id] = now + SAMPLE_SECONDS
@@ -78,9 +78,11 @@ func selection(g, w: Dictionary, data: Dictionary) -> void:
 	evaluations[w.id] = data
 	record(g, w, "utility", "evaluated", data)
 
-func entered(g, w: Dictionary) -> void:
-	record(g, w, "state_tree", "entered")
-	if not watches(w.id) or w.activity.active.option.kind != "rest" or w.hunger >= 20:
+func entered(g, w: Dictionary, selected) -> void:
+	if not watches(w.id):
+		return
+	record(g, w, "state_tree", "entered", {"proposal": proposal(selected)})
+	if w.activity.active.record.kind != "rest" or w.hunger >= 20:
 		return
 	var evaluation: Dictionary = evaluations.get(w.id, {})
 	var blocked: Dictionary = {}
@@ -104,7 +106,7 @@ func entered(g, w: Dictionary) -> void:
 			break
 		higher_ranked.append(candidate)
 	# This is an actual rest entry, not a prediction made before slot acquisition.
-	record(g, w, "diagnostic", "hungry_idle", {"idle_score": w.activity.active.option.score,
+	record(g, w, "diagnostic", "hungry_idle", {"idle_score": selected.score,
 		"best_work_score": best_work, "best_meal_score": best_meal,
 		"best_payroll_score": best_payroll,
 		"work_needs_employer_cash": unfunded_work, "higher_ranked": higher_ranked,
@@ -115,7 +117,7 @@ func record(g, w: Dictionary, system: String, event: String, data: Dictionary = 
 		return
 	sequence += 1
 	var row := {"schema": 1, "session": session, "world": world, "seq": sequence,
-		"day": g.day, "second": g.day_elapsed, "system": system, "event": event, "data": data}
+		"day": g.world.day, "second": g.world.day_elapsed, "system": system, "event": event, "data": data}
 	if not w.is_empty():
 		row.worker_id = w.id
 		row.worker_name = w.name
@@ -143,11 +145,13 @@ func components(w: Dictionary) -> Dictionary:
 	var a = w.activity.active
 	var activity := {"kind": "none"}
 	if a != null:
-		activity = proposal(a.option)
+		activity = activity_record(a.record)
 		activity.merge({"phase": a.phase, "age": a.age, "elapsed": a.elapsed,
 			"destination": cell(a.destination), "path_remaining": a.path.size(),
 			"claims": a.handles.duplicate(true), "drink_elapsed": w.activity.drink_elapsed})
-		if a.option.kind == "deliver": activity.receiver = cell(a.receiver)
+		if a.record.kind == "deliver":
+			activity.receiver = cell(a.receiver)
+			activity.shipment = shipment(a.shipment)
 	return {"position": [w.pos.x, w.pos.y],
 		"needs": {"hunger": w.hunger, "fatigue": w.fatigue,
 			"pollution": w.pollution, "clothes_pollution": w.clothes_pollution},
@@ -167,16 +171,21 @@ static func cell(p) -> Array:
 	return [] if p == null else [p.x, p.y]
 
 static func proposal(option) -> Dictionary:
-	var result := {"kind": option.kind, "target": cell(option.target), "score": option.score,
-		"slots": option.slots.duplicate()}
-	for key in ["amount", "bed", "kind", "mined"]:
-		if option.data.has(key):
-			result["product" if key == "kind" else key] = option.data[key]
-	for key in ["job", "canteen", "source", "target"]:
-		if option.data.has(key):
-			result["delivery_target" if key == "target" else key] = cell(option.data[key])
+	var result := activity_record(option)
+	result.score = option.score
+	result.slots = option.slots.duplicate()
 	if option.data.has("shipment"):
 		result.shipment = shipment(option.data.shipment)
+	return result
+
+static func activity_record(value) -> Dictionary:
+	var result := {"kind": value.kind, "target": cell(value.target)}
+	for key in ["amount", "bed", "kind", "mined"]:
+		if value.data.has(key):
+			result["product" if key == "kind" else key] = value.data[key]
+	for key in ["job", "canteen", "source", "target"]:
+		if value.data.has(key):
+			result["delivery_target" if key == "target" else key] = cell(value.data[key])
 	return result
 
 static func shipment(value: Dictionary) -> Dictionary:

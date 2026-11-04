@@ -22,7 +22,7 @@ func external_at(p: Vector2i) -> float:
 		var offset: Vector2i = p - context.origin
 		var distance: int = maxi(absi(offset.x), absi(offset.y))
 		if distance <= 2: own_source = 20.0 * (1.0 - float(distance) / 3.0)
-	return maxf(0, g.pollution.at(p) - own_source)
+	return maxf(0, g.cache.pollution.at(p) - own_source)
 
 func exposure_rate(p: Vector2i) -> float:
 	return context.game.Pollution.BASE_PER_HOUR + external_at(p) * context.game.Pollution.EXPOSURE_PER_HOUR

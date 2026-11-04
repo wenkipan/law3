@@ -19,30 +19,30 @@ func clear() -> void:
 
 func sync(game) -> void:
 	var present: Dictionary = {}
-	for p in game.beds:
-		register(present, key("bed", p), game.beds[p], p)
-	for p in game.sites:
-		if not game.sites[p].get("cancelled", false):
-			register(present, key("build", p), game.sites[p], p)
-			register(present, key("supply", p), game.sites[p], p, true)
-	for p in game.benches:
-		register(present, key("work", p), game.benches[p], p)
-		register(present, key("supply", p), game.benches[p], p, true)
+	for p in game.world.beds:
+		register(present, key("bed", p), game.world.beds[p], p)
+	for p in game.world.sites:
+		if not game.world.sites[p].get("cancelled", false):
+			register(present, key("build", p), game.world.sites[p], p)
+			register(present, key("supply", p), game.world.sites[p], p, true)
+	for p in game.world.benches:
+		register(present, key("work", p), game.world.benches[p], p)
+		register(present, key("supply", p), game.world.benches[p], p, true)
 		if not game.shop_goods(p).is_empty():
-			register(present, key("shop", p), game.benches[p], p, true)
+			register(present, key("shop", p), game.world.benches[p], p, true)
 		if game.building_kind(p) == "canteen":
 			for seat in game.building_cells(p, "canteen"):
-				register(present, key("seat", seat), game.benches[p], seat)
+				register(present, key("seat", seat), game.world.benches[p], seat)
 		var kind: String = game.building_kind(p)
 		if game.SERVICES.has(kind):
-			register(present, key(game.SERVICES[kind].slot, p), game.benches[p], p)
-	for p in game.mining_contracts:
-		register(present, key("mine", p), game.mining_contracts[p], p)
-	for p in game.banks:
-		register(present, key("bank", p), game.banks[p], p, true)
-		register(present, key("supply", p), game.banks[p], p, true)
+			register(present, key(game.SERVICES[kind].slot, p), game.world.benches[p], p)
+	for p in game.world.mining_contracts:
+		register(present, key("mine", p), game.world.mining_contracts[p], p)
+	for p in game.world.banks:
+		register(present, key("bank", p), game.world.banks[p], p, true)
+		register(present, key("supply", p), game.world.banks[p], p, true)
 	for p in game.stock_locations():
-		var source: Dictionary = game.benches[p] if game.benches.has(p) else game.stores.get(p, {})
+		var source: Dictionary = game.world.benches[p] if game.world.benches.has(p) else game.world.stores.get(p, {})
 		register(present, key("store", p), source, p, true)
 	for id in objects.keys():
 		if not present.has(id):

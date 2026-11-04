@@ -17,7 +17,7 @@ var inertia_hours := 0.0
 func tick(g, w: Dictionary, delta: float) -> Dictionary:
 	var experience: Dictionary = {}
 	inertia_hours += delta / g.HOUR_SECONDS
-	if active != null and (not active.valid(g, w) or (w.fatigue >= g.MAX_FATIGUE and active.option.kind != "sleep")):
+	if active != null and (not active.valid(g, w) or (w.fatigue >= g.MAX_FATIGUE and active.record.kind != "sleep")):
 		exit(g, w, "invalidated")
 	decision_wait -= delta
 	if active == null and decision_wait <= 0:
@@ -53,9 +53,9 @@ func tick(g, w: Dictionary, delta: float) -> Dictionary:
 		g.record_worker_time(w, action, delta)
 	if result != "running":
 		# A completed duty segment is a choice point, not a mandatory power outage.
-		if result == "success" and active.option.kind == "operate":
+		if result == "success" and active.record.kind == "operate":
 			var choices: Array = Selection.options(g, w, "period_completed")
-			if not choices.is_empty() and active.matches_option(choices[0]) and g.begin_work(active.option, w, active.segment):
+			if not choices.is_empty() and active.matches_option(choices[0]) and g.begin_work(active.record, w, active.segment, active.source_identity):
 				active.fatigue_factor = active.segment.fatigue_factor
 				active.age = 0.0
 				return experience
@@ -111,7 +111,7 @@ func select(g, w: Dictionary) -> void:
 			active = activity
 			review_elapsed = 0.0
 			remember_choice(option)
-			g.ai_trace.entered(g, w)
+			g.ai_trace.entered(g, w, option)
 			return
 		activity.exit(g, w, "rejected")
 		g.ai_trace.record(g, w, "state_tree", "entry_rejected", g.WorkerTrace.proposal(option))
@@ -133,14 +133,14 @@ func report_action(g) -> String:
 		return "空闲"
 	if drink_elapsed >= 0:
 		return "吃饭"
-	match active.option.kind:
-		"use_item": return "吃饭" if active.option.data.item in ["ale", "meat"] else "空闲"
+	match active.record.kind:
+		"use_item": return "吃饭" if active.record.data.item in ["ale", "meat"] else "空闲"
 		"service": return "通勤" if active.phase == "approach" else "空闲"
 		"mine": return "通勤" if active.phase == "approach" else "挖掘"
 		"build": return "通勤" if active.phase == "approach" else "工作"
 		"produce", "operate":
 			if active.phase == "approach": return "通勤"
-			return "等待" if active.option.kind == "operate" and g.building_kind(active.option.target) == "drill" and not g.powered_devices.has(active.option.target) else "工作"
+			return "等待" if active.record.kind == "operate" and g.building_kind(active.record.target) == "drill" and not g.cache.powered_devices.has(active.record.target) else "工作"
 		"deliver": return "搬运"
 		"eat": return "吃饭"
 		"sleep": return "通勤" if active.phase == "approach" else "睡觉"
@@ -155,21 +155,21 @@ func presentation(g) -> Dictionary:
 	if active == null:
 		return result
 	var a = active
-	var p = a.option.target
+	var p = a.record.target
 	result.path = a.path
 	result.progress = a.elapsed
-	match a.option.kind:
+	match a.record.kind:
 		"use_item":
 			result.state = "use_item"
-			result.item = a.option.data.item
+			result.item = a.record.data.item
 		"service":
 			result.state = "to_service" if a.phase == "approach" else "service"
-			result.service = a.option.data.kind
+			result.service = a.record.data.kind
 			result.station = p
 		"mine":
 			result.state = "walk" if a.phase == "approach" else "dig"
 			result.job = p
-			result.progress = g.mining_contracts.get(p, {}).get("progress", 0.0)
+			result.progress = g.world.mining_contracts.get(p, {}).get("progress", 0.0)
 		"build":
 			result.state = "to_build" if a.phase == "approach" else "build"
 			result.building = p
@@ -179,16 +179,16 @@ func presentation(g) -> Dictionary:
 		"purchase":
 			result.state = "to_shop"
 			result.station = p
-			result.item = a.option.data.item
+			result.item = a.record.data.item
 		"payroll": result.state = "to_payroll"
 		"borrow": result.state = "to_bank"
 		"eat":
 			result.state = "to_meal" if a.phase == "approach" else "eat"
-			result.canteen = a.option.data.get("canteen")
+			result.canteen = a.record.data.get("canteen")
 			result.meal_seat = p if result.canteen != null else null
 		"sleep":
 			result.state = "to_bed" if a.phase == "approach" else "sleep"
-			result.bed = p if a.option.data.bed and not a.handles.is_empty() else null
+			result.bed = p if a.record.data.bed and not a.handles.is_empty() else null
 		"rest": result.state = "rest"
 		"deliver":
 			result.state = ("deposit" if a.phase == "handoff" else "haul") if a.mined else ("freight_pickup" if a.phase == "pickup" else "freight_dropoff")

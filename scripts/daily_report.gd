@@ -27,7 +27,7 @@ func _ready() -> void:
 	margin.add_child(content)
 	tabs.add_tab("工人")
 	tabs.add_tab("物资")
-	tabs.add_theme_font_override("font", game.font)
+	tabs.add_theme_font_override("font", game.hud.font)
 	tabs.tab_changed.connect(change_tab)
 	content.add_child(tabs)
 	labor = VBoxContainer.new()
@@ -45,18 +45,18 @@ func _ready() -> void:
 	filters.add_child(days)
 	filters.add_child(people)
 	people.add_item("全体")
-	for w in game.workers:
+	for w in game.world.workers:
 		people.add_item(w.name)
 	days.item_selected.connect(func(_i): refresh())
 	people.item_selected.connect(func(_i): refresh())
-	summary.add_theme_font_override("font", game.font)
+	summary.add_theme_font_override("font", game.hud.font)
 	labor.add_child(summary)
 	labor.add_child(HSeparator.new())
 	for action in game.ACTIONS:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 14)
 		labor.add_child(row)
-		var label: Label = game.make_label(action, 14)
+		var label: Label = game.hud.make_label(action, 14)
 		label.custom_minimum_size.x = 48
 		row.add_child(label)
 		var bar := ProgressBar.new()
@@ -64,10 +64,10 @@ func _ready() -> void:
 		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		bar.show_percentage = false
 		row.add_child(bar)
-		var duration: Label = game.make_label("", 13)
+		var duration: Label = game.hud.make_label("", 13)
 		duration.custom_minimum_size.x = 100
 		row.add_child(duration)
-		var percent: Label = game.make_label("", 13)
+		var percent: Label = game.hud.make_label("", 13)
 		percent.custom_minimum_size.x = 65
 		percent.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		row.add_child(percent)
@@ -85,25 +85,25 @@ func _process(delta: float) -> void:
 func refresh() -> void:
 	if is_instance_valid(resources):
 		resources.refresh()
-	if people.item_count != game.workers.size() + 1:
+	if people.item_count != game.world.workers.size() + 1:
 		var selected_person := people.selected
 		people.clear()
 		people.add_item("全体")
-		for w in game.workers:
+		for w in game.world.workers:
 			people.add_item(w.name)
-		people.select(clampi(selected_person, 0, game.workers.size()))
-	var selected_day: int = days.get_selected_id() if days.item_count else game.day
-	if days.item_count != game.day:
+		people.select(clampi(selected_person, 0, game.world.workers.size()))
+	var selected_day: int = days.get_selected_id() if days.item_count else game.world.day
+	if days.item_count != game.world.day:
 		days.clear()
-		for d in range(1, game.day + 1):
+		for d in range(1, game.world.day + 1):
 			days.add_item("第 %d 天" % d, d)
-		days.select(clampi(selected_day - 1, 0, game.day - 1))
+		days.select(clampi(selected_day - 1, 0, game.world.day - 1))
 	var d := days.get_selected_id()
 	var totals: Dictionary = game.report_totals(d, people.selected - 1)
 	var total := 0.0
 	for value in totals.values():
 		total += value
-	summary.text = "%s · %s · %s" % ["进行中" if d == game.day else "已结算", "总人时" if people.selected == 0 else "已记录时间", format_time(total)]
+	summary.text = "%s · %s · %s" % ["进行中" if d == game.world.day else "已结算", "总人时" if people.selected == 0 else "已记录时间", format_time(total)]
 	summary.text += "\n挖掘方块  %d 块" % game.report_mined(d, people.selected - 1)
 	for action in game.ACTIONS:
 		var ratio: float = totals[action] / total * 100.0 if total > 0 else 0.0

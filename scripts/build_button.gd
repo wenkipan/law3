@@ -24,7 +24,7 @@ func _make_custom_tooltip(_for_text: String) -> Object:
 	image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	image.custom_minimum_size = Vector2(48, 36)
 	heading.add_child(image)
-	heading.add_child(game.make_label(game.building_name(kind), 20))
+	heading.add_child(game.hud.make_label(game.building_name(kind), 20))
 	content.add_child(HSeparator.new())
 	var requirements := RichTextLabel.new()
 	requirements.name = "Requirements"
@@ -32,14 +32,14 @@ func _make_custom_tooltip(_for_text: String) -> Object:
 	requirements.fit_content = true
 	requirements.scroll_active = false
 	requirements.custom_minimum_size.x = 240
-	requirements.add_theme_font_override("normal_font", game.font)
+	requirements.add_theme_font_override("normal_font", game.hud.font)
 	requirements.add_theme_font_size_override("normal_font_size", 14)
 	requirements.text = "%s\n工时  %s 小时\n工资  %s 面包" % [
 		game.material_requirements_text(game.building_materials(kind), true, true), String.num(game.building_hours(kind), 2),
 		String.num(game.building_hours(kind) * game.WAGE_PER_HOUR, 2)]
 	content.add_child(requirements)
 	content.add_child(HSeparator.new())
-	var effects: Label = game.make_label(game.building_effects_text(kind), 14)
+	var effects: Label = game.hud.make_label(game.building_effects_text(kind), 14)
 	effects.name = "Effects"
 	content.add_child(effects)
 	return card

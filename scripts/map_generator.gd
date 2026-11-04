@@ -1,8 +1,9 @@
 extends RefCounted
 
-const VERSION := 5
+const VERSION := 6
 const CHUNK_SIZE := 32
-const WATER := 9
+const WATER_BLOCK := 9
+const WATER := 10
 const REGION_SIZE := 128
 const SPOT_GRID := 16
 const MIN_RADIUS := 6.0
@@ -30,10 +31,23 @@ var candidate_cache: Dictionary = {}
 var spot_cache: Dictionary = {}
 var special_cache: Dictionary = {}
 var base_cache: Dictionary = {}
+var starting_water: Dictionary = {}
 
 func _init(world_seed: int, starting_area := Rect2i()) -> void:
 	seed_value = world_seed
 	camp = starting_area
+	if camp.has_area():
+		var center := camp.get_center()
+		match mini(3, int(random_at(camp.position, 90) * 4)):
+			0: center.x = camp.position.x - 2
+			1: center.x = camp.end.x + 1
+			2: center.y = camp.position.y - 2
+			3: center.y = camp.end.y + 1
+		for y in range(-1, 2):
+			for x in range(-1, 2):
+				var cell := center + Vector2i(x, y)
+				if x == 0 or y == 0 or random_at(cell, 91) < 0.5:
+					starting_water[cell] = true
 
 static func chunk_at(cell: Vector2i) -> Vector2i:
 	return Vector2i(floori(float(cell.x) / CHUNK_SIZE), floori(float(cell.y) / CHUNK_SIZE))
@@ -90,12 +104,17 @@ func spot_candidates_at(index: Vector2i) -> Array:
 				continue
 			# Most deposits are small, with a tail of larger, more elongated deposits.
 			var radius := lerpf(MIN_RADIUS, MAX_RADIUS, pow(random_at(index, channel + 3), 2.0))
+			var material := field + 2
+			if field < 2 and random_at(index, channel + 8) < 0.35:
+				material = 7 if field == 0 else 8
+			elif field == 2 and random_at(index, channel + 8) < 0.25:
+				material = WATER_BLOCK
 			result.append({"center": center, "radius": radius,
 				"aspect": lerpf(0.55, 1.0, random_at(index, channel + 4)),
 				"angle": random_at(index, channel + 5) * TAU,
 				"phase": random_at(index, channel + 6) * TAU, "field": field,
 				"priority": random_at(index, channel + 7), "index": index,
-				"material": (7 if field == 0 else 8) if field < 2 and random_at(index, channel + 8) < 0.35 else field + 2})
+				"material": material})
 		remember(candidate_cache, index, result)
 	return candidate_cache[index]
 
@@ -128,11 +147,13 @@ func spots_at(index: Vector2i) -> Array:
 func base_material(cell: Vector2i) -> int:
 	if camp.has_point(cell):
 		return 0
+	if starting_water.has(cell):
+		return WATER_BLOCK
 	if base_cache.has(cell):
 		return base_cache[cell]
 	var point := Vector2(cell) + Vector2.ONE * 0.5
 	var index := Vector2i((point / SPOT_GRID).floor())
-	var strengths := {0: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 7: 0.0, 8: 0.0}
+	var strengths := {0: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 7: 0.0, 8: 0.0, WATER_BLOCK: 0.0}
 	var reach := ceili(MAX_RADIUS / SPOT_GRID)
 	for y in range(index.y - reach, index.y + reach + 1):
 		for x in range(index.x - reach, index.x + reach + 1):
@@ -152,7 +173,7 @@ func base_material(cell: Vector2i) -> int:
 		material = 0
 	else:
 		var strongest := SPOT_THRESHOLD
-		for ore in [2, 3, 4, 7, 8]:
+		for ore in [2, 3, 4, 7, 8, WATER_BLOCK]:
 			if strengths[ore] > strongest:
 				strongest = strengths[ore]
 				material = ore
@@ -192,7 +213,7 @@ func special_at(index: Vector2i) -> Dictionary:
 			var next := center + Vector2i(step, 0) if random_at(index, 85) < 0.5 else center + Vector2i(0, step)
 			cells.append(next)
 		for cell in cells:
-			if camp.grow(2).has_point(cell) or base_material(cell) == 0:
+			if camp.grow(2).has_point(cell) or starting_water.has(cell) or base_material(cell) == 0:
 				cells.clear()
 				break
 		if kind == WATER and not cells.is_empty():

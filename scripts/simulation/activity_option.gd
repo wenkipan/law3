@@ -37,6 +37,3 @@ func _init(activity: String, entity, approach: Vector2i, route: Array[Vector2i],
 
 func reject_write() -> void:
 	push_error("ActivityOption is read-only; execution state belongs to its activity.")
-
-func same_activity(other) -> bool:
-	return other != null and kind == other.kind and target == other.target and data.get("job") == other.data.get("job") and is_same(data.get("shipment"), other.data.get("shipment"))

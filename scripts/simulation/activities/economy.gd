@@ -3,13 +3,13 @@ extends "res://scripts/simulation/activities/activity.gd"
 func valid(g, w: Dictionary) -> bool:
 	if not super.valid(g, w):
 		return false
-	match option.kind:
+	match record.kind:
 		"purchase":
-			return g.benches.has(option.target) and is_same(g.benches[option.target], option.data.identity)
+			return g.world.benches.has(record.target) and is_same(g.world.benches[record.target], source_identity)
 		"borrow":
-			return g.banks.has(option.target)
+			return g.world.banks.has(record.target)
 		"payroll":
-			return option.target in g.stock_locations()
+			return record.target in g.stock_locations()
 	return false
 
 func tick(g, w: Dictionary, delta: float) -> String:
@@ -18,8 +18,8 @@ func tick(g, w: Dictionary, delta: float) -> String:
 		return "failure"
 	if reached == 0:
 		return "running"
-	match option.kind:
-		"purchase": g.purchase(w, option.target, option.data.amount, option.data.item)
-		"borrow": g.borrow(w, option.target, option.data.amount)
-		"payroll": g.collect_payroll(w, option.target)
+	match record.kind:
+		"purchase": g.purchase(w, record.target, record.data.amount, record.data.item)
+		"borrow": g.borrow(w, record.target, record.data.amount)
+		"payroll": g.collect_payroll(w, record.target)
 	return "success"

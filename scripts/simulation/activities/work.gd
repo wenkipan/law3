@@ -10,7 +10,7 @@ func exit(g, w: Dictionary, reason: String) -> void:
 func valid(g, w: Dictionary) -> bool:
 	if not super.valid(g, w):
 		return false
-	return g.work_available(option, w)
+	return g.work_available(record, w, source_identity)
 
 func tick(g, w: Dictionary, delta: float) -> String:
 	if phase == "approach":
@@ -18,11 +18,11 @@ func tick(g, w: Dictionary, delta: float) -> String:
 		if reached < 0:
 			return "failure"
 		if reached == 1:
-			if not g.smart_objects.occupy(handles) or not g.begin_work(option, w, segment):
+			if not g.world.smart_objects.occupy(handles) or not g.begin_work(record, w, segment, source_identity):
 				return "failure"
 			fatigue_factor = segment.fatigue_factor
 			phase = "use"
 		return "running"
-	var result: Dictionary = g.perform_work(option, w, delta, segment)
+	var result: Dictionary = g.perform_work(record, w, delta, segment)
 	labor_seconds = result.seconds
 	return "success" if result.complete else "funding" if result.funding else "running"

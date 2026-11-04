@@ -40,10 +40,10 @@ godot --resolution 1440x900 --log-file /tmp/law3-map-preview.log --path . --scri
 | `support/fixtures.gd` | 初始地图、资源、设备和人口夹具；共享材料运输样本 |
 | `support/context.gd` | 断言、有界模拟等待、报告和可见货物观察 |
 | `support/viewport_input.gd` | 真实鼠标和键盘事件、窗口等待、截图；不包含游戏结果断言 |
-| `world_behaviors.gd` | 地图与探索、开采、蓝图材料承诺、供料、取消回收、运输、劳动及借贷结算、报告和重置 |
+| `world_behaviors.gd` | 地图与探索、开采、蓝图材料承诺、供料、取消回收、运输、劳动及借贷结算、报告、重置、快照续接和存档完整性 |
 | `production_behaviors.gd` | 配方、日产量与有限订单、停产及跨日、供电耗料、实际工资、设施效果和库存守恒 |
 | `equipment_behaviors.gd` | 实际交易价格、库存与付款、装备使用效果和耗尽 |
-| `interaction_behaviors.gd` | 玩家点击与拖放、详情更新、工具禁用、HUD 拦截、坐标转换和代表性布局 |
+| `interaction_behaviors.gd` | 玩家点击与拖放、详情更新、个人物品与新效果飘字、心情详情、工具禁用、HUD 拦截、存档菜单、覆盖确认与快捷键、坐标转换和代表性布局 |
 | `diagnostics/map_preview.gd` | 按需生成地图总览，复用同一夹具与输入驱动 |
 
 套件之间不相互实例化。共享夹具、输入驱动和观察方法放在 support，不复制游戏生产、结算或决策逻辑。

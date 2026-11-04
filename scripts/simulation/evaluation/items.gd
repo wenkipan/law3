@@ -63,7 +63,7 @@ static func cargo_equipment(e, _state: Dictionary, _amount := 1) -> Dictionary:
 		trips += 1
 		if (trips + g.cargo_count(e.context.worker)) % 2 != 0: continue
 		var best: Array = []
-		for p in g.smart_objects.query("store"):
+		for p in g.world.smart_objects.query("store"):
 			var path: Array = g.route(work.position, p)
 			if not path.is_empty() and (best.is_empty() or path.size() < best.size()): best = path
 		saved += 2.0 * e.environment.walk_hours(best)

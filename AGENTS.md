@@ -16,12 +16,15 @@ read file README.md,扩大系统设计.md, they are how game iterated
   them once on completion, and never charges remote stock during construction.
   Cancellation recovers only actual goods, never the unfilled recipe.
 - Keep the world view free of text labels and attribute/progress bars.
-- The only world-text exception is a worker's name, centered below their feet.
+- World-text exceptions are a worker's name, centered below their feet, and
+  short-lived feedback for personal item gains/use and newly acquired effects.
 - Show descriptions, numeric attributes, status text, and progress bars only in
   toolbars, their hover tooltips, or windows/panels opened by clicking.
 - Clicking a worker or building opens live details in the bottom-right inspector.
 - Do not restore overhead daily-income progress, hunger/fatigue bars, building
-  captions, or floating action text. Communicate world actions through animation.
+  captions, or general floating action text. Item/effect feedback must not include
+  freight, employer funds, continuous attribute changes, or decision diagnostics.
+  Communicate other world actions through animation.
 - Toolbar actions and building/category choices show icons only, without names,
   section headings, or repeated property summaries. Names belong in hover or
   clicked details. Numeric clock and speed controls remain readable.

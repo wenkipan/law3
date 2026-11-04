@@ -7,13 +7,13 @@ var receiver: Vector2i
 func enter(g, w: Dictionary, proposal) -> bool:
 	if not super.enter(g, w, proposal):
 		return false
-	mined = option.data.get("mined", false)
-	shipment = option.data.get("shipment", {})
+	mined = record.data.get("mined", false)
+	shipment = proposal.data.get("shipment", {})
 	if shipment.is_empty():
-		shipment = g.claim_delivery(w, option.data)
+		shipment = g.claim_delivery(w, proposal.data)
 		if shipment.is_empty():
 			return false
-	if not g.shipments.has(shipment) or shipment.get("on_belt", false) or shipment.owner not in [-1, w.id]:
+	if not g.world.shipments.has(shipment) or shipment.get("on_belt", false) or shipment.owner not in [-1, w.id]:
 		return false
 	shipment.owner = w.id
 	if not mined:
@@ -23,7 +23,7 @@ func enter(g, w: Dictionary, proposal) -> bool:
 	return true
 
 func valid(g, w: Dictionary) -> bool:
-	return (not mined or w.carry > 0) and g.shipments.has(shipment) and not shipment.get("on_belt", false) and shipment.owner == w.id
+	return (not mined or not is_same(w.carry, 0)) and g.world.shipments.has(shipment) and not shipment.get("on_belt", false) and shipment.owner == w.id
 
 func matches_option(proposal) -> bool:
 	# Pickup, transport and redirected routes still fulfill the same world shipment.
@@ -40,13 +40,18 @@ func tick(g, w: Dictionary, delta: float) -> String:
 			return "running"
 		if destination == shipment.target:
 			if mined:
-				g.take_carried_ore(w)
-				w.ore_delivery = {}
+				g.take_carried_ore(w, shipment.item)
+				w.ore_delivery = shipment.get("next_ore", {})
+				shipment.erase("next_ore")
 			g.complete_delivery(shipment)
 		elif not g.load_belt(w, shipment, destination):
 			return "running" if transport_route(g, w, false) else "failure"
 		if not mined:
 			w.freight = {}
+		elif not w.ore_delivery.is_empty():
+			shipment = w.ore_delivery
+			elapsed = 0.0
+			return "running" if transport_route(g, w) else "failure"
 		return "success"
 	var reached := navigate(g, w, delta)
 	if reached < 0:

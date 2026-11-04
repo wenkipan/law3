@@ -31,11 +31,11 @@ func _ready() -> void:
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 12)
 	header_margin.add_child(header)
-	var name_label: Label = game.make_label("物资", 14)
+	var name_label: Label = game.hud.make_label("物资", 14)
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	header.add_child(name_label)
-	var amount_label: Label = game.make_label("总数", 14)
+	var amount_label: Label = game.hud.make_label("总数", 14)
 	amount_label.custom_minimum_size.x = AMOUNT_WIDTH
 	amount_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	amount_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
@@ -44,13 +44,13 @@ func _ready() -> void:
 	chart_header.custom_minimum_size.x = CHART_WIDTH
 	chart_header.add_theme_constant_override("separation", 2)
 	header.add_child(chart_header)
-	chart_header.add_child(game.make_label("库存曲线（天）", 14))
+	chart_header.add_child(game.hud.make_label("库存曲线（天）", 14))
 	day_axis = Control.new()
 	day_axis.custom_minimum_size.y = 20
 	day_axis.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	chart_header.add_child(day_axis)
 	for i in HISTORY_DAYS:
-		var label: Label = game.make_label("", 11)
+		var label: Label = game.hud.make_label("", 11)
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.clip_text = true
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -63,7 +63,7 @@ func _ready() -> void:
 	list.add_theme_constant_override("separation", 4)
 	scroll.add_child(list)
 	for item in game.RESOURCE_ITEMS:
-		var button: Button = game.make_button("", "", select_item.bind(item))
+		var button: Button = game.hud.make_button("", "", select_item.bind(item))
 		button.custom_minimum_size.y = 44
 		button.toggle_mode = true
 		button.flat = true
@@ -89,10 +89,10 @@ func _ready() -> void:
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		identity.add_child(icon)
-		var label: Label = game.make_label(game.item_name(item), 14)
+		var label: Label = game.hud.make_label(game.item_name(item), 14)
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		identity.add_child(label)
-		var amount: Label = game.make_label("", 16)
+		var amount: Label = game.hud.make_label("", 16)
 		amount.custom_minimum_size.x = AMOUNT_WIDTH
 		amount.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		amount.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -125,7 +125,7 @@ func _ready() -> void:
 	details.add_theme_constant_override("separation", 10)
 	list.add_child(details)
 	details.hide()
-	yesterday = game.make_label("", 14)
+	yesterday = game.hud.make_label("", 14)
 	yesterday.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	details.add_child(yesterday)
 	details.add_child(HSeparator.new())
@@ -147,23 +147,23 @@ func refresh() -> void:
 		rows[item][1].set_pressed_no_signal(is_same(selected_item, item))
 		rows[item][2].text = format_amount(inventory[item])
 		var points: Array[Vector2] = []
-		for sample in game.inventory_history:
+		for sample in game.world.inventory_history:
 			points.append(Vector2(sample.time, sample.stock[item]))
-		var now: float = (game.day - 1) * game.DAY_SECONDS + game.day_elapsed
+		var now: float = (game.world.day - 1) * game.DAY_SECONDS + game.world.day_elapsed
 		points.append(Vector2(now, inventory[item]))
 		series[item] = points
 		plot(item)
 	if selected_item == null:
 		return
-	if game.day == 1:
+	if game.world.day == 1:
 		yesterday.text = "昨日暂无记录"
 	else:
-		var activity: Dictionary = game.resource_activity(selected_item, game.day - 1)
+		var activity: Dictionary = game.resource_activity(selected_item, game.world.day - 1)
 		yesterday.text = "昨日产出  %s    昨日消耗  %s" % [format_amount(activity.produced), format_amount(activity.consumed)]
 
 func update_day_axis() -> void:
-	var days := mini(HISTORY_DAYS, game.day)
-	var first_day := maxi(1, game.day - HISTORY_DAYS + 1)
+	var days := mini(HISTORY_DAYS, game.world.day)
+	var first_day := maxi(1, game.world.day - HISTORY_DAYS + 1)
 	var width := maxf(1, day_axis.size.x - 8) / days
 	for i in day_labels.size():
 		day_labels[i].visible = i < days
@@ -178,8 +178,8 @@ func plot(item) -> void:
 	var graph: Control = charts[item][0]
 	var curve: Line2D = charts[item][1]
 	var guides: Array[ColorRect] = charts[item][2]
-	var days := mini(HISTORY_DAYS, game.day)
-	var start: float = maxi(0, game.day - HISTORY_DAYS) * game.DAY_SECONDS
+	var days := mini(HISTORY_DAYS, game.world.day)
+	var start: float = maxi(0, game.world.day - HISTORY_DAYS) * game.DAY_SECONDS
 	var duration: float = days * game.DAY_SECONDS
 	var maximum := 1.0
 	for point in points:
