@@ -60,7 +60,8 @@ func result(forecast: Dictionary, benefits: Dictionary, cash := 0.0, excluded: A
 	parts.environment = forecast.environment
 	parts.payment = -resources.cost(cash, excluded) if cash > 0 else 0.0
 	var value: float = Resources.total(parts)
-	return {"score": value / (1.0 + Parameters.TIME_COST * forecast.hours), "hours": forecast.hours, "parts": parts}
+	var weighted_hours: float = forecast.hours + (Parameters.TRAVEL_TIME_WEIGHT - 1.0) * forecast.travel_hours
+	return {"score": value / (1.0 + Parameters.TIME_COST * weighted_hours), "hours": forecast.hours, "parts": parts}
 
 func meal_amount() -> float:
 	return minf(maxf(0, context.worker.bread), maxf(0, context.game.MAX_HUNGER - context.worker.hunger) / context.game.HUNGER_PER_BREAD)
@@ -77,24 +78,24 @@ func work_facts() -> Array[Dictionary]:
 		for direction in g.DIRS:
 			if not context.path_to(p + direction).is_empty():
 				var task: Dictionary = g.world.mining_contracts[p]
-				_work_facts.append({"kind": "mine", "target": p, "position": p + direction, "station": "", "hours": maxf(0, task.seconds - task.progress) / g.HOUR_SECONDS})
+				_work_facts.append({"kind": "mine", "target": p, "position": p + direction, "station": "", "contract": task, "hours": maxf(0, task.seconds - task.progress) / g.HOUR_SECONDS})
 				break
 	for p in g.world.smart_objects.query("work"):
 		var kind: String = g.building_kind(p)
 		if context.path_to(p).is_empty(): continue
 		if kind in g.OPERATED_KINDS:
 			if g.operation_needed(p) and (kind != "drill" or g.cache.ready_drills.has(p)):
-				_work_facts.append({"kind": "operate", "target": p, "position": p, "station": kind, "hours": 1.0})
+				_work_facts.append({"kind": "operate", "target": p, "position": p, "station": kind, "contract": g.world.benches[p].task, "hours": 1.0})
 			continue
 		if not g.PRODUCTS.has(kind) or g.world.benches[p].growth > 0: continue
 		if context.path_to(p).is_empty() or not g.has_production_order(p): continue
 		var task: Dictionary = g.world.benches[p].task
 		if task.is_empty() and not (kind == "barn" and g.world.benches[p].slaughter) and not g.recipe_ready(p, g.production_materials(kind)): continue
 		var hours: float = maxf(0, task.seconds - task.progress) / g.HOUR_SECONDS if not task.is_empty() else (1.0 if kind in ["farm", "barn"] else g.PRODUCTS[kind].hours)
-		_work_facts.append({"kind": "produce", "target": p, "position": p, "station": kind, "hours": hours})
+		_work_facts.append({"kind": "produce", "target": p, "position": p, "station": kind, "contract": task, "hours": hours})
 	for p in g.world.smart_objects.query("build"):
 		if g.site_cleared(p) and g.site_supplied(p) and not context.path_to(p).is_empty():
-			_work_facts.append({"kind": "build", "target": p, "position": p, "station": "", "hours": maxf(0, g.world.sites[p].seconds - g.world.sites[p].progress) / g.HOUR_SECONDS})
+			_work_facts.append({"kind": "build", "target": p, "position": p, "station": "", "contract": g.world.sites[p], "hours": maxf(0, g.world.sites[p].seconds - g.world.sites[p].progress) / g.HOUR_SECONDS})
 	return _work_facts
 
 func work_hours() -> float:
@@ -117,11 +118,12 @@ func trace_selection(choices: Array, reason: String) -> void:
 	for entry in proposals:
 		var row: Dictionary = g.WorkerTrace.proposal(entry.option)
 		row.merge({"components": entry.result.parts, "hours": entry.result.hours,
+			"comparison_hours": entry.result.get("comparison_hours", entry.result.hours),
 			"base_score": entry.result.score, "inertia_bonus": entry.inertia_bonus,
 			"eligible": choices.has(entry.option)})
-		if not row.eligible: row.reason = "needs_employer_cash"
+		if not row.eligible: row.reason = entry.get("excluded_reason", "needs_employer_cash")
 		evaluated.append(row)
 	g.ai_trace.selection(g, context.worker, {"trigger": reason, "food_need": food_need,
 		"ranked": ranked, "candidates": evaluated, "rejected": rejected,
 		"opportunities": {"mines": g.world.mining_contracts.size(), "sites": g.world.sites.size(),
-			"facilities": g.world.benches.size(), "shipments": g.world.shipments.size()}})
+			"facilities": g.world.benches.size(), "delivery_tasks": g.world.delivery_tasks.size()}})

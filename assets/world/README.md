@@ -10,6 +10,8 @@ Original, editable SVG game assets. No remote assets or runtime downloads.
   bread, hammer, carried ore. Worker scenes animate sprite transforms.
 - `portal.svg`: portal illustration.
 - `selection.svg`, `order.svg`, `shadow.svg`: world interaction and shading art.
+- `material-shortage.svg`: compact production-shortage bubble; the shell breathes
+  around its fixed tip while the centered item icon flips between missing inputs.
 - `clock-segment.svg`: one segment instanced twelve times in the UI clock.
 - `belt-atlas.svg`, `belt-blueprint-atlas.svg`: sixteen 40px connection shapes
   for points, ends, straight tracks, corners, and junctions. `belt-arrow.svg`
@@ -24,5 +26,16 @@ Original, editable SVG game assets. No remote assets or runtime downloads.
   blueprint sprites, relative to each atlas row. No custom draw calls or
   frame-by-frame image creation.
 
-Bed and toolbar illustrations remain under `assets/icons/`. Textures are loaded
-once through `scripts/view/art.gd` and shared by all instances.
+`buildings/` contains world illustrations and matching construction blueprints
+for the farm and coal power plant (160x120), chemical plant (120x120), barn,
+smelter and sawmill (120x80). These are authored at their actual tile footprint,
+not stretched toolbar illustrations. The barn's sheep remains a separate sprite.
+
+The second batch adds the brewery, bank, hospital, bathhouse, soapworks and
+pharmacy (120x80), plus the mill, weaver, smithy, laundry and canteen (80x80).
+Service buildings retain their original capacities; the canteen shows two chairs,
+while the laundry uses a washbasin and clothesline rather than another bath facade.
+
+Other buildings and compact toolbar illustrations remain under `assets/icons/`.
+World building texture selection is shared by previews and persistent building
+sprites through `scripts/view/art.gd`; cached textures are shared by all instances.

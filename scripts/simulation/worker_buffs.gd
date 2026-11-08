@@ -65,7 +65,7 @@ func display_effects(g, w: Dictionary) -> Array[Dictionary]:
 			"description": "污染 %.1f / 50\n心情 +%.1f\n剩余 %.1fh" % [w.clothes_pollution, clothes_mood(w), w.equipment.clothes / g.HOUR_SECONDS]})
 	if w.pollution > g.Pollution.DISCOMFORT:
 		result.append({"id": "pollution", "icon": "pollution", "name": g.Pollution.status(w),
-			"description": "%s\n劳动效率 -%.0f%%" % [g.Pollution.status(w), (1.0 - g.Pollution.work_factor(w)) * 100]})
+			"description": "劳动效率 -%.0f%%" % ((1.0 - g.Pollution.work_factor(w)) * 100)})
 	if remaining("bathed") > 0:
 		result.append({"id": "bathed", "icon": "bath", "name": "沐浴",
 			"description": "心情 +%.0f\n剩余 %.1fh" % [BATH_MOOD, remaining("bathed") / g.HOUR_SECONDS]})

@@ -25,7 +25,7 @@ func external_at(p: Vector2i) -> float:
 	return maxf(0, g.cache.pollution.at(p) - own_source)
 
 func exposure_rate(p: Vector2i) -> float:
-	return context.game.Pollution.BASE_PER_HOUR + external_at(p) * context.game.Pollution.EXPOSURE_PER_HOUR
+	return external_at(p) * context.game.Pollution.EXPOSURE_PER_HOUR
 
 func advance(state: Dictionary, p: Vector2i, hours: float) -> void:
 	var g = context.game
@@ -61,7 +61,8 @@ func forecast(op: Dictionary, hours: float) -> Dictionary:
 	var baseline := initial()
 	advance(baseline, context.origin, state.elapsed)
 	return {"arrival": arrival, "after": state, "hours": state.elapsed,
-		"use_hours": hours, "environment": needs.difference(baseline, state)}
+		"travel_hours": arrival.elapsed, "use_hours": hours,
+		"environment": needs.difference(baseline, state)}
 
 func walk_hours(path: Array) -> float:
 	return maxf(0, path.size() - 1) / P.WALK_SPEED / context.game.HOUR_SECONDS

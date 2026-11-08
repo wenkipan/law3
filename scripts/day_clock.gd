@@ -33,15 +33,16 @@ func _ready() -> void:
 	day_label.add_theme_font_size_override("font_size", 13)
 	day_label.add_theme_color_override("font_color", Color("#a6beb1"))
 
-func set_time(elapsed: float, day: int) -> void:
-	var minute := int(elapsed / 180.0 * 1440.0)
+func set_time(elapsed: float, day: int, day_seconds: float) -> void:
+	var fraction := elapsed / day_seconds
+	var minute := clampi(int(fraction * 1440.0 + 0.000001), 0, 1439)
 	if minute != last_minute:
 		time_label.text = "%02d:%02d" % [minute / 60, minute % 60]
 		last_minute = minute
 	if day != last_day:
 		day_label.text = "第 %d 天" % day
 		last_day = day
-	var current := mini(11, int(elapsed / 15.0))
+	var current := int(minute * segments.size() / 1440.0)
 	if current != last_segment:
 		for i in segments.size():
 			segments[i].modulate = Color("#94bda6") if i < current else (Color("#edd18c") if i == current else Color("#354349"))

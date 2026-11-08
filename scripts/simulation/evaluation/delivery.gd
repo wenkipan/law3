@@ -5,19 +5,18 @@ const P = preload("res://scripts/simulation/activity_parameters.gd")
 static func evaluate(e, op: Dictionary) -> Dictionary:
 	var g = e.context.game
 	var w: Dictionary = e.context.worker
-	var shipment: Dictionary = op.data.get("shipment", {})
-	var mined: bool = op.data.get("mined", false)
-	var target: Vector2i = shipment.get("target", op.data.get("target", op.target))
-	var item = shipment.get("item", op.data.get("item", w.carry))
-	var amount: float = shipment.get("amount", 1.0)
-	var items: Array = []
-	if mined:
-		if shipment.is_empty():
-			items = op.data.get("items", [item])
-		else:
-			for part in g.ore_delivery_batch(shipment): items.append(part.item)
-	if shipment.is_empty() and not mined:
-		amount = minf(g.FREIGHT_CAPACITY, minf(g.available_at(op.data.source, item), g.delivery_need(target, item)))
+	var tasks: Array = op.data.tasks
+	var mined: bool = op.data.mined
+	var target: Vector2i = tasks[0].target
+	var items: Array = op.data.items
+	var amount := 0.0
+	var quantities: Dictionary = {}
+	var bound := false
+	for i in tasks.size():
+		amount += tasks[i].amount
+		bound = bound or tasks[i].bound
+		var item = items[i]
+		quantities[item] = quantities.get(item, 0.0) + tasks[i].amount
 	var route: Array = op.path.duplicate()
 	var onward: Array = op.get("onward", [])
 	if not onward.is_empty(): route.append_array(onward.slice(1))
@@ -26,21 +25,19 @@ static func evaluate(e, op: Dictionary) -> Dictionary:
 	travel.position = route.back() if not route.is_empty() else op.position
 	var f: Dictionary = e.environment.forecast(travel, 0.6 * items.size() / g.HOUR_SECONDS if mined else 0.0)
 	var required: Dictionary = g.delivery_requirements(target)
-	var demand: float = required.get(item, required.get(0, 0.0) if item is int else 0.0)
-	var coverage: float = minf(1.0, amount / maxf(amount, demand)) if demand > 0 else 0.0
-	if mined:
-		var quantities: Dictionary = {}
-		for ore in items:
-			var key = 0 if ore is int and required.has(0) else ore
-			quantities[key] = quantities.get(key, 0) + 1
-		coverage = 0.0
-		for key in quantities:
-			var required_amount: float = required.get(key, 0)
-			if required_amount > 0:
-				coverage += float(quantities[key]) / maxf(quantities[key], required_amount)
-		coverage = minf(1.0, coverage)
+	var coverage := 0.0
+	var generic_amount := 0.0
+	for item in quantities:
+		if item is int and required.has(0):
+			generic_amount += quantities[item]
+		else:
+			var demand: float = required.get(item, 0.0)
+			if demand > 0: coverage += quantities[item] / maxf(quantities[item], demand)
+	if generic_amount > 0:
+		coverage += generic_amount / maxf(generic_amount, required[0])
+	coverage = minf(1.0, coverage)
 	var parts := {"supply": P.SUPPLY_VALUE * coverage}
-	if not mined and not shipment.is_empty():
+	if not mined and bound:
 		parts.custody = P.CAPACITY_VALUE * minf(1, amount / g.FREIGHT_CAPACITY)
 	if mined:
 		var fullness: float = float(g.cargo_count(w)) / g.carry_capacity(w)

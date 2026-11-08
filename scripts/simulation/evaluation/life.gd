@@ -24,12 +24,12 @@ static func sleep(e, op: Dictionary) -> Dictionary:
 	var parts := {"fatigue": e.needs.fatigue_gain(f.after.fatigue, arrival.fatigue)}
 	if bed_hours > 0:
 		parts.mood = e.needs.mood_gain(f.after.mood, e.context.worker.mood.BED_GAIN_PER_HOUR * bed_hours, P.FORECAST_HOURS)
-	return e.result(f, parts, g.BED_PRICE if op.data.bed else 0, ["fatigue"])
+	return e.result(f, parts, g.base_fee(op.target) if op.data.bed else 0, ["fatigue"])
 
 static func treatment(e, op: Dictionary) -> Dictionary:
 	var rule: Dictionary = e.context.game.SERVICES[op.data.kind]
 	var f: Dictionary = e.environment.forecast(op, rule.hours)
-	return e.result(f, treatment_effects(e, f.after, rule), rule.price, ["pollution"])
+	return e.result(f, treatment_effects(e, f.after, rule), e.context.game.base_fee(op.target), ["pollution"])
 
 static func treatment_effects(e, state: Dictionary, rule: Dictionary) -> Dictionary:
 	return {"pollution": e.needs.pollution_gain(state.pollution, rule.recovery)}
@@ -38,7 +38,7 @@ static func bath(e, op: Dictionary) -> Dictionary:
 	var g = e.context.game
 	var rule: Dictionary = g.SERVICES[op.data.kind]
 	var f: Dictionary = e.environment.forecast(op, rule.hours)
-	return e.result(f, bath_effects(e, f.after, rule), rule.price, ["pollution", "mood"])
+	return e.result(f, bath_effects(e, f.after, rule), g.base_fee(op.target), ["pollution", "mood"])
 
 static func bath_effects(e, state: Dictionary, rule: Dictionary) -> Dictionary:
 	var g = e.context.game
@@ -51,7 +51,7 @@ static func laundry(e, op: Dictionary) -> Dictionary:
 	var g = e.context.game
 	var rule: Dictionary = g.SERVICES[op.data.kind]
 	var f: Dictionary = e.environment.forecast(op, rule.hours)
-	return e.result(f, laundry_effects(e, f.after, rule), rule.price, ["clothing", "mood"])
+	return e.result(f, laundry_effects(e, f.after, rule), g.base_fee(op.target), ["clothing", "mood"])
 
 static func laundry_effects(e, state: Dictionary, rule: Dictionary) -> Dictionary:
 	var g = e.context.game

@@ -3,14 +3,22 @@ extends Area2D
 const Art = preload("res://scripts/view/art.gd")
 const Reveal = preload("res://assets/world/construction.gdshader")
 const BeltArt = preload("res://scripts/view/belt_art.gd")
+const SHORTAGE_INTERVAL := 3.0
+const SHORTAGE_FLIP_SECONDS := 0.24
 var progress := -1.0
 var belt_art: Node2D
 var line_art: Dictionary = {}
 var kind := ""
 var visual_size := Vector2.ZERO
 var sheep: Sprite2D
+var shortage_bubble: TextureRect
+var shortage_icon: TextureRect
+var shortage_items: Array = []
+var shortage_item = null
+var shortage_age := 0.0
 
 func _ready() -> void:
+	set_process(false)
 	$Solid.texture = Art.texture("res://assets/icons/bed.svg")
 	$Blueprint.texture = Art.texture("res://assets/icons/bed-blueprint.svg")
 	for sprite in [$Solid, $Blueprint]:
@@ -41,8 +49,8 @@ func set_kind(value: String) -> void:
 	if kind == value:
 		return
 	kind = value
-	$Solid.texture = Art.texture("res://assets/icons/%s.svg" % kind)
-	$Blueprint.texture = Art.texture("res://assets/icons/%s-blueprint.svg" % kind)
+	$Solid.texture = Art.building_texture(kind)
+	$Blueprint.texture = Art.building_texture(kind, true)
 	if kind == "barn":
 		sheep = Sprite2D.new()
 		sheep.texture = Art.texture("res://assets/icons/sheep.svg")
@@ -85,7 +93,7 @@ func animate(active: bool, time: float) -> void:
 
 func sync_sheep(count: int, time: float) -> void:
 	sheep.visible = count > 0
-	sheep.position = Vector2(46 + sin(time * 0.4) * 8, 25 + sin(time * 2) * 0.4)
+	sheep.position = Vector2(visual_size.x * 0.69 + sin(time * 0.4) * 8, visual_size.y * 0.71 + sin(time * 2) * 0.4)
 	sheep.rotation = sin(time * 0.7) * 0.03
 
 func set_belt_connections(connections: int, direction: Vector2i) -> void:
@@ -99,3 +107,59 @@ func set_line_connections(connections: Dictionary) -> void:
 			add_child(art)
 			line_art[offset] = art
 		line_art[offset].configure(connections[offset], Vector2i.ZERO, progress)
+
+func set_shortages(items: Array) -> void:
+	if items == shortage_items: return
+	shortage_items = items.duplicate()
+	shortage_age = 0.0
+	set_process(not items.is_empty())
+	if items.is_empty():
+		shortage_item = null
+		if shortage_bubble != null: shortage_bubble.hide()
+		return
+	if shortage_bubble == null:
+		shortage_bubble = TextureRect.new()
+		shortage_bubble.texture = Art.texture("res://assets/world/material-shortage.svg")
+		shortage_bubble.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		shortage_bubble.size = Vector2(32, 34)
+		shortage_bubble.pivot_offset = Vector2(16, 34)
+		shortage_bubble.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(shortage_bubble)
+		shortage_icon = TextureRect.new()
+		shortage_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		shortage_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		shortage_icon.size = Vector2(20, 20)
+		shortage_icon.pivot_offset = shortage_icon.size / 2
+		shortage_icon.position = Vector2(6, 4)
+		shortage_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		shortage_bubble.add_child(shortage_icon)
+	shortage_icon.scale = Vector2.ONE
+	show_shortage_item(items[0])
+	shortage_bubble.show()
+	position_shortage(get_viewport().get_camera_2d().zoom.x)
+
+func show_shortage_item(item) -> void:
+	if is_same(shortage_item, item): return
+	shortage_item = item
+	shortage_icon.texture = Art.item_texture(item)
+
+func _process(delta: float) -> void:
+	shortage_age += delta
+	var cycle := int(shortage_age / SHORTAGE_INTERVAL)
+	var index := cycle % shortage_items.size()
+	var phase := fmod(shortage_age, SHORTAGE_INTERVAL)
+	shortage_icon.scale.x = 1.0
+	if shortage_items.size() > 1 and cycle > 0 and phase < SHORTAGE_FLIP_SECONDS:
+		# Swap textures edge-on; only the centered icon turns, never the bubble shell.
+		var turn := phase / SHORTAGE_FLIP_SECONDS
+		shortage_icon.scale.x = absf(cos(turn * PI))
+		if turn < 0.5: index = (cycle - 1) % shortage_items.size()
+	show_shortage_item(shortage_items[index])
+	position_shortage(get_viewport().get_camera_2d().zoom.x)
+
+func position_shortage(zoom: float) -> void:
+	if shortage_bubble == null or not shortage_bubble.visible: return
+	var breath := (1.0 - cos(shortage_age * TAU / SHORTAGE_INTERVAL)) * 0.5
+	shortage_bubble.scale = Vector2.ONE * (1.0 + 0.045 * breath) / maxf(zoom, 0.1)
+	shortage_bubble.modulate.a = 0.92 + 0.08 * breath
+	shortage_bubble.position = Vector2(visual_size.x / 2 - shortage_bubble.pivot_offset.x, -36)

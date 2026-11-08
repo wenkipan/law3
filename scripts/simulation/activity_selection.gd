@@ -6,16 +6,16 @@ const Parameters = preload("res://scripts/simulation/activity_parameters.gd")
 const Option = preload("res://scripts/simulation/activity_option.gd")
 const Slots = preload("res://scripts/simulation/smart_objects.gd")
 
-static func options(g, w: Dictionary, reason := "select") -> Array:
+static func options(g, w: Dictionary, reason := "select", responses_only := false) -> Array:
 	g.ai_trace.begin_decision(w.id)
 	var c = Context.new(g, w)
 	var e = Evaluation.new(c)
 	var choices: Array = []
-	add(c, e, choices, "rest", c.origin)
+	if not responses_only: add(c, e, choices, "rest", c.origin)
 	life_options(c, e, choices)
 	shopping_options(c, e, choices)
 	var work: Array = []
-	work_options(c, e, work)
+	if not responses_only: work_options(c, e, work)
 	if w.payroll > 0.000001:
 		choices.append_array(work)
 	elif not work.is_empty():
@@ -24,7 +24,18 @@ static func options(g, w: Dictionary, reason := "select") -> Array:
 				add(c, e, choices, "payroll", p, {}, [], {"work_options": work})
 			else:
 				e.reject("payroll", p, "no_employer_cash")
-	delivery_options(c, e, choices)
+	if not responses_only: delivery_options(c, e, choices)
+	if e.tracing:
+		for entry in e.proposals:
+			if not choices.has(entry.option): entry.excluded_reason = "needs_employer_cash"
+	var responses: Array = []
+	for option in choices:
+		if w.activity.response_reason(g, w, option.kind, option.data) != "": responses.append(option)
+	if responses_only or not responses.is_empty():
+		if e.tracing:
+			for entry in e.proposals:
+				if choices.has(entry.option) and not responses.has(entry.option): entry.excluded_reason = "hard_limit_response_required"
+		choices = responses
 	var order: Dictionary = {}
 	for i in choices.size():
 		order[choices[i]] = i
@@ -82,7 +93,7 @@ static func life_options(c, e, choices: Array) -> void:
 		for p in g.world.benches:
 			if g.building_kind(p) != "canteen":
 				continue
-			for seat in g.building_cells(p, "canteen"):
+			for seat in g.canteen_seats(p):
 				var path: Array[Vector2i] = c.path_to(seat)
 				if path.is_empty() or path.size() - 1 > g.CANTEEN_WALK_LIMIT:
 					continue
@@ -93,11 +104,10 @@ static func life_options(c, e, choices: Array) -> void:
 		for p in g.world.smart_objects.query("bed"):
 			if g.world.beds[p].assigned == w.id:
 				preferred = p
-		if w.bread >= g.BED_PRICE:
-			for p in g.world.smart_objects.query("bed"):
-				if g.world.beds[p].assigned not in [-1, w.id] or (preferred != null and p != preferred):
-					continue
-				add(c, e, choices, "sleep", p, {"bed": true}, [Slots.key("bed", p)])
+		for p in g.world.smart_objects.query("bed"):
+			if w.bread < g.base_fee(p) or g.world.beds[p].assigned not in [-1, w.id] or (preferred != null and p != preferred):
+				continue
+			add(c, e, choices, "sleep", p, {"bed": true}, [Slots.key("bed", p)])
 	# Loans fund an immediate food shortage, never optional shopping or a work quota.
 	var shortfall: float = e.food_shortfall()
 	if shortfall > 0.001 and e.food_need >= Parameters.BORROW_FOOD_NEED and not g.has_debt(w) and w.loan_day != g.world.day:
@@ -124,7 +134,7 @@ static func shopping_options(c, e, choices: Array) -> void:
 static func work_options(c, e, choices: Array) -> void:
 	var g = c.game
 	var w: Dictionary = c.worker
-	if not w.freight.is_empty() or not w.ore_delivery.is_empty() or g.cargo_count(w) >= g.carry_capacity(w):
+	if not w.delivery_tasks.is_empty() or g.cargo_count(w) >= g.carry_capacity(w):
 		e.reject("work", null, "cargo_commitment_or_capacity")
 		return
 	if is_same(w.carry, 0):
@@ -153,8 +163,8 @@ static func work_options(c, e, choices: Array) -> void:
 						continue
 					slots.append(Slots.key("mine", data.job))
 				add(c, e, choices, "operate", p, data, slots)
-			elif g.PRODUCTS.has(kind) and b.growth <= 0 and g.has_production_order(p):
-				if b.task.is_empty() and not (kind == "barn" and b.slaughter) and not g.recipe_ready(p, g.production_materials(kind)):
+			elif (g.PRODUCTS.has(kind) or kind == "research_bench") and b.growth <= 0 and g.has_production_order(p):
+				if b.task.is_empty() and not (kind == "barn" and b.slaughter) and not g.recipe_ready(p, g.station_materials(p)):
 					e.reject("produce", p, "missing_materials")
 					continue
 				add(c, e, choices, "produce", p, {"identity": b}, [Slots.key("work", p)])
@@ -177,64 +187,80 @@ static func work_options(c, e, choices: Array) -> void:
 static func delivery_options(c, e, choices: Array) -> void:
 	var g = c.game
 	var w: Dictionary = c.worker
+	if not w.delivery_tasks.is_empty():
+		add_delivery(c, e, choices, w.delivery_tasks[0].source, w.delivery_tasks,
+			w.delivery_tasks.map(func(task): return task.item), w.delivery_tasks[0].get("mined", false))
+		return
+	var requests: Array = g.world.smart_objects.delivery_requests()
 	if not is_same(w.carry, 0):
-		if not w.ore_delivery.is_empty():
-			var leg: Dictionary = g.delivery_route(c.origin, w.ore_delivery.target)
-			add(c, e, choices, "deliver", leg.stop, {"mined": true, "shipment": w.ore_delivery})
-			return
-		var storage := storage_delivery(c)
 		var count: int = choices.size()
-		for p in g.world.smart_objects.query("supply"):
-			var items: Array = g.mined_delivery_items(w, p, true)
-			if items.is_empty():
-				continue
-			var leg: Dictionary = g.delivery_route(c.origin, p)
-			if leg.path.is_empty():
-				continue
-			add(c, e, choices, "deliver", leg.stop,
-				{"mined": true, "source": storage.target, "target": p, "item": items[0], "items": items,
-				"identity": g.world.smart_objects.identity(Slots.key("supply", p))})
-		if choices.size() == count and not storage.leg.path.is_empty():
-			add(c, e, choices, "deliver", storage.leg.stop,
-				{"mined": true, "source": storage.target, "target": storage.target, "item": w.carry,
-					"items": g.mined_delivery_items(w, storage.target, false)})
+		held_deliveries(c, e, choices, requests)
+		if choices.size() == count:
+			var held: Array = [w.carry] + w.extra_cargo
+			var receiver = null
+			var distance := 0
+			for target in g.stock_locations():
+				if g.world.sites.has(target) or g.delivery_building_at(target) != target: continue
+				var leg: Dictionary = g.delivery_route(c.origin, target)
+				if not leg.path.is_empty() and (receiver == null or leg.path.size() < distance):
+					receiver = target
+					distance = leg.path.size()
+			if receiver != null:
+				var tasks: Array = []
+				for item in held: tasks.append(g.delivery_request(receiver, item, g.delivery_receiver_identity(receiver)))
+				add_delivery(c, e, choices, c.origin, tasks, held, true)
 		return
-	if not w.freight.is_empty():
-		var leg: Dictionary = g.delivery_route(c.origin if w.freight.picked else w.freight.source, w.freight.target)
-		var approach: Vector2i = leg.stop if w.freight.picked else w.freight.source
-		add(c, e, choices, "deliver", approach, {"shipment": w.freight},
-			[], {"onward": [] if w.freight.picked else leg.path})
-		return
-	for shipment in g.world.shipments:
-		if shipment.owner >= 0 or shipment.get("on_belt", false):
+	var grouped: Array = []
+	for request in requests:
+		if grouped.has(request): continue
+		var batch: Array = []
+		for other in requests:
+			if other.target == request.target and other.bound == request.bound and is_same(other.requested_item, request.requested_item):
+				if not other.bound or other.source == request.source:
+					batch.append(other)
+					grouped.append(other)
+		if request.bound:
+			var tasks: Array = []
+			var amount := 0.0
+			for part in batch:
+				if amount + part.amount > g.FREIGHT_CAPACITY: break
+				tasks.append(part)
+				amount += part.amount
+			add_delivery(c, e, choices, request.source, tasks, tasks.map(func(task): return task.item), false)
 			continue
-		var leg: Dictionary = g.delivery_route(shipment.source, shipment.target)
-		if not leg.path.is_empty():
-			add(c, e, choices, "deliver", shipment.source, {"shipment": shipment}, [], {"onward": leg.path})
-	for p in g.world.smart_objects.query("supply"):
-		var recipe: Dictionary = g.delivery_requirements(p)
-		var items: Array = recipe.keys()
-		if recipe.has(0):
-			items = [1, 4, 3, 2, 7, 8]
+		var items: Array = [1, 4, 3, 2, 7, 8] if is_same(request.requested_item, 0) else [request.requested_item]
 		for item in items:
-			if g.delivery_need(p, item) <= 0.000001:
-				continue
 			for source in g.stock_locations():
-				if source == p or g.available_at(source, item) <= 0.000001:
-					continue
-				var leg: Dictionary = g.delivery_route(source, p)
-				if not leg.path.is_empty():
-					add(c, e, choices, "deliver", source,
-						{"source": source, "target": p, "item": item,
-						"identity": g.world.smart_objects.identity(Slots.key("supply", p))}, [], {"onward": leg.path})
+				if source == request.target: continue
+				var limit := mini(batch.size(), mini(int(g.FREIGHT_CAPACITY), floori(g.available_at(source, item) + 0.000001)))
+				if limit > 0:
+					var bindings: Array = []
+					bindings.resize(limit)
+					bindings.fill(item)
+					add_delivery(c, e, choices, source, batch.slice(0, limit), bindings, false)
 
-static func storage_delivery(c) -> Dictionary:
+static func held_deliveries(c, e, choices: Array, requests: Array) -> void:
 	var g = c.game
-	var result := {"target": g.BASE, "leg": g.delivery_route(c.origin, g.BASE)}
-	for p in g.world.smart_objects.query("store"):
-		if g.world.sites.has(p) or g.delivery_building_at(p) != p:
-			continue
-		var leg: Dictionary = g.delivery_route(c.origin, p)
-		if not leg.path.is_empty() and (result.leg.path.is_empty() or leg.path.size() < result.leg.path.size()):
-			result = {"target": p, "leg": leg}
-	return result
+	var receivers: Dictionary = {}
+	for request in requests:
+		if not request.bound:
+			if not receivers.has(request.target): receivers[request.target] = []
+			receivers[request.target].append(request)
+	for p in receivers:
+		var tasks: Array = []
+		var items: Array = []
+		for item in [c.worker.carry] + c.worker.extra_cargo:
+			for request in receivers[p]:
+				if not tasks.has(request) and g.delivery_task_accepts(request, item):
+					tasks.append(request)
+					items.append(item)
+					break
+		if not tasks.is_empty(): add_delivery(c, e, choices, c.origin, tasks, items, true)
+
+static func add_delivery(c, e, choices: Array, source: Vector2i, tasks: Array, items: Array, mined: bool) -> void:
+	var picked: bool = mined or tasks[0].picked
+	var leg: Dictionary = c.game.delivery_route(c.origin if picked else source, tasks[0].target)
+	if not leg.path.is_empty():
+		add(c, e, choices, "deliver", leg.stop if picked else source,
+			{"source": source, "tasks": tasks.duplicate(), "items": items, "mined": mined}, [],
+			{"target": tasks[0].target, "onward": [] if picked else leg.path})

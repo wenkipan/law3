@@ -41,11 +41,11 @@ func move_to(point: Vector2) -> void:
 	root.push_input(event, true)
 	await settle()
 
-func click(point: Vector2) -> void:
+func click(point: Vector2, button := MOUSE_BUTTON_LEFT) -> void:
 	await move_to(point)
 	var event := InputEventMouseButton.new()
 	event.position = point
-	event.button_index = MOUSE_BUTTON_LEFT
+	event.button_index = button
 	event.pressed = true
 	root.push_input(event, true)
 	await settle()
@@ -73,7 +73,7 @@ func choose_save_slot(menu: Window, list: ItemList, slot: int) -> void:
 	await settle()
 	await click(Vector2(menu.position) + list.global_position + list.get_item_rect(slot).get_center())
 
-func drag_world(cells: Array[Vector2i], release_over_ui := false, cancel_with_mouse := false, preview_file := "", offset := Vector2.ZERO) -> void:
+func drag_world(cells: Array[Vector2i], release_over_ui := false, right_click := false, offset := Vector2.ZERO) -> void:
 	await move_to(game.get_global_transform_with_canvas() * (game.tile_center(cells[0]) + offset))
 	var event := InputEventMouseButton.new()
 	event.position = game.get_global_transform_with_canvas() * (game.tile_center(cells[0]) + offset)
@@ -85,10 +85,7 @@ func drag_world(cells: Array[Vector2i], release_over_ui := false, cancel_with_mo
 		await move_to(game.get_global_transform_with_canvas() * (game.tile_center(cell) + offset))
 	var endpoint: Vector2 = game.hud.pause_button.get_global_rect().get_center() if release_over_ui else game.get_global_transform_with_canvas() * (game.tile_center(cells.back()) + offset)
 	await move_to(endpoint)
-	if native and preview_file != "":
-		await RenderingServer.frame_post_draw
-		root.get_texture().get_image().save_png(preview_file)
-	if cancel_with_mouse:
+	if right_click:
 		var cancel := InputEventMouseButton.new()
 		cancel.position = endpoint
 		cancel.button_index = MOUSE_BUTTON_RIGHT
@@ -123,6 +120,20 @@ func close_build_tray() -> void:
 	if game.hud.build_tray.visible:
 		await click(ui.category_buttons[ui.selected_build_category].get_global_rect().get_center())
 
+func choose_technology(project: String) -> void:
+	var panel = game.hud.research_panel
+	for attempt in 32:
+		var target: Rect2 = panel.buttons[project].get_global_rect()
+		var visible_area: Rect2 = panel.tree_scroll.get_global_rect().grow(-12)
+		if visible_area.encloses(target): break
+		var direction: MouseButton
+		if target.position.x < visible_area.position.x: direction = MOUSE_BUTTON_WHEEL_LEFT
+		elif target.end.x > visible_area.end.x: direction = MOUSE_BUTTON_WHEEL_RIGHT
+		elif target.position.y < visible_area.position.y: direction = MOUSE_BUTTON_WHEEL_UP
+		else: direction = MOUSE_BUTTON_WHEEL_DOWN
+		await scroll_at(visible_area.get_center(), direction)
+	await click(panel.buttons[project].get_global_rect().get_center())
+
 func scroll_at(point: Vector2, button: MouseButton) -> void:
 	await move_to(point)
 	var event := InputEventMouseButton.new()
@@ -141,25 +152,6 @@ func click_exposed_building(cell: Vector2i, title: String) -> void:
 		await click_world(game.tile_center(cell) + offset)
 		if game.hud.entity_title.text == title:
 			return
-
-func choose_report_filter(report: Window, button: OptionButton, index: int) -> void:
-	await click(Vector2(report.position) + button.get_global_rect().get_center())
-	var popup := button.get_popup()
-	if not popup.visible:
-		return
-	var keys := [KEY_HOME]
-	for i in index + 1:
-		keys.append(KEY_DOWN)
-	keys.append(KEY_ENTER)
-	for key in keys:
-		var event := InputEventKey.new()
-		event.keycode = key
-		event.pressed = true
-		root.push_input(event, true)
-		event = event.duplicate()
-		event.pressed = false
-		root.push_input(event, true)
-		await settle()
 
 func screenshot(path: String, viewport: Viewport = root) -> void:
 	if not native:

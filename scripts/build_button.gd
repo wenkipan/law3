@@ -38,8 +38,10 @@ func _make_custom_tooltip(_for_text: String) -> Object:
 		game.material_requirements_text(game.building_materials(kind), true, true), String.num(game.building_hours(kind), 2),
 		String.num(game.building_hours(kind) * game.WAGE_PER_HOUR, 2)]
 	content.add_child(requirements)
-	content.add_child(HSeparator.new())
-	var effects: Label = game.hud.make_label(game.building_effects_text(kind), 14)
-	effects.name = "Effects"
-	content.add_child(effects)
+	var effects_text: String = game.building_effects_text(kind)
+	if effects_text != "":
+		content.add_child(HSeparator.new())
+		var effects: Label = game.hud.make_label(effects_text, 14)
+		effects.name = "Effects"
+		content.add_child(effects)
 	return card

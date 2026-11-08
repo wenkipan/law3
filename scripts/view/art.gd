@@ -1,9 +1,16 @@
 extends RefCounted
 
 static var textures: Dictionary = {}
+const WORLD_BUILDINGS := ["farm", "power_plant", "chemical_plant", "barn", "smelter", "sawmill",
+	"brewery", "hospital", "bathhouse", "soapworks", "pharmacy", "bank",
+	"mill", "weaver", "smithy", "laundry", "canteen"]
+
+static func building_texture(kind: String, blueprint := false) -> Texture2D:
+	var folder := "world/buildings" if kind in WORLD_BUILDINGS else "icons"
+	return texture("res://assets/%s/%s%s.svg" % [folder, kind, "-blueprint" if blueprint else ""])
 
 static func item_texture(item) -> Texture2D:
-	var icons := {"raw_water": "raw-water", "wheat": "wheat", 3: "coal",
+	var icons := {0: "blocks", "raw_water": "raw-water", "wheat": "wheat", 3: "coal",
 		"clean_water": "water", "bench": "mining-gun", "workbench": "backpack",
 		"wool": "wool", "cloth": "cloth", "clothes": "clothes", "ale": "ale",
 		"iron": "iron", "planks": "planks", "tools": "tools", "meat": "meat", "loan": "loan",

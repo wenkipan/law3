@@ -34,5 +34,7 @@ visible = false
 [node name="Overlays" type="Node2D" parent="."]
 z_index = 50
 [node name="Orders" type="TileMapLayer" parent="Overlays"]
+[node name="Wages" type="Node2D" parent="Overlays"]
+visible = false
 [node name="WorkerFeedback" type="Node2D" parent="Overlays"]
 script = ExtResource("2")

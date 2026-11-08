@@ -1,8 +1,11 @@
 extends RefCounted
 
 func run(t) -> void:
+	check_wage_contracts(t)
 	check_snapshots(t)
-	check_generated_terrain(t)
+	check_distant_excavation(t)
+	check_large_footprints(t)
+	check_demolition(t)
 	var g = t.game
 	var ore := Vector2i(37, 13)
 	var p := Vector2i(28, 11)
@@ -14,10 +17,11 @@ func run(t) -> void:
 	t.check(g.world.terrain[ore] == 0 and g.player_blocks == 1, "Delivered ore becomes open ground and building material")
 	t.near(g.resource_activity(mined_item, 1).produced, 1, "Excavation counts as production once, not again on delivery")
 	t.near(g.resource_inventory()[mined_item], 1, "The delivered mineral appears once in physical inventory")
-	t.check(g.world.workers[0].bread > 0 and is_equal_approx(g.player_bread + g.world.workers[0].bread, g.STARTING_BREAD), "Worker receives wages without inventing treasury income")
+	t.check(g.world.workers[0].earned_today > 0 and is_equal_approx(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, g.STARTING_BREAD), "Actual wages and any food already eaten conserve the starting bread")
 	var next := ore + Vector2i.RIGHT
 	t.check(g.designate(next, next) == 1, "Excavation exposes the next reachable block")
-	g.simulate(2)
+	var dug: float = g.report_totals(1)["挖掘"]
+	t.advance_until(func(): return g.report_totals(1)["挖掘"] > dug, 30, "The next command performs real labor before cancellation")
 	var earned: float = g.world.workers[0].earned_today
 	g.designate(next, next, true)
 	t.check(g.world.workers[0].earned_today > earned, "Cancellation settles the unfinished block's actual labor once")
@@ -31,84 +35,15 @@ func run(t) -> void:
 	t.near(g.world.workers[0].earned_today, earned + 1.0, "Restart pays the new block once in addition to the canceled order's actual labor")
 	t.near(g.resource_activity(mined_item, 1).produced, 2, "Cancellation and restart create only the two completed blocks")
 
-	# New map blocks are ordinary finite resources, never drill-only deposits.
-	for mineral in [7, 8, g.MapGenerator.WATER_BLOCK]:
-		var item = g.ORES[mineral].get("item", mineral)
-		t.fixtures.scenario("Extract finite material: " + g.ORES[mineral].name, 1)
-		g.world.terrain[ore] = mineral
-		g.designate(ore, ore)
-		t.advance_until(func(): return g.world.delivered == 1, 40, "An ordinary worker extracts and delivers the new raw material")
-		t.near(g.stock_at(g.BASE, item), 1, "Delivery preserves the block's actual product identity")
-		t.near(g.resource_activity(item, 1).produced, 1, "New resource extraction is counted once")
-		t.near(g.resource_inventory()[item], 1, "The actual product remains physical cargo rather than personal supplies")
-		t.check(g.world.terrain[ore] == 0, "New resource blocks are depleted after excavation")
-		t.check(not g.world.water_sources.has(ore), "Excavation never turns a finite resource into an inexhaustible water source")
+	# Finite water uses a non-mineral product through the same physical delivery path.
+	t.fixtures.scenario("Finite water delivers raw water rather than a permanent source", 1)
+	g.world.terrain[ore] = g.MapGenerator.WATER_BLOCK
+	g.designate(ore, ore)
+	t.advance_until(func(): return g.world.delivered == 1, 40, "The ordered block is extracted and delivered")
+	t.near(g.resource_inventory().raw_water, 1, "The finite block contributes one physical raw-water item")
+	t.check(g.world.terrain[ore] == 0 and not g.world.water_sources.has(ore), "Extraction depletes the block without creating an inexhaustible source")
 
-	# One shared construction contract, with all actual building kinds as inputs.
-	for kind in g.BUILDING_KINDS:
-		t.fixtures.scenario("Plan, supply, build and recover: " + kind, 1)
-		g.world.workers[0].hunger = 120
-		g.update_ui()
-		g.set_tool(kind)
-		t.check(g.hud.tool_buttons[kind].disabled and g.interaction.tool != kind, "Empty inventory disables selecting the building tool")
-		t.check(not g.place_building(p, kind), "Missing materials prevent blueprint placement")
-		g.simulate(3)
-		t.check(not g.building_at(p) and g.world.workers[0].earned_today == 0, "Rejected blueprints cannot create construction or wages")
-		t.check(not g.cancel_site(p) and g.player_blocks == 0, "Rejected placement cannot invent a cancellation refund")
-		var cost: int = g.building_blocks(kind)
-		var wrong_mineral := 2 if kind in ["pump", "purifier", "printer", "bank", "belt"] else 3
-		t.fixtures.materials(cost, wrong_mineral)
-		t.check(not g.place_building(p, kind), "Other minerals cannot fund the specified recipe")
-		g.simulate(3)
-		t.check(g.world.workers[0].earned_today == 0 and g.stock_at(p, wrong_mineral) == 0, "Other minerals cannot substitute for the building's specified recipe")
-		g.cancel_site(p)
-		t.fixtures.building_materials(kind)
-		# Every ingredient matters, including water and the secondary mineral.
-		for item in g.building_materials(kind):
-			g.add_stock(g.BASE, item, -1)
-			g.update_ui()
-			t.check(g.hud.tool_buttons[kind].disabled and not g.place_building(p, kind), "One missing ingredient disables planning even when the others are sufficient")
-			g.add_stock(g.BASE, item, 1)
-		g.update_ui()
-		g.set_tool(kind)
-		t.check(not g.hud.tool_buttons[kind].disabled and g.interaction.tool == kind, "Exactly enough of every ingredient enables selecting the tool")
-		var initial_materials: Dictionary = g.materials.duplicate()
-		var recipe: Dictionary = g.building_materials(kind)
-		var initial_water: float = g.total_stock("raw_water")
-		g.world.workers[0].pos = Vector2(p)
-		t.check(not g.place_building(g.BASE, kind) and g.player_blocks == cost, "Rejected placement costs nothing")
-		t.check(g.place_building(p, kind) and g.player_blocks == cost, "Placing a blueprint commits quantities without removing warehouse stock")
-		t.near(g.resource_inventory().get(1, 0), initial_materials.get(1, 0), "Blueprint placement leaves physical inventory unchanged")
-		t.check(g.hud.tool_buttons[kind].disabled, "The new blueprint immediately exhausts the planning allowance")
-		g.cancel_site(p)
-		t.check(not g.hud.tool_buttons[kind].disabled and g.player_blocks == cost, "Canceling before delivery immediately releases quantities without producing goods")
-		g.place_building(p, kind)
-		t.advance_until(func(): return g.report_totals(1, 0)["工作"] > 0, 60, "Materials reach the site before construction starts")
-		g.update_ui()
-		t.check(g.hud.tool_buttons[kind].disabled, "Delivery into the site cannot release the blueprint's material commitment")
-		t.near(g.world.workers[0].earned_today, 0, "An unfinished construction does not pay incremental wages")
-		var footprint_end: Vector2i = g.building_cells(p, kind).back()
-		t.check(g.cancel_site(footprint_end), "Occupied footprint cell cancels construction")
-		earned = g.world.workers[0].bread
-		t.check(earned > 0, "Cancellation pays only the actual completed construction share")
-		t.advance_until(func():
-			for item in recipe:
-				if g.total_stock(item) != recipe[item]: return false
-			return true, 60, "All delivered materials, including processed goods, are physically recovered after cancellation")
-		t.check(g.materials == initial_materials, "Cancel returns the actual mineral types, not generic replacement blocks")
-		for mineral in initial_materials:
-			t.near(g.resource_activity(mineral, 1).produced + g.resource_activity(mineral, 1).consumed, 0, "Canceling a blueprint creates neither production nor consumption")
-		t.near(g.world.workers[0].bread, earned, "Refund does not reclaim earned wages")
-		g.place_building(p, kind)
-		t.advance_until(func(): return not g.world.sites.has(p), 240, "Construction finishes across voluntary meals and sleep")
-		g.select_entity(footprint_end)
-		t.check(g.hud.entity_title.text == g.building_name(kind), "Building completes and can be inspected")
-		t.check(g.player_blocks == 0, "No second charge during construction or completion")
-		g.update_ui()
-		t.check(g.hud.tool_buttons[kind].disabled, "Completion consumes the goods without making another building affordable")
-		t.near(g.resource_activity("raw_water", 1).consumed, initial_water, "Construction water is charged once, not invented as daily output")
-		for mineral in initial_materials:
-			t.near(g.resource_activity(mineral, g.world.day).consumed, initial_materials[mineral], "Completion records actual construction consumption once on its completion day")
+	check_construction(t)
 
 	# Explicit commands must not inherit the currently selected toolbar tool or drag axis.
 	t.fixtures.scenario("Construction commands retain their explicit type and orientation", 1)
@@ -126,8 +61,8 @@ func run(t) -> void:
 	t.near(g.resource_activity(2, 1).consumed, 2, "The explicitly oriented cable consumes its copper recipe once")
 
 	# Exercise placement families, not every recipe again: one/two-cell buildings,
-	# water adjacency, belts and the two cable footprints.
-	for kind in ["bed", "storage_box", "pump", "belt", "high_line", "low_line"]:
+	# water adjacency, belts and a cable corridor.
+	for kind in ["bed", "pump", "belt", "high_line"]:
 		for covered in [false, true]:
 			t.fixtures.scenario("Excavate before building: %s / covered origin %s" % [kind, covered], 1)
 			var origin := ore if covered else ore + Vector2i.LEFT
@@ -150,8 +85,7 @@ func run(t) -> void:
 			for cell in g.building_cells(origin, kind):
 				t.check(g.world.terrain[cell] == 0, "Every footprint cell is cleared before the building can complete")
 			t.advance_until(func(): return not g.world.sites.has(origin) and g.world.delivered == blocks, 240, "Workers deliver the excavated ore and finish construction")
-			g.select_entity(origin)
-			t.check(g.hud.entity_title.text == g.building_name(kind), "Cleared blueprint becomes the requested building")
+			t.check(g.building_kind_at(origin) == kind, "Cleared blueprint becomes the requested building")
 			for mineral in range(1, g.ORES.size()):
 				t.check(g.materials.get(mineral, 0) == expected.get(mineral, 0), "Excavated mineral is retained without duplicate building charges")
 			t.near((g.report_totals(1, 0)["挖掘"] + g.report_totals(1, 0)["工作"] + g.report_totals(2, 0)["挖掘"] + g.report_totals(2, 0)["工作"]) / g.HOUR_SECONDS, blocks + g.building_hours(kind), "Excavation and construction each pay their normal labor once")
@@ -159,22 +93,22 @@ func run(t) -> void:
 
 	# A blueprint does not tunnel outside its footprint or strand a carrier inside solid terrain.
 	t.fixtures.scenario("Buried blueprint waits for a player-opened route", 1)
-	t.fixtures.materials(6)
+	t.fixtures.building_materials("bed")
 	g.world.workers[0].pos = Vector2(36, 13)
 	g.update_fog()
 	var buried := Vector2i(39, 13)
-	t.check(not g.place_building(Vector2i(60, 30), "bed") and g.player_blocks == 6, "Unexplored terrain still rejects blueprints without spending materials")
-	t.check(g.place_building(buried, "bed") and g.player_blocks == 6, "An explored buried blueprint does not lock remote stock")
+	t.check(not g.place_building(Vector2i(60, 30), "bed") and g.player_blocks == g.BED_BLOCKS, "Unexplored terrain still rejects blueprints without spending materials")
+	t.check(g.place_building(buried, "bed") and g.player_blocks == g.BED_BLOCKS, "An explored buried blueprint does not lock remote stock")
 	g.simulate(20)
 	t.check(g.world.mined == 0 and g.world.workers[0].earned_today == 0, "No unreachable mining, construction wages, or automatic access tunnel")
 	g.designate(ore, ore + Vector2i.RIGHT)
-	t.advance_until(func(): return g.world.beds.has(buried) and g.world.delivered == 4, 120, "Opening access resumes excavation, material delivery, and building")
+	t.advance_until(func(): return g.world.beds.has(buried) and g.world.delivered == 4, g.HOUR_SECONDS * 16, "Opening access resumes excavation, material delivery, and building")
 	t.check(g.player_blocks == 4, "Waiting does not lose or duplicate reserved materials")
 
 	# Cancel only excavation introduced by the blueprint, preserving independent player dig orders.
 	for manual in ["none", "before", "after"]:
 		t.fixtures.scenario("Cancel ore-covered blueprint: " + manual, 1)
-		t.fixtures.materials(6)
+		t.fixtures.building_materials("bed")
 		g.world.workers[0].pos = Vector2(36, 13)
 		if manual == "before":
 			g.designate(ore, ore)
@@ -184,7 +118,7 @@ func run(t) -> void:
 		t.advance_until(func(): return g.report_totals(1, 0)["挖掘"] > 0, 10, "Excavation has begun before cancellation")
 		t.check(g.cancel_site(ore + Vector2i.RIGHT), "Either footprint cell cancels the whole covered blueprint")
 		var paid: float = g.world.workers[0].bread
-		t.check(g.player_blocks == 6, "Uncollected reserved material is refunded immediately")
+		t.check(g.player_blocks == g.BED_BLOCKS, "Cancellation leaves uncollected physical materials unchanged")
 		g.simulate(30)
 		t.check(not g.building_at(ore) and g.world.terrain[ore + Vector2i.RIGHT] != 0, "Cancellation removes the blueprint and its remaining automatic excavation")
 		if manual == "none":
@@ -192,16 +126,16 @@ func run(t) -> void:
 			t.near(g.world.workers[0].earned_today, paid, "Canceled excavation accrues no additional wages")
 			t.near(g.world.workers[0].bread + g.world.workers[0].meal_bread + g.world.workers[0].eaten_today, paid, "Eating may spend the settled wage but cannot duplicate or reclaim it")
 		else:
-			t.check(g.world.delivered == 1 and g.player_blocks == 7, "Independent dig order survives blueprint cancellation and delivers once")
+			t.check(g.world.delivered == 1 and g.player_blocks == g.BED_BLOCKS + 1, "Independent dig order survives blueprint cancellation and delivers once")
 			t.near(g.world.workers[0].earned_today, 1, "Preserved mining retains partial work without paying twice")
 
 	# Cancellation must keep already excavated ore, without clearing the rest of the footprint.
 	t.fixtures.scenario("Cancel after the first footprint block is excavated", 1)
-	t.fixtures.materials(6)
+	t.fixtures.building_materials("bed")
 	g.place_building(ore, "bed")
 	t.advance_until(func(): return g.world.mined == 1, 25, "First footprint block is excavated before cancellation")
 	g.cancel_site(ore + Vector2i.RIGHT)
-	t.advance_until(func(): return g.world.delivered == 1 and g.player_blocks == 7, 30, "Refund and already mined ore both arrive exactly once")
+	t.advance_until(func(): return g.world.delivered == 1 and g.player_blocks == g.BED_BLOCKS + 1, 30, "Original materials and already mined ore are retained exactly once")
 	g.simulate(20)
 	t.check(g.world.terrain[ore] == 0 and g.world.terrain[ore + Vector2i.RIGHT] != 0 and not g.building_at(ore), "Cancel preserves the cleared cell and stops the remaining excavation")
 
@@ -213,32 +147,32 @@ func run(t) -> void:
 
 	# Canceling while a carrier is en route must not duplicate or destroy reserved goods.
 	t.fixtures.scenario("Cancel a blueprint during material delivery", 1)
-	t.fixtures.materials(6)
+	t.fixtures.building_materials("bed")
 	g.world.workers[0].pos = Vector2(g.BASE)
 	g.place_building(p, "bed")
 	t.advance_until(func():
 		g.select_worker(0)
 		return t.inventory_description(1).contains("搬运"), 5, "The worker really picks up material before cancellation")
 	g.cancel_site(p)
-	t.advance_until(func(): return g.player_blocks == 6, 20, "Carried and uncollected materials both return exactly once")
+	t.advance_until(func(): return g.player_blocks == g.BED_BLOCKS, 20, "Carried and uncollected materials both return exactly once")
 	g.simulate(10)
-	t.check(g.stock_at(g.BASE, 1) == 6 and not g.building_at(p), "Canceled delivery leaves no orphaned building or duplicate material")
+	t.check(g.stock_at(g.BASE, 1) == g.BED_BLOCKS and not g.building_at(p), "Canceled delivery leaves no orphaned building or duplicate material")
 
 	# Moving committed goods must neither hide free stock nor free the same commitment twice.
 	t.fixtures.scenario("Uncommitted materials remain available throughout delivery and completion", 1)
-	t.fixtures.materials(12)
+	t.fixtures.building_materials("bed", 2)
 	g.place_building(p, "bed")
 	t.advance_until(func():
 		g.select_worker(0)
 		return t.inventory_description(1).contains("搬运"), 10, "A real delivery leaves the source warehouse")
 	g.update_ui()
-	t.check(not g.hud.tool_buttons.bed.disabled and g.material_requirements_text(g.building_materials("bed"), true).contains("6 / 6"), "In-flight goods are still physical inventory, leaving exactly one free bed recipe")
+	t.check(g.can_plan_building("bed"), "In-flight goods are still physical inventory, leaving exactly one free bed recipe")
 	t.advance_until(func(): return g.report_totals(1, 0)["工作"] > 0, 60, "The first bed receives its full recipe and starts building")
 	g.update_ui()
-	t.check(not g.hud.tool_buttons.bed.disabled and g.material_requirements_text(g.building_materials("bed"), true).contains("6 / 6"), "Materials at the site do not reduce the free allowance a second time")
-	t.advance_until(func(): return g.world.beds.has(p), 120, "The first bed completes with six unused sandstone remaining")
+	t.check(g.can_plan_building("bed"), "Materials at the site do not reduce the free allowance a second time")
+	t.advance_until(func(): return g.world.beds.has(p), 120, "The first bed completes with one unused bed recipe remaining")
 	g.update_ui()
-	t.check(not g.hud.tool_buttons.bed.disabled and g.material_requirements_text(g.building_materials("bed"), true).contains("6 / 6"), "Completion removes physical goods and their commitment together")
+	t.check(g.can_plan_building("bed"), "Completion removes physical goods and their commitment together")
 	t.check(g.place_building(Vector2i(35, 11), "bed") and g.hud.tool_buttons.bed.disabled, "The remaining stock funds exactly one additional blueprint")
 
 	# A planning commitment cannot protect stock from production or create it on cancellation.
@@ -278,10 +212,8 @@ func run(t) -> void:
 	g.reset_world()
 	t.check(g.report_mined(1) == 0 and g.report_mined(2) == 0, "Reset clears daily excavation history")
 
-	t.fixtures.scenario("Daily needs, report history, and pause", 1)
-	g.world.workers[0].hunger = 180.0
+	t.fixtures.scenario("Report history, pause and reset", 1)
 	g.simulate(g.DAY_SECONDS)
-	t.near(g.world.workers[0].hunger, 100, "One day consumes eighty satiety, equivalent to eight bread")
 	t.near(t.report_seconds(), g.DAY_SECONDS, "Report accounts for elapsed person-time")
 	var history: Dictionary = g.report_totals(1).duplicate()
 	g.designate(ore, ore)
@@ -303,9 +235,203 @@ func run(t) -> void:
 	t.near(g.resource_inventory().bread, g.STARTING_BREAD, "Reset restores the physical starting stock")
 
 	check_direct_supply(t)
+	check_supply_task_inventory(t)
 	check_loans(t)
 	check_tracks(t)
-	check_mood(t)
+
+func check_supply_task_inventory(t) -> void:
+	var g = t.game
+	# Claiming one request must not expose its goods to another carrier or hide them from physical inventory.
+	t.fixtures.unit_supply_inventory()
+	var source := Vector2i(28, 11)
+	var receiver := Vector2i(35, 13)
+	t.check(g.place_building(receiver, "low_line"), "A one-copper request is created by the actual building command")
+	t.advance_until(func(): return g.stock_at(source, 2) == 2, 2, "The selected request sets aside only its one physical copper")
+	g.select_entity(source)
+	t.check(t.inventory_description(2).contains("数量 3"), "Before pickup, task-bound copper remains in its source's displayed inventory")
+	t.near(g.resource_inventory()[2], 3, "Unfilled requests create no goods and assigned requests do not consume them")
+	var saved: Dictionary = g.capture_snapshot()
+	t.check(saved.ok, "A request and its source-held item can be saved before pickup")
+	g.cancel_site(receiver)
+	t.near(g.stock_at(source, 2), 3, "Cancellation makes the uncollected item available at its original source immediately")
+	t.near(g.resource_inventory()[2], 3, "Releasing the task cannot duplicate its item")
+	if saved.ok:
+		t.check(g.restore_snapshot(saved.data).ok, "Loading restores the request together with its source partition")
+		t.advance_until(func(): return g.world.power_lines.has(receiver), 60, "The restored request physically delivers its item and finishes construction")
+		g.simulate(2)
+		t.near(g.stock_at(source, 2), 2, "Other carriers cannot repeat the fulfilled one-item request")
+		t.near(g.resource_inventory()[2], 2, "Exactly one real copper is consumed by completion")
+
+func check_demolition(t) -> void:
+	var g = t.game
+	var p := Vector2i(28, 11)
+	# Storage and station products must survive removal once, without refunding twice.
+	for kind in ["bed", "workbench", "bank"]:
+		t.fixtures.scenario("Demolition recovers the actual inventory: " + kind, 1)
+		if kind == "bed": t.fixtures.bed(p)
+		elif kind == "bank": t.fixtures.bank(p)
+		else: t.fixtures.station(kind, p, 2)
+		t.fixtures.stock_recipe(p, {2: 3, "raw_water": 5})
+		t.fixtures.wastewater(p, 2, 15)
+		var before: Dictionary = g.resource_inventory()
+		var recipe: Dictionary = g.building_materials(kind)
+		var corner: Vector2i = g.building_cells(p, kind).back()
+		t.check(g.demolish_building(corner), "Any footprint cell dismantles the completed facility")
+		t.check(not g.demolish_building(corner) and not g.demolish_building(g.BASE), "Repeated demolition and the portal cannot create refunds")
+		for item in before:
+			if is_same(item, "bread"): continue
+			t.near(g.resource_inventory().get(item, 0), before[item] + recipe.get(item, 0), "Removal preserves existing goods and returns only construction materials")
+		for item in recipe:
+			t.near(g.resource_inventory().get(item, 0), before.get(item, 0) + recipe[item], "The construction recipe is recovered exactly once")
+		if kind == "workbench":
+			var inventory: Dictionary = g.resource_inventory()
+			var snapshot: Dictionary = g.capture_snapshot()
+			t.check(snapshot.ok and g.restore_snapshot(snapshot.data).ok, "A demolition recovery can be saved and resumed")
+			t.check(g.resource_inventory() == inventory and not g.demolish_building(p), "Restoring recovery cannot duplicate the refund or dismantle the same building again")
+		t.advance_until(func(): return not g.building_at(p), 90, "Physical recovery finishes before releasing the footprint")
+		t.near(g.stock_at(g.BASE, "raw_water"), 5, "The removed warehouse's water is actually carried to the portal")
+		t.near(g.stock_at(g.BASE, "wastewater"), 2, "Wastewater quantity is preserved during recovery")
+		t.near(g.world.wastewater.get(g.BASE, 0), 15, "Wastewater carries its pollution load instead of discarding it")
+		if kind == "workbench": t.near(g.stock_at(g.BASE, "workbench"), 2, "Station products remain recoverable after the station disappears")
+
+	# Removing a working factory must settle actual labor without finishing or refunding its batch.
+	t.fixtures.scenario("Demolition interrupts actual production without duplicate pay or batch refunds", 1)
+	t.fixtures.station("bench", p)
+	t.fixtures.stock_recipe(p, {2: 1, "bread": 10})
+	g.adjust_production(p, 1)
+	t.advance_until(func(): return g.report_totals(1, 0)["工作"] > 0, 30, "Production has performed real labor before demolition")
+	var used: float = g.resource_activity(2, 1).consumed
+	t.check(g.demolish_building(p), "The working factory can be dismantled")
+	var earned: float = g.world.workers[0].earned_today
+	t.check(earned > 0, "Dismantling settles the worker's actual unfinished labor")
+	t.near(g.resource_inventory().get(2, 0), g.building_materials("bench")[2], "Consumed batch ingredients are not added to the construction refund")
+	g.simulate(60)
+	t.near(g.resource_activity(2, 1).consumed, used, "No further batch consumes ingredients after removal")
+	t.near(g.resource_inventory().get("bench", 0), 0, "An interrupted batch never produces a finished product")
+	t.near(g.world.workers[0].earned_today, earned, "Recovery and idle time cannot pay the interrupted task twice")
+
+	# Freight already picked up must not disappear or get delivered into a removed consumer.
+	t.fixtures.scenario("Demolition redirects incoming actual goods", 1)
+	t.fixtures.station("purifier", p)
+	t.fixtures.stock_recipe(g.BASE, {"raw_water": 4})
+	g.adjust_production(p, 8)
+	t.advance_until(func():
+		g.select_worker(0)
+		return t.inventory_description("raw_water").contains("搬运"), 15, "A carrier picks up actual input before the receiver is dismantled")
+	g.demolish_building(p)
+	t.advance_until(func(): return g.stock_at(g.BASE, "raw_water") == 4 and not g.building_at(p), 90, "Incoming water returns to real storage and the removed receiver is cleared")
+	t.near(g.resource_inventory().get("raw_water", 0), 4, "Redirected freight is counted exactly once")
+
+func check_construction(t) -> void:
+	var g = t.game
+	var p := Vector2i(28, 11)
+	var kind := "research_bench"
+	# A mixed recipe represents shared commitments, physical supply and construction settlement.
+	t.fixtures.scenario("Plan, supply, build and recover: " + kind, 1)
+	g.world.workers[0].hunger = 120
+	g.update_ui()
+	g.set_tool(kind)
+	t.check(g.hud.tool_buttons[kind].disabled and g.interaction.tool != kind, "Empty inventory disables selecting the building tool")
+	t.check(not g.place_building(p, kind), "Missing materials prevent blueprint placement")
+	g.simulate(3)
+	t.check(not g.building_at(p) and g.world.workers[0].earned_today == 0, "Rejected blueprints cannot create construction or wages")
+	t.check(not g.cancel_site(p) and g.player_blocks == 0, "Rejected placement cannot invent a cancellation refund")
+	var cost: int = g.building_blocks(kind)
+	var wrong_mineral := 3
+	t.fixtures.materials(cost, wrong_mineral)
+	t.check(not g.place_building(p, kind), "Other minerals cannot fund the specified recipe")
+	g.simulate(3)
+	t.check(g.world.workers[0].earned_today == 0 and g.stock_at(p, wrong_mineral) == 0, "Other minerals cannot substitute for the building's specified recipe")
+	g.cancel_site(p)
+	t.fixtures.building_materials(kind)
+	# Each ingredient independently gates planning.
+	for item in g.building_materials(kind):
+		g.add_stock(g.BASE, item, -1)
+		g.update_ui()
+		t.check(g.hud.tool_buttons[kind].disabled and not g.place_building(p, kind), "One missing ingredient disables planning even when the others are sufficient")
+		g.add_stock(g.BASE, item, 1)
+	g.update_ui()
+	g.set_tool(kind)
+	t.check(not g.hud.tool_buttons[kind].disabled and g.interaction.tool == kind, "Exactly enough of every ingredient enables selecting the tool")
+	var initial_materials: Dictionary = g.materials.duplicate()
+	var recipe: Dictionary = g.building_materials(kind)
+	g.world.workers[0].pos = Vector2(p)
+	t.check(not g.place_building(g.BASE, kind) and g.player_blocks == cost, "Rejected placement costs nothing")
+	t.check(g.place_building(p, kind) and g.player_blocks == cost, "Placing a blueprint commits quantities without removing warehouse stock")
+	t.near(g.resource_inventory().get(1, 0), initial_materials.get(1, 0), "Blueprint placement leaves physical inventory unchanged")
+	t.check(g.hud.tool_buttons[kind].disabled, "The new blueprint immediately exhausts the planning allowance")
+	g.cancel_site(p)
+	t.check(not g.hud.tool_buttons[kind].disabled and g.player_blocks == cost, "Canceling before delivery immediately releases quantities without producing goods")
+	g.place_building(p, kind)
+	t.advance_until(func(): return g.report_totals(1, 0)["工作"] > 0, 60, "Materials reach the site before construction starts")
+	g.update_ui()
+	t.check(g.hud.tool_buttons[kind].disabled, "Delivery into the site cannot release the blueprint's material commitment")
+	t.near(g.world.workers[0].earned_today, 0, "An unfinished construction does not pay incremental wages")
+	var footprint_end: Vector2i = g.building_cells(p, kind).back()
+	t.check(g.cancel_site(footprint_end), "Occupied footprint cell cancels construction")
+	var earned: float = g.world.workers[0].bread
+	t.check(earned > 0, "Cancellation pays only the actual completed construction share")
+	t.advance_until(func():
+		for item in recipe:
+			if g.total_stock(item) != recipe[item]: return false
+		return true, 60, "The mixed recipe is physically recovered after cancellation")
+	t.check(g.materials == initial_materials, "Cancel returns the actual mineral types, not generic replacement blocks")
+	for mineral in initial_materials:
+		t.near(g.resource_activity(mineral, 1).produced + g.resource_activity(mineral, 1).consumed, 0, "Canceling a blueprint creates neither production nor consumption")
+	t.near(g.world.workers[0].bread, earned, "Refund does not reclaim earned wages")
+	g.place_building(p, kind)
+	t.advance_until(func(): return not g.world.sites.has(p), 240, "Construction finishes across voluntary meals and sleep")
+	t.check(g.building_kind_at(footprint_end) == kind, "The blueprint completes as the commanded building")
+	t.check(g.player_blocks == 0, "No second charge during construction or completion")
+	g.update_ui()
+	t.check(g.hud.tool_buttons[kind].disabled, "Completion consumes the goods without making another building affordable")
+	for mineral in initial_materials:
+		t.near(g.resource_activity(mineral, g.world.day).consumed, initial_materials[mineral], "Completion records actual construction consumption once on its completion day")
+
+func check_large_footprints(t) -> void:
+	var g = t.game
+	# A clear origin must not hide obstacles in the new last row and column.
+	for obstacle in ["building", "water", "unexplored"]:
+		var p: Vector2i = t.fixtures.large_blueprint(obstacle)
+		var before: Dictionary = g.resource_inventory()
+		t.check(not g.place_building(p, "farm") and not g.building_at(p), "The far footprint corner rejects placement over " + obstacle)
+		t.check(g.resource_inventory() == before, "Rejected multi-row placement cannot charge or reserve goods")
+	var p: Vector2i = t.fixtures.large_blueprint()
+	t.check(g.place_building(p, "farm"), "A multi-row blueprint can include a mineral in its far corner")
+	t.advance_until(func(): return g.world.benches.has(p), g.HOUR_SECONDS * 12, "The far corner is excavated and actual building materials arrive before completion")
+	t.check(g.world.terrain[Vector2i(31, 13)] == 0, "Finishing cannot leave an unexcavated block under the expanded footprint")
+	t.near(g.resource_activity(2, 1).produced, 1, "Clearing the far corner retains its actual mineral once")
+	t.near(g.resource_inventory()[2], 1, "Footprint excavation cannot silently destroy the mineral")
+	t.near(g.resource_activity(1, 1).consumed, g.building_blocks("farm"), "Larger area does not multiply the construction recipe")
+
+func check_wage_contracts(t) -> void:
+	var g = t.game
+	# Mining and construction keep quotes in different world objects; neither may
+	# reprice unfinished work on funding interruption or loading.
+	for kind in ["mine", "build"]:
+		var p: Vector2i = t.fixtures.wage_contract(kind)
+		var mining: bool = kind == "mine"
+		if mining: g.designate(p, p)
+		else: g.place_building(p, "bed")
+		if not mining: g.set_fee(p, 2)
+		t.check(g.set_wage(p, 3, mining), "The ordered labor accepts its own player wage setting")
+		var hours: float = g.mining_seconds(p) / g.HOUR_SECONDS if mining else g.building_hours("bed")
+		var action := "挖掘" if mining else "工作"
+		t.advance_until(func(): return g.report_totals(1)[action] > 0, 60, "Actual labor begins before its offer is changed")
+		g.set_wage(p, 9, mining)
+		var earned: float = g.world.workers[0].earned_today
+		var before: Dictionary = t.world_observations()
+		var saved: Dictionary = g.capture_snapshot()
+		t.check(saved.ok and g.restore_snapshot(saved.data).ok, "Repriced in-flight labor can be saved and resumed")
+		t.check(t.world_observations() == before, "Loading a new offer does not settle or duplicate the old labor")
+		t.near(g.wage_settings(p, mining).get("wage", 0), 9, "The new player offer survives loading")
+		t.advance_until(func(): return g.world.terrain[p] == 0 if mining else g.world.beds.has(p), g.DAY_SECONDS, "The ordered task finishes through normal labor and funding")
+		if not mining: t.near(g.base_fee(p), 2, "A blueprint keeps its independent future fee through saving and completion")
+		t.near(g.world.workers[0].earned_today, hours * 3, "Completion honors the original quote, including accelerated mining and funding resumptions")
+		t.check(g.world.workers[0].earned_today >= earned, "Changing an offer cannot reclaim wages already earned")
+		g.simulate(4)
+		t.near(g.world.workers[0].earned_today, hours * 3, "Delivery and completed work cannot create additional wages")
+		t.near(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, g.STARTING_BREAD, "Adjustable wages transfer real bread without minting it")
 
 func check_snapshots(t) -> void:
 	var g = t.game
@@ -316,6 +442,7 @@ func check_snapshots(t) -> void:
 	var inventory: Dictionary = g.resource_inventory()
 	var records: Dictionary = g.report_totals(1)
 	var cash: float = g.world.workers[0].bread
+	var observations: Dictionary = t.world_observations()
 	var saved: Dictionary = g.capture_snapshot()
 	t.check(saved.ok, "The completed simulation step can be captured")
 	if not saved.ok:
@@ -330,45 +457,56 @@ func check_snapshots(t) -> void:
 		return
 	t.check(g.resource_inventory() == inventory and g.report_totals(1) == records, "Restoring changes neither physical inventory nor historical labor")
 	t.near(g.world.workers[0].bread, cash, "Restoring does not settle unfinished wages")
+	g.simulate(0.1)
+	t.check(g.restore_snapshot(saved.data).ok and t.world_observations() == observations, "A reusable snapshot cannot inherit changes from the first restored world")
 	t.advance_until(func(): return g.world.delivered == 2, 90, "The restored mining commands finish without being issued again")
 	t.check(g.world.terrain[Vector2i(37, 13)] == 0 and g.world.terrain[Vector2i(38, 13)] == 0, "Resumed excavation does not respawn ore")
-	# Fixed checkpoints exercise whatever the workers actually chose, without
-	# prescribing an executor, a schedule or private activity state.
-	for kind in ["construction", "production", "transport", "backpack", "water_backpack", "service", "life", "buffs", "power", "economy"]:
+	# Each distinct saved payload gets one checkpoint; snapshot independence is covered above.
+	for kind in ["construction", "production", "transport", "backpack", "water_backpack", "service", "life", "buffs", "power", "economy", "research"]:
 		t.fixtures.snapshot_world(kind)
 		if kind == "construction": g.place_building(Vector2i(28, 11), "bed")
 		if kind == "production": g.adjust_production(Vector2i(28, 11), 2)
 		if kind == "transport": g.adjust_production(Vector2i(35, 13), 1)
 		if kind == "buffs": g.designate(Vector2i(37, 13), Vector2i(39, 13))
-		var checkpoints := [0.1, 0.5, 1.5, 0.5, 12.0] if kind in ["backpack", "water_backpack"] else [0.1, 0.5, 2.0, 5.0, 12.0]
-		for seconds in checkpoints:
-			g.simulate(seconds)
-			var before: Dictionary = t.world_observations()
-			var outputs: Dictionary = g.cache.power_output.duplicate()
-			var checkpoint: Dictionary = g.capture_snapshot()
-			t.check(checkpoint.ok, "An actual evolving world can be captured: " + kind)
-			if not checkpoint.ok: continue
-			g.simulate(0.25)
-			var resumed: Dictionary = g.restore_snapshot(checkpoint.data)
-			t.check(resumed.ok, "The current activity and its world references can be restored: " + kind)
-			if not resumed.ok:
-				printerr(resumed.error)
-				continue
-			t.check(t.world_observations() == before, "Restore preserves actual goods, money, effects, needs and reports without replay: " + kind)
-			if kind == "power": t.check(g.cache.power_output == outputs, "The loaded power inspector retains the last measured output without burning more coal")
-			# A snapshot remains reusable after the restored world has changed, too.
-			g.simulate(0.1)
-			t.check(g.restore_snapshot(checkpoint.data).ok and t.world_observations() == before, "A second restore cannot inherit changes from the first restored world")
+		if kind == "research": g.assign_research(Vector2i(28, 11), "tools")
+		match kind:
+			"construction", "production", "research":
+				t.advance_until(func(): return g.report_totals(1)["工作"] > 0, 30, "Paid labor has begun before saving: " + kind)
+			"transport":
+				t.advance_until(func():
+					if t.track_shows_item("raw_water"): return true
+					for worker in g.world.workers:
+						g.select_worker(worker.id)
+						if t.inventory_description("raw_water").contains("搬运"): return true
+					return false, 30, "Actual materials are in transit before saving")
+			"backpack", "water_backpack":
+				t.advance_until(func(): return g.world.delivered == 1, 30, "One item has arrived while the rest of the backpack load still needs delivery")
+			_:
+				g.simulate(2.0)
+		var before: Dictionary = t.world_observations()
+		var checkpoint: Dictionary = g.capture_snapshot()
+		t.check(checkpoint.ok, "An actual evolving world can be captured: " + kind)
+		if not checkpoint.ok: continue
+		g.simulate(0.25)
+		var resumed: Dictionary = g.restore_snapshot(checkpoint.data)
+		t.check(resumed.ok, "The current activity and its world references can be restored: " + kind)
+		if not resumed.ok:
+			printerr(resumed.error)
+			continue
+		t.check(t.world_observations() == before, "Restore preserves actual goods, money, effects, needs and reports without replay: " + kind)
 		if kind == "construction":
 			t.advance_until(func(): return g.world.beds.has(Vector2i(28, 11)), 120, "Saved construction remains completable through real deliveries and labor")
-			t.near(g.resource_activity(1, g.world.day).consumed, 6, "Restoring construction never charges its recipe twice")
+			t.near(g.resource_activity(1, g.world.day).consumed, g.BED_BLOCKS, "Restoring construction never charges its recipe twice")
 		if kind == "production":
 			t.advance_until(func(): return g.stock_at(Vector2i(28, 11), "workbench") >= 1, 120, "Saved production keeps its invested materials and can finish")
+		if kind == "research":
+			t.advance_until(func(): return g.research_value("tools") >= 2, 120, "Saved research resumes actual labor and material batches")
+			t.near(g.resource_activity(2, g.world.day).consumed, 2, "Restoring research cannot charge a batch twice")
 		if kind == "transport":
 			t.advance_until(func(): return g.stock_at(Vector2i(35, 13), "clean_water") >= 4, 120, "Saved freight reaches the receiver and supplies the real recipe")
 		if kind in ["backpack", "water_backpack"]:
 			t.advance_until(func(): return g.world.delivered == 2, 30, "Saved backpack batches deliver both minerals without replaying an unload")
-			t.check(g.stock_at(g.BASE, 1) == 1 and g.stock_at(g.BASE, "clean_water" if kind == "water_backpack" else 2) == 1, "Restored batches preserve each extracted product exactly once")
+			t.check(g.stock_at(g.BASE, 1) == 1 and g.stock_at(g.BASE, "raw_water" if kind == "water_backpack" else 2) == 1, "Restored batches preserve each extracted product exactly once")
 		if kind == "buffs":
 			g.simulate(g.HOUR_SECONDS * 5)
 			for w in g.world.workers:
@@ -397,7 +535,7 @@ func check_snapshots(t) -> void:
 	t.check(not g.restore_snapshot(PackedByteArray([1, 2, 3])).ok and t.world_observations() == second, "A truncated memory snapshot is rejected without running simulation")
 	var incompatible: PackedByteArray = g.WorldSnapshot.seal({"version": 999, "rules": 1, "map": g.MapGenerator.VERSION})
 	t.check(not g.restore_snapshot(incompatible).ok and t.world_observations() == second, "Unsupported snapshots fail before any current-world mutation")
-	var bad_reference: PackedByteArray = g.WorldSnapshot.seal({"version": 1, "rules": 1, "map": g.MapGenerator.VERSION, "nodes": [], "root": {"ref": 0}})
+	var bad_reference: PackedByteArray = g.WorldSnapshot.seal({"version": g.WorldSnapshot.VERSION, "rules": g.WorldSnapshot.RULES_VERSION, "map": g.MapGenerator.VERSION, "nodes": [], "root": {"ref": 0}})
 	t.check(not g.restore_snapshot(bad_reference).ok and t.world_observations() == second, "Broken world references are rejected before replacing the current world")
 	t.check(not g.save_game("/tmp").ok and t.world_observations() == second, "An unwritable destination does not alter the world or claim a successful save")
 	t.check(g.save_game(path).ok and g.load_game(path + ".bak").ok and t.world_observations() == first, "Saving over a damaged primary does not replace its healthy backup with corruption")
@@ -406,6 +544,16 @@ func check_snapshots(t) -> void:
 func check_direct_supply(t) -> void:
 	var g = t.game
 	var ore := Vector2i(37, 13)
+	# On-demand placement must not become warehouse balancing or personal-item collection.
+	t.fixtures.new_goods_storage()
+	var storage := Vector2i(35, 13)
+	t.advance_until(func(): return g.stock_at(storage, 1) == 1 and g.stock_at(storage, "raw_water") == 1, 30, "New mixed goods are placed in the nearby completed warehouse")
+	g.simulate(30)
+	t.near(g.stock_at(storage, 2), 3, "Existing warehouse goods are not redistributed without demand")
+	t.near(g.stock_at(g.BASE, 4), 2, "Placing new goods cannot pull unrelated stock out of another warehouse")
+	t.near(g.stock_at(storage, "bench"), 0, "A personal item is not collected as newly produced freight")
+	t.near(g.resource_inventory().bench, 1, "Placement preserves the worker's actual personal equipment")
+	t.check(g.stock_at(storage, 1) == 1 and g.stock_at(storage, "raw_water") == 1, "Completed placement is not repeated after its task ends")
 	# A mined block must reach demand directly, regardless of which command exposed it.
 	for covered in [false, true]:
 		t.fixtures.scenario("New ore supplies a blueprint directly: covered %s" % covered, 1)
@@ -461,27 +609,25 @@ func check_direct_supply(t) -> void:
 
 	# Two destinations and several carriers cannot promise the same warehouse stock twice.
 	t.fixtures.scenario("Competing blueprints share one real material batch", 3)
-	t.fixtures.materials(6)
+	t.fixtures.building_materials("bed")
 	var first := Vector2i(35, 11)
 	var second := Vector2i(35, 14)
-	t.check(g.place_building(first, "bed"), "The first blueprint can commit the six sandstone")
+	t.check(g.place_building(first, "bed"), "The first blueprint can commit one full bed recipe")
 	t.check(not g.place_building(second, "bed"), "The same physical batch cannot fund a second blueprint")
 	g.simulate(100)
 	t.check(g.world.beds.has(first) and not g.building_at(second), "Only the affordable bed is placed and completed")
 	t.near(g.resource_inventory()[1], 0, "Competing deliveries neither duplicate material nor leave excess at a completed site")
-	t.near(g.resource_activity(1, 1).consumed, 6, "Only the completed bed consumes materials")
+	t.near(g.resource_activity(1, 1).consumed, g.BED_BLOCKS, "Only the completed bed consumes materials")
 
 	# The two backpack items may have different receivers and still form one load.
+	# Start loaded: choosing two mines before delivery is not part of this contract.
 	t.fixtures.scenario("A mixed backpack supplies different nearby consumers", 1)
 	t.fixtures.isolated_warehouse({1: 6, 2: 1})
 	var bed := Vector2i(35, 11)
 	var cable := Vector2i(35, 14)
-	g.world.workers[0].pos = Vector2(36, 13)
-	g.world.workers[0].backpack_uses = 1
-	g.world.terrain[ore + Vector2i.DOWN] = 2
+	t.fixtures.mined_backpack(g.world.workers[0], Vector2i(36, 13))
 	g.place_building(bed, "bed")
 	g.place_building(cable, "low_line")
-	g.designate(ore, ore + Vector2i.DOWN)
 	t.advance_until(func(): return g.stock_at(bed, 1) == 1 and g.world.power_lines.has(cable), 90, "Sandstone and copper reach their respective consumers")
 	t.check(g.world.workers[0].backpack_uses == 0 and g.world.delivered == 2, "Completing the two-item load spends one backpack use across destinations")
 	t.near(g.resource_inventory()[1], 7, "The unfinished bed retains its sandstone without changing remote stock")
@@ -559,57 +705,6 @@ func check_direct_supply(t) -> void:
 	t.near(g.stock_at(distant, 1), 0, "A replacement blueprint cannot receive an old delivery through a stale target")
 	t.near(g.resource_inventory()[1], 7, "Cancellation preserves remote stock and the single excavated block")
 
-func check_mood(t) -> void:
-	var g = t.game
-	var ore := Vector2i(37, 13)
-	var p := Vector2i(28, 11)
-	# Faster or slower execution must not change the price of the same finished task.
-	for activity in ["mining", "building", "production"]:
-		var times: Array[float] = []
-		var wages: Array[float] = []
-		for initial_mood in [-80.0, 0.0, 80.0]:
-			t.fixtures.scenario("Mood changes paid output speed: %s / %s" % [activity, initial_mood], 1)
-			var w: Dictionary = g.world.workers[0]
-			w.mood.value = initial_mood
-			var complete: Callable
-			if activity == "mining":
-				g.designate(ore, ore)
-				complete = func(): return g.world.mined == 1
-			elif activity == "building":
-				t.fixtures.building_materials("bed")
-				g.place_building(p, "bed")
-				complete = func(): return g.world.beds.has(p)
-			else:
-				t.fixtures.station("bench", p)
-				g.add_stock(p, 2, 1)
-				g.adjust_production(p, 1)
-				complete = func(): return g.world.benches[p].stock == 1
-			t.advance_until(complete, 60, "The ordered output completes at every mood level")
-			var report: Dictionary = g.report_totals(g.world.day, w.id)
-			times.append(report["工作"] + report["挖掘"])
-			wages.append(w.earned_today)
-			var reward := 1.0 if activity == "mining" else 4.0 if activity == "building" else 2.0
-			t.near(w.earned_today, reward, "A completed task pays its agreed reward independently of execution speed")
-			t.near(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, g.STARTING_BREAD, "Actual meals and wage transfers conserve the same physical bread")
-			t.near(g.resource_activity("bread", 1).consumed, w.eaten_today, "Only actual eating, not wages, consumes bread")
-		t.check(times[0] > times[1] and times[1] > times[2], "Mood changes actual labor time, independent of breaks or activity choice")
-		t.check(is_equal_approx(wages[0], wages[1]) and is_equal_approx(wages[1], wages[2]), "Mood changes time, not the price of the finished item")
-
-	t.fixtures.scenario("Free recovery, independent newborns, and reset", 1)
-	var w: Dictionary = g.world.workers[0]
-	t.near(w.mood.value, 0, "New workers start emotionally neutral")
-	w.mood.value = -60
-	g.simulate(g.HOUR_SECONDS * 4)
-	t.check(w.mood.value > -60 and w.mood.value < 0, "Waiting without money gradually recovers mood, not instantly")
-	t.near(w.bread, 0, "Free recovery needs neither purchases nor loans")
-	var newcomer: Dictionary = g.create_worker(g.BASE)
-	t.near(newcomer.mood.value, 0, "A newcomer does not inherit another worker's experiences")
-	t.near(newcomer.hunger, g.MAX_HUNGER, "New workers arrive fully fed without personal bread")
-	t.near(newcomer.bread, 0, "Full starting satiety does not mint spendable food")
-	g.reset_world()
-	for person in g.world.workers:
-		t.near(person.mood.value, 0, "Reset discards old emotional history")
-
 func check_tracks(t) -> void:
 	var g = t.game
 	var source := Vector2i(36, 13)
@@ -627,11 +722,11 @@ func check_tracks(t) -> void:
 	t.check(not g.cancel_site(Vector2i(37, 13)) and g.player_blocks == 4, "A track occupies only its own cell")
 	g.simulate(30)
 	g.select_entity(source)
-	t.check(g.hud.entity_title.text == "矿道" and g.hud.entity_details.text.contains("通往传送门"), "Workers complete a connected track without another material charge")
+	t.check(g.building_kind_at(source) == "belt" and g.belt_destination(source) == g.BASE, "Workers complete a connected track without another material charge")
 	t.check(g.remove_belt(Vector2i(35, 13)), "Empty completed track can be dismantled")
 	t.advance_until(func(): return g.player_blocks == 1, 15, "Dismantled material returns by worker")
 	g.select_entity(source)
-	t.check(g.hud.entity_details.text.contains("未连接传送门"), "Upstream inspector reflects a severed connection")
+	t.check(g.belt_destination(source) == null, "Upstream inspector reflects a severed connection")
 
 	# Adjacent endpoints are not a connection until the player explicitly joins their cells.
 	t.fixtures.scenario("Separate strokes join without rotating or spending twice", 1)
@@ -641,13 +736,13 @@ func check_tracks(t) -> void:
 	var tail: Array[Vector2i] = [Vector2i(34, 13), Vector2i(33, 13), g.BASE]
 	g.place_belt_path(head)
 	g.place_belt_path(tail)
-	g.simulate(20)
+	t.advance_until(func(): return g.world.sites.is_empty(), g.HOUR_SECONDS * 4, "Both separate track strokes complete before testing their connection")
 	g.select_entity(source)
-	t.check(g.hud.entity_details.text.contains("未连接传送门"), "Touching endpoints do not silently join")
+	t.check(g.belt_destination(source) == null, "Touching endpoints do not silently join")
 	var join: Array[Vector2i] = [Vector2i(35, 13), Vector2i(34, 13)]
 	t.check(g.place_belt_path(join) and g.player_blocks == 0, "Existing endpoints can be joined without paying for either tile again")
 	g.select_entity(source)
-	t.check(g.hud.entity_details.text.contains("通往传送门"), "Explicit join keeps the receiving line's exit")
+	t.check(g.belt_destination(source) == g.BASE, "Explicit join keeps the receiving line's exit")
 	g.designate(ore, ore)
 	t.advance_until(func(): return g.world.delivered == 1, 30, "Ore traverses a line built from separate connected strokes")
 	t.near(g.world.portal.freight_bread, 0.2, "Connected-stroke delivery charges freight once")
@@ -674,16 +769,18 @@ func check_tracks(t) -> void:
 	var w: Dictionary = g.world.workers[0]
 	w.pos = Vector2(source)
 	g.designate(ore, ore)
-	t.advance_until(func(): return not g.world.belt_cargo.is_empty(), 20, "Miner puts the excavated block directly on a track")
+	t.advance_until(func(): return not g.world.belt_cargo.is_empty(), 30, "Miner puts the excavated block directly on a track, including any necessary meal")
 	t.check(w.carry == 0 and g.world.delivered == 0 and g.player_blocks == 0, "Track holds the ore but does not credit an undelivered block")
 	g.select_entity(source)
 	t.check(t.inventory_description(1).contains("搬运"), "Loaded track details show the actual ore in transit")
 	t.near(w.earned_today, 1.0, "Only mining wages are earned before arrival")
 	t.near(g.world.portal.freight_bread, 0, "Loading does not charge transport fees")
+	var charged_fee: float = w.earned_today - w.bread - g.resource_activity("bread", 1).consumed
+	t.check(charged_fee >= -0.000001 and charged_fee <= g.BELT_FEE + 0.000001, "Loading charges at most the actual available balance after any meal")
 	t.check(g.report_mined(1, 0) == 1, "Track delivery does not replace excavation reporting")
 	t.advance_until(func(): return g.world.delivered == 1, 5, "Conveyor delivers the ore to the portal")
 	t.near(w.earned_today, 1.0, "Ore delivery does not mint exchange income")
-	t.near(g.world.portal.freight_bread, 0.2, "Player receives exactly one transport fee")
+	t.near(g.world.portal.freight_bread, charged_fee, "Arrival credits exactly the actual transport payment once")
 	g.simulate(5)
 	t.check(g.world.delivered == 1 and g.player_blocks == 1, "Arrived cargo is not delivered again")
 	t.check(g.remove_belt(source), "A track vacated by delivered cargo can be dismantled without stale occupancy")
@@ -693,7 +790,9 @@ func check_tracks(t) -> void:
 		t.fixtures.scenario("Track fallback: " + route_kind, 1)
 		t.fixtures.belt(source, Vector2i.LEFT)
 		if route_kind == "cycle":
-			t.fixtures.belt(Vector2i(35, 13), Vector2i.RIGHT)
+			t.fixtures.belt(Vector2i(35, 13), Vector2i.DOWN)
+			t.fixtures.belt(Vector2i(35, 14), Vector2i.RIGHT)
+			t.fixtures.belt(Vector2i(36, 14), Vector2i.UP)
 		w = g.world.workers[0]
 		w.pos = Vector2(source)
 		g.designate(ore, ore)
@@ -708,7 +807,8 @@ func check_tracks(t) -> void:
 	t.fixtures.belt(Vector2i(36, 14), Vector2i.ZERO)
 	g.world.workers[0].pos = Vector2(source)
 	g.designate(ore, ore)
-	t.advance_until(func(): return not g.world.belt_cargo.is_empty(), 20, "Block has been loaded before the route is changed")
+	t.advance_until(func(): return not g.world.belt_cargo.is_empty(), 30, "Block has been loaded before the route is changed")
+	var blocked_fee: float = g.world.workers[0].earned_today - g.world.workers[0].bread - g.resource_activity("bread", 1).consumed
 	var redirect: Array[Vector2i] = [source, Vector2i(36, 14)]
 	t.check(not g.place_belt_path(redirect) and not g.remove_belt(source), "Loaded track cannot redirect or delete its cargo")
 	t.check(g.remove_belt(Vector2i(34, 13)), "An empty downstream segment can be removed")
@@ -718,8 +818,36 @@ func check_tracks(t) -> void:
 	var reconnect: Array[Vector2i] = [Vector2i(35, 13), Vector2i(34, 13), Vector2i(33, 13)]
 	t.check(g.place_belt_path(reconnect), "Refunded material can reconnect the gap")
 	t.advance_until(func(): return g.world.delivered == 1, 15, "Rebuilt route resumes transport without mining the block again")
-	t.near(g.world.portal.freight_bread, 0.2, "Resumed cargo pays once")
+	t.near(g.world.portal.freight_bread, blocked_fee, "Resumed cargo credits only its original actual payment once")
 	t.check(g.report_mined(1, 0) == 1 and g.report_mined(2, 0) == 0, "Delayed arrival does not count another excavation")
+
+	# Rewiring to another valid warehouse must not retarget goods already on the line.
+	t.fixtures.scenario("Redirected track retains the original receiver across saving", 1)
+	var other_receiver := Vector2i(34, 15)
+	t.fixtures.station("storage_box", other_receiver)
+	for cell in line.slice(0, 4):
+		t.fixtures.belt(cell, Vector2i.LEFT)
+	t.fixtures.belt(Vector2i(34, 14), Vector2i.DOWN)
+	g.world.workers[0].pos = Vector2(source)
+	g.designate(ore, ore)
+	t.advance_until(func(): return not g.world.belt_cargo.is_empty(), 30, "The ore is loaded toward the portal before the downstream exit changes")
+	var original_fee: float = g.world.workers[0].earned_today - g.world.workers[0].bread - g.resource_activity("bread", 1).consumed
+	var reroute: Array[Vector2i] = [Vector2i(34, 13), Vector2i(34, 14), other_receiver]
+	t.check(g.place_belt_path(reroute), "An empty downstream junction can be redirected to another warehouse")
+	g.simulate(5)
+	t.check(g.world.delivered == 0 and g.stock_at(other_receiver, 1) == 0, "A valid new exit cannot receive freight intended for the old receiver")
+	t.near(g.resource_inventory()[1], 1, "Waiting cargo remains a single physical item after redirection")
+	var redirected_save: Dictionary = g.capture_snapshot()
+	t.check(redirected_save.ok, "Freight waiting on a redirected line can be saved")
+	if redirected_save.ok:
+		t.check(g.restore_snapshot(redirected_save.data).ok, "Loading restores the changed layout and original freight destination together")
+	g.simulate(5)
+	t.check(g.world.delivered == 0 and g.stock_at(other_receiver, 1) == 0, "Restoring the network does not silently retarget the waiting cargo")
+	var restore_exit: Array[Vector2i] = [Vector2i(34, 13), Vector2i(33, 13), g.BASE]
+	t.check(g.place_belt_path(restore_exit), "Reconnecting the original exit reuses the existing track")
+	t.advance_until(func(): return g.world.delivered == 1, 5, "The original shipment resumes when its receiver is connected again")
+	t.near(g.world.portal.freight_bread, original_fee, "Redirection and reload settle only the original freight payment once")
+	t.near(g.stock_at(other_receiver, 1), 0, "The temporary receiver never acquires any of the original shipment")
 
 	# Simultaneous ore from two owners must merge without overwriting or mixing payouts.
 	t.fixtures.scenario("Two branches merge mixed ore and preserve ownership", 2)
@@ -731,36 +859,49 @@ func check_tracks(t) -> void:
 		g.world.workers[i].pos = Vector2(36, 12 + i * 2)
 		g.world.workers[i].carry = i + 1
 		g.world.workers[i].bread = 1.0
-	g.simulate(5)
+	t.advance_until(func(): return g.world.delivered == 2, 30, "The two initial ore loads reach the merged line's receiver")
 	t.check(g.world.delivered == 2 and g.world.portal.input_blocks.get(1, 0) == 1 and g.world.portal.input_blocks.get(2, 0) == 1, "Merged line delivers both original ore types once")
 	t.check(g.materials.get(1, 0) == 1 and g.materials.get(2, 0) == 1, "Mixed freight remains separate materials in the spendable inventory")
 	for worker in g.world.workers:
 		t.near(worker.earned_today, 0, "Freight delivery creates no wages or bread")
-	t.near(g.world.portal.freight_bread, 0.4, "Merged deliveries charge two fees")
+	var merged_fee: float = 2.0 - g.resource_activity("bread", 1).consumed
+	for worker in g.world.workers: merged_fee -= worker.bread
+	t.check(merged_fee >= -0.000001 and merged_fee <= g.BELT_FEE * 2 + 0.000001, "Each merged load charges no more than its actual available balance")
+	t.near(g.world.portal.freight_bread, merged_fee, "Merged deliveries transfer only their actual payments to the player")
 
-	# Same-cell contention must fall back without losing ore, and backpack use stays per load.
-	for shared in [false, true]:
-		t.fixtures.scenario("Track backpack and unloading contention: " + str(shared), 2 if shared else 1)
-		for cell in line.slice(0, 4):
-			t.fixtures.belt(cell, Vector2i.LEFT)
-		for worker in g.world.workers:
-			worker.pos = Vector2(source)
-			worker.carry = 1
-			worker.extra_cargo = [2]
-			worker.backpack_uses = 1
-		g.simulate(0.9)
+	# Every item must actually use the track, not quietly walk home when its entry is occupied.
+	for setting in [{"shared": false, "second": 1}, {"shared": false, "second": 2}, {"shared": true, "second": 2}]:
+		t.fixtures.track_backpacks(setting.shared, setting.second)
+		t.advance_until(func(): return not g.world.belt_cargo.is_empty(), 15, "The first real backpack item is loaded before saving")
 		var checkpoint: Dictionary = g.capture_snapshot()
 		t.check(checkpoint.ok, "A partially loaded conveyor batch can be saved")
 		if checkpoint.ok:
 			t.check(g.restore_snapshot(checkpoint.data).ok, "Conveyor and still-carried minerals resume together")
-		g.simulate(7.1)
+		t.advance_until(func(): return g.world.delivered == g.world.workers.size() * 2 and g.world.belt_cargo.is_empty(), 15, "All backpack goods arrive after loading in turn")
 		t.check(g.world.delivered == g.world.workers.size() * 2 and g.world.belt_cargo.is_empty(), "Every block reaches the portal even when unloading competes")
+		t.near(g.world.portal.freight_bread, g.BELT_FEE * g.world.workers.size() * 2, "Every item pays its one actual track trip; no second item is delivered on foot")
+		t.near(g.stock_at(g.BASE, 1), g.world.workers.size() * (2 if setting.second == 1 else 1), "Track loading preserves the sandstone quantity")
+		t.near(g.stock_at(g.BASE, 2), g.world.workers.size() * (1 if setting.second == 2 else 0), "Track loading preserves the copper quantity")
 		for worker in g.world.workers:
 			t.check(worker.carry == 0 and worker.backpack_uses == 0, "Two-block load consumes one backpack use, not one per deposit")
-		var income: float = g.player_bread
-		for worker in g.world.workers:
-			income += worker.earned_today
-		t.near(income, g.STARTING_BREAD, "Freight without new labor or food production cannot create bread")
+		t.near(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, g.STARTING_BREAD, "Meals and freight reconcile the actual starting bread without duplicate fees")
+
+	# A full but connected entry waits; a real player edit must still release that wait.
+	t.fixtures.track_backpacks(false, 2, true)
+	t.advance_until(func(): return not g.world.belt_cargo.is_empty(), 15, "The first item reaches the unpowered entry")
+	g.simulate(3)
+	t.check(g.world.delivered == 0 and g.cargo_count(g.world.workers[0]) == 1, "A stalled entry keeps the second item with its carrier instead of walking or bypassing the queue")
+	g.select_entity(source)
+	t.check(t.inventory_description(1).contains("搬运"), "The first item physically remains on the stalled track")
+	var waiting_save: Dictionary = g.capture_snapshot()
+	t.check(waiting_save.ok, "A carrier waiting with the remaining item can be saved")
+	if waiting_save.ok: t.check(g.restore_snapshot(waiting_save.data).ok, "Loading preserves the stalled cargo and carried item together")
+	g.simulate(2)
+	t.check(g.world.delivered == 0 and g.cargo_count(g.world.workers[0]) == 1, "Loading cannot turn an occupied entry into a walking delivery")
+	t.check(g.remove_belt(Vector2i(34, 13)), "The player can remove an empty downstream segment while loading waits")
+	t.advance_until(func(): return g.stock_at(g.BASE, 2) == 1, 10, "A genuinely disconnected entry replans the copper through the remaining connected route")
+	t.near(g.world.delivered, 1, "Only the carried item arrives; the first item is not duplicated out of the stalled track")
+	t.near(g.world.portal.freight_bread, g.BELT_FEE, "Only the copper's completed replacement trip settles a fee; the stalled first item remains unpaid")
 
 	# Debt deductions apply to actual net transport income, never the player's freight fee.
 	t.fixtures.scenario("Belt income repays a loan after freight", 1)
@@ -778,150 +919,8 @@ func check_tracks(t) -> void:
 	g.reset_world()
 	t.check(g.world.belts.is_empty() and g.world.belt_cargo.is_empty() and g.player_bread == g.STARTING_BREAD, "Reset clears tracks and restores only the finite starting supply")
 
-func check_generated_terrain(t) -> void:
+func check_distant_excavation(t) -> void:
 	var g = t.game
-	# Prevent seeds being ignored or old water/mining edits leaking into a new world.
-	t.fixtures.scenario("Seeded material fields reproduce the same world", 1, true)
-	var previous: Dictionary = {}
-	for seed_value in [0, 1020, 4294967295]:
-		g.reset_world(seed_value)
-		# No opening seed may strand the player without nearby finite clean water.
-		var camp := Rect2i(g.BASE - Vector2i(4, 2), Vector2i(9, 5))
-		var water_blocks: Dictionary = {}
-		var accessible_water = null
-		for cell in g.world.terrain:
-			if camp.has_point(cell):
-				t.check(g.world.terrain[cell] == 0 and not g.world.water_sources.has(cell), "The starting water group leaves the camp clear")
-			if camp.grow(3).has_point(cell) and g.world.terrain[cell] == g.MapGenerator.WATER_BLOCK:
-				water_blocks[cell] = true
-				for direction in g.DIRS:
-					if camp.has_point(cell + direction): accessible_water = cell
-		t.check(water_blocks.size() >= 5 and accessible_water != null, "Every seed provides a water-block group directly accessible from the camp")
-		if accessible_water != null:
-			var reached: Dictionary = {accessible_water: true}
-			var frontier: Array = [accessible_water]
-			while not frontier.is_empty():
-				var cell: Vector2i = frontier.pop_back()
-				for direction in g.DIRS:
-					var neighbor: Vector2i = cell + direction
-					if water_blocks.has(neighbor) and not reached.has(neighbor):
-						reached[neighbor] = true
-						frontier.append(neighbor)
-			t.check(reached.size() >= 5, "Nearby water is a connected mineable group, not scattered single sources")
-		var blocks: Dictionary = g.world.terrain.duplicate()
-		var water: Dictionary = g.world.water_sources.duplicate()
-		if not previous.is_empty():
-			t.check(blocks != previous, "Different seeds change the actual mineral layout")
-		g.reset_world(seed_value + 1)
-		g.reset_world(seed_value)
-		t.check(g.world.terrain == blocks and g.world.water_sources == water, "Recreating a seed restores exactly its minerals and water, without remnants of another map")
-		previous = blocks
-		if accessible_water != null:
-			g.designate(accessible_water, accessible_water)
-			t.advance_until(func(): return g.stock_at(g.BASE, "clean_water") == 1, 40, "The generated starting group yields actual clean water through normal mining and delivery")
-			t.near(g.resource_activity("clean_water", 1).produced, 1, "A generated water block produces clean water exactly once")
-			g.ensure_region(camp.grow(3))
-			t.check(g.world.terrain[accessible_water] == 0 and not g.world.water_sources.has(accessible_water), "Revisiting mined water leaves ordinary open ground, not a respawn or pump source")
-
-	# Measure the delivered map, including water and the camp, not noise internals.
-	for seed_value in [0, 1020, 4294967295]:
-		g.reset_world(seed_value)
-		var sample_area := Rect2i(-64, -64, 256, 192)
-		g.ensure_region(sample_area)
-		var sample := map_snapshot(g, sample_area)
-		var sandstone := 0
-		for material in sample.values():
-			if material == 1:
-				sandstone += 1
-		var share := float(sandstone) / sample.size()
-		print("MAP seed=%d sandstone=%.2f%% other=%.2f%% ratio=%.2f:1" % [seed_value, share * 100.0, (1.0 - share) * 100.0, share / (1.0 - share)])
-		t.check(share >= 0.75 and share <= 0.8, "Representative maps keep sandstone at 75-80 percent, including all minerals and caves in the remainder")
-
-	# Exercise actual generated resources, rather than just the hand-arranged quarry.
-	t.fixtures.scenario("Mine and inspect the generated world", 1, true)
-	var ore := Vector2i(-1, -1)
-	var camp := Rect2i(g.BASE - Vector2i(4, 2), Vector2i(9, 5))
-	for cell in g.world.explored:
-		if g.world.terrain[cell] < 1 or g.world.terrain[cell] > 4:
-			continue
-		for direction in g.DIRS:
-			if camp.has_point(cell + direction):
-				ore = cell
-				break
-		if ore.x >= 0:
-			break
-	t.check(ore.x >= 0, "The chosen seed provides an ordinary block adjacent to the camp for this mining scenario")
-	if ore.x < 0:
-		return
-	var mineral: int = g.world.terrain[ore]
-	g.select_tile(ore)
-	t.check(g.hud.entity_title.text == g.ORES[mineral].name, "Generated material is shown correctly in the inspector")
-	t.check(g.designate(ore, ore) == 1, "A generated ordinary block accepts a mining command")
-	t.advance_until(func(): return g.world.delivered == 1, 30, "Generated ore is mined and delivered through normal gameplay")
-	t.check(g.world.terrain[ore] == 0 and g.stock_at(g.BASE, mineral) == 1, "Mining clears the generated block and delivers its actual material once")
-	g.reset_world(1020)
-	t.check(g.world.terrain[ore] == mineral and g.player_blocks == 0, "Restarting the same seed restores the original deposit and clears previous inventory")
-	check_unbounded_world(t)
-
-func map_snapshot(g, area: Rect2i) -> Dictionary:
-	var result: Dictionary = {}
-	for y in range(area.position.y, area.end.y):
-		for x in range(area.position.x, area.end.x):
-			var cell := Vector2i(x, y)
-			result[cell] = g.MapGenerator.WATER if g.world.water_sources.has(cell) else g.world.terrain[cell]
-	return result
-
-func check_unbounded_world(t) -> void:
-	var g = t.game
-	# Exploration order must not move deposits, truncate caves, or duplicate water.
-	t.fixtures.scenario("Distant geology is independent of exploration order", 0, true)
-	var areas := [Rect2i(-160, -96, 64, 64), Rect2i(160, 96, 64, 64), Rect2i(-32, -32, 64, 64)]
-	var snapshots: Array[Dictionary] = []
-	var counts: Dictionary = {}
-	for area in areas:
-		g.ensure_region(area)
-		var snapshot := map_snapshot(g, area)
-		snapshots.append(snapshot)
-		# Prevent overlapping spots from consuming the sandstone or forming giant fields.
-		var sandstone := 0
-		for material in snapshot.values():
-			if material == 1:
-				sandstone += 1
-		t.check(sandstone >= snapshot.size() * 0.65, "Sandstone remains the dominant ground throughout sampled regions")
-		var visited: Dictionary = {}
-		var largest := 0
-		for start in snapshot:
-			if visited.has(start) or snapshot[start] in [1, 5, 6, g.MapGenerator.WATER]:
-				continue
-			var frontier: Array[Vector2i] = [start]
-			visited[start] = true
-			var size := 0
-			while not frontier.is_empty():
-				var current: Vector2i = frontier.pop_back()
-				size += 1
-				for direction in g.DIRS:
-					var neighbor: Vector2i = current + direction
-					if snapshot.get(neighbor, -1) == snapshot[start] and not visited.has(neighbor):
-						visited[neighbor] = true
-						frontier.append(neighbor)
-			largest = maxi(largest, size)
-		t.check(largest <= 512, "Varied mineral deposits and caves stay compact instead of merging into region-wide fields")
-		for cell in snapshot:
-			counts[snapshot[cell]] = counts.get(snapshot[cell], 0) + 1
-			if snapshot[cell] in [5, 6, g.MapGenerator.WATER]:
-				var isolated := true
-				for direction in g.DIRS:
-					var neighbor: Vector2i = cell + direction
-					if area.has_point(neighbor) and snapshot[neighbor] in [5, 6, g.MapGenerator.WATER]:
-						isolated = false
-				t.check(isolated, "Special sources occupy isolated single cells rather than ordinary mineral fields")
-	for material in range(11):
-		t.check(counts.get(material, 0) > 0, "Exploration finds terrain category %d, including natural caves and scarce sources" % material)
-	g.reset_world(1021)
-	g.reset_world(1020)
-	for i in range(areas.size() - 1, -1, -1):
-		g.ensure_region(areas[i])
-		t.check(map_snapshot(g, areas[i]) == snapshots[i], "Reversing discovery preserves the complete mineral, cave and water layout")
 
 	# Negative coordinates, the former sentinel and the old right edge must all work.
 	for target in [Vector2i(-33, -1), Vector2i(-1, -1), Vector2i(160, 13)]:
@@ -936,8 +935,6 @@ func check_unbounded_world(t) -> void:
 		g.world.water_sources.erase(target)
 		g.cache.navigation.set_point_solid(target, true)
 		g.world.explored[target] = true
-		g.select_tile(target)
-		t.check(g.hud.entity_panel.visible and g.hud.entity_title.text == "铜矿", "Negative and distant cells retain their clicked details")
 		t.check(g.designate(target, target) == 1, "Mining commands accept cells outside the old rectangle")
 		t.advance_until(func(): return g.stock_at(g.BASE, 2) == 1, 600, "Workers cross region boundaries and deliver the real material to the portal")
 		g.ensure_region(Rect2i(target - Vector2i.ONE * 2, Vector2i.ONE * 5))

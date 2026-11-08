@@ -7,18 +7,23 @@ const Life = preload("res://scripts/simulation/activities/life.gd")
 const Economy = preload("res://scripts/simulation/activities/economy.gd")
 const Delivery = preload("res://scripts/simulation/activities/delivery.gd")
 
+const STARVATION := 1
+const EXHAUSTION := 2
+const SEVERE_ILLNESS := 4
+
 var active = null
 var drink_elapsed := -1.0
 var decision_wait := 0.0
-var review_elapsed := 0.0
+var previous_limits := 0
 var inertia_group := ""
 var inertia_hours := 0.0
 
 func tick(g, w: Dictionary, delta: float) -> Dictionary:
 	var experience: Dictionary = {}
 	inertia_hours += delta / g.HOUR_SECONDS
-	if active != null and (not active.valid(g, w) or (w.fatigue >= g.MAX_FATIGUE and active.record.kind != "sleep")):
+	if active != null and not active.valid(g, w):
 		exit(g, w, "invalidated")
+	check_hard_interrupt(g, w)
 	decision_wait -= delta
 	if active == null and decision_wait <= 0:
 		select(g, w)
@@ -60,18 +65,59 @@ func tick(g, w: Dictionary, delta: float) -> Dictionary:
 				active.age = 0.0
 				return experience
 		exit(g, w, result)
-	else:
-		review_elapsed += delta
-		if review_elapsed >= Parameters.REVIEW_HOURS * g.HOUR_SECONDS and (active is Work or active is Delivery):
-			review_elapsed = 0.0
-			var choices: Array = Selection.options(g, w, "activity_review")
-			var continuation := -INF
-			for option in choices:
-				if active.matches_option(option):
-					continuation = maxf(continuation, option.score)
-			if not choices.is_empty() and not active.matches_option(choices[0]) and choices[0].score > continuation and not is_equal_approx(choices[0].score, continuation):
-				exit(g, w, "reconsidered")
 	return experience
+
+func limit_flags(g, w: Dictionary) -> int:
+	return ((STARVATION if w.hunger <= Parameters.STARVATION_INTERRUPT else 0)
+		| (EXHAUSTION if w.fatigue >= g.MAX_FATIGUE else 0)
+		| (SEVERE_ILLNESS if w.pollution >= Parameters.ILLNESS_INTERRUPT else 0))
+
+func response_reason(g, w: Dictionary, kind: String, data: Dictionary) -> String:
+	if w.hunger <= Parameters.STARVATION_INTERRUPT:
+		if kind in ["eat", "borrow"] or (kind in ["use_item", "purchase"] and data.get("item") == "meat"):
+			return "starvation"
+	if w.pollution >= Parameters.ILLNESS_INTERRUPT and kind == "service" and data.get("kind") == "hospital":
+		return "severe_illness"
+	if w.fatigue >= g.MAX_FATIGUE and kind == "sleep":
+		return "exhaustion"
+	return ""
+
+func check_hard_interrupt(g, w: Dictionary) -> void:
+	var limits := limit_flags(g, w)
+	var entered := limits & ~previous_limits
+	previous_limits = limits
+	if active == null or limits == 0:
+		return
+	var record = active.record
+	# Finish a started bite/treatment; simultaneous crises must not cancel each other.
+	if active.phase == "use" and (record.kind == "eat" or (record.kind == "use_item" and record.data.item == "meat") or (record.kind == "service" and record.data.kind == "hospital")):
+		return
+	if response_reason(g, w, record.kind, record.data) != "":
+		return
+	if entered != 0:
+		# Crossing settles real earned wages, which may make the remedy affordable.
+		exit(g, w, "starvation" if entered & STARVATION else "exhaustion" if entered & EXHAUSTION else "severe_illness")
+	elif response_available(g, w):
+		var choices: Array = Selection.options(g, w, "hard_limit_response", true)
+		if not choices.is_empty():
+			exit(g, w, response_reason(g, w, choices[0].kind, choices[0].data))
+
+func response_available(g, w: Dictionary) -> bool:
+	if w.fatigue >= g.MAX_FATIGUE:
+		return true
+	if w.hunger <= Parameters.STARVATION_INTERRUPT:
+		if w.bread > 0 or w.items.get("meat", 0) > 0:
+			return true
+		if not g.has_debt(w) and w.loan_day != g.world.day:
+			for p in g.world.smart_objects.query("bank"):
+				if g.stock_at(p, "bread") > 0 and not g.route(Vector2i(w.pos.round()), p).is_empty():
+					return true
+	if w.pollution >= Parameters.ILLNESS_INTERRUPT:
+		var slot: String = g.SERVICES.hospital.slot
+		for p in g.world.smart_objects.query(slot):
+			if g.can_use_service(w, p) and g.world.smart_objects.available(g.SmartObjects.key(slot, p), w.id) and not g.route(Vector2i(w.pos.round()), p).is_empty():
+				return true
+	return false
 
 func activity_group(kind: String, data: Dictionary) -> String:
 	match kind:
@@ -109,7 +155,6 @@ func select(g, w: Dictionary) -> void:
 			"deliver": activity = Delivery.new()
 		if activity.enter(g, w, option):
 			active = activity
-			review_elapsed = 0.0
 			remember_choice(option)
 			g.ai_trace.entered(g, w, option)
 			return
@@ -121,7 +166,7 @@ func exit(g, w: Dictionary, reason: String) -> void:
 	if active != null:
 		g.ai_trace.record(g, w, "state_tree", "exiting", {"reason": reason})
 		active.exit(g, w, reason)
-	if reason in ["cancelled", "invalidated", "failure"]:
+	if reason in ["cancelled", "invalidated", "failure", "starvation", "exhaustion", "severe_illness"]:
 		inertia_group = ""
 		inertia_hours = 0.0
 	active = null

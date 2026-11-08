@@ -4,7 +4,6 @@ const CLOTHES_CAPACITY := 50.0
 const BODY_CAPACITY := 100.0
 const DISCOMFORT := 30.0
 const DISEASE := 70.0
-const BASE_PER_HOUR := 50.0 / 48.0
 const EXPOSURE_PER_HOUR := 0.1
 const CLEANER_REMOVAL := 0.5
 const SOURCES := {
@@ -48,8 +47,8 @@ func rebuild_world(world) -> void:
 	for p in world.wastewater:
 		spread(p, world.wastewater[p], 2)
 	# Reserved goods remain at the source until picked; carried loads move with their holder.
-	for shipment in world.shipments:
-		if shipment.get("on_belt", false): continue
+	for shipment in world.delivery_tasks:
+		if not shipment.bound or shipment.get("on_belt", false): continue
 		var p: Vector2i = shipment.source
 		if shipment.picked and shipment.owner >= 0:
 			p = Vector2i(world.workers[shipment.owner].pos.round())
@@ -78,7 +77,7 @@ func expose(g, delta: float) -> void:
 		# A patient emits into the field but does not infect themself a second time.
 		var was_sick: bool = w.pollution >= DISEASE
 		var external := maxf(0, at(Vector2i(w.pos.round())) - (20.0 if was_sick else 0.0))
-		absorb(w, (BASE_PER_HOUR + external * EXPOSURE_PER_HOUR) * delta / g.HOUR_SECONDS)
+		absorb(w, external * EXPOSURE_PER_HOUR * delta / g.HOUR_SECONDS)
 		if not was_sick and w.pollution >= DISEASE:
 			new_source = true
 	if new_source: rebuild(g)

@@ -19,9 +19,10 @@ var belts: Dictionary = {}
 var power_lines: Dictionary = {}
 var belt_cargo: Dictionary = {}
 var next_cargo_id := 0
-# Reserved freight remains at its source until pickup.
+# Free stock and task-bound stock together form the source's physical inventory.
 var stores: Dictionary = {}
-var shipments: Array[Dictionary] = []
+var delivery_tasks: Array[Dictionary] = []
+var next_delivery_task_id := 0
 var workers: Array[Dictionary] = []
 # Reservations affect future actions and must not be discarded with caches.
 var smart_objects := SmartObjects.new()
@@ -42,15 +43,16 @@ var recovery_timer := 0.0
 var wastewater: Dictionary = {}
 # Last step's actual emissions are the source facts for the displayed field.
 var pollution_operations: Dictionary = {}
+var research_progress: Dictionary = {}
 
 func reset(seed_value: int, base: Vector2i, starting_bread: float) -> void:
 	world_seed = seed_value
 	for collection in [generated_chunks, terrain, water_sources, explored,
 			mining_contracts, sites, beds, benches, banks, belts, power_lines,
 			belt_cargo, stores, daily_records, daily_mined, resource_flows,
-			wastewater, pollution_operations]:
+			wastewater, pollution_operations, research_progress]:
 		collection.clear()
-	shipments.clear()
+	delivery_tasks.clear()
 	# Keep the registry's serials monotonic across worlds, invalidating old claims.
 	smart_objects.clear()
 	newborns.clear()
@@ -58,6 +60,7 @@ func reset(seed_value: int, base: Vector2i, starting_bread: float) -> void:
 	inventory_history.clear()
 	stores[base] = {"bread": starting_bread}
 	next_cargo_id = 0
+	next_delivery_task_id = 0
 	delivered = 0
 	mined = 0
 	day = 1

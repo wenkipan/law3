@@ -1,55 +1,44 @@
 extends "res://scripts/simulation/activities/activity.gd"
 
 var mined := false
-var shipment: Dictionary = {}
+var task: Dictionary = {}
 var receiver: Vector2i
 
 func enter(g, w: Dictionary, proposal) -> bool:
 	if not super.enter(g, w, proposal):
 		return false
 	mined = record.data.get("mined", false)
-	shipment = proposal.data.get("shipment", {})
-	if shipment.is_empty():
-		shipment = g.claim_delivery(w, proposal.data)
-		if shipment.is_empty():
-			return false
-	if not g.world.shipments.has(shipment) or shipment.get("on_belt", false) or shipment.owner not in [-1, w.id]:
+	if not g.claim_delivery_tasks(w, proposal.data): return false
+	task = w.delivery_tasks[0]
+	if not g.world.delivery_tasks.has(task) or task.get("on_belt", false) or task.owner != w.id:
 		return false
-	shipment.owner = w.id
-	if not mined:
-		w.freight = shipment
-	receiver = shipment.target
-	phase = "transport" if shipment.picked else "pickup"
+	receiver = task.target
+	phase = "transport" if task.picked else "pickup"
 	return true
 
 func valid(g, w: Dictionary) -> bool:
-	return (not mined or not is_same(w.carry, 0)) and g.world.shipments.has(shipment) and not shipment.get("on_belt", false) and shipment.owner == w.id
+	return (not mined or not is_same(w.carry, 0)) and g.world.delivery_tasks.has(task) and task.bound and not task.get("on_belt", false) and task.owner == w.id and g.world.smart_objects.valid(task.handle)
 
 func matches_option(proposal) -> bool:
-	# Pickup, transport and redirected routes still fulfill the same world shipment.
-	return proposal.kind == "deliver" and is_same(proposal.data.get("shipment"), shipment)
+	# Pickup, transport and redirected routes still fulfill the same concrete task.
+	return proposal.kind == "deliver" and proposal.data.tasks.has(task)
 
 func tick(g, w: Dictionary, delta: float) -> String:
-	# Cancellation can redirect an in-flight shipment, never its physical contents.
-	if phase != "pickup" and receiver != shipment.target:
+	# Replan for receiver or connection changes, never temporary entry occupancy.
+	if phase != "pickup" and (receiver != task.target
+			or (destination != task.target and g.belt_destination(destination) != task.target)):
 		if not transport_route(g, w):
 			return "failure"
 	if phase == "handoff":
 		elapsed += delta
 		if elapsed < (0.6 if mined else 0.0):
 			return "running"
-		if destination == shipment.target:
-			if mined:
-				g.take_carried_ore(w, shipment.item)
-				w.ore_delivery = shipment.get("next_ore", {})
-				shipment.erase("next_ore")
-			g.complete_delivery(shipment)
-		elif not g.load_belt(w, shipment, destination):
-			return "running" if transport_route(g, w, false) else "failure"
-		if not mined:
-			w.freight = {}
-		elif not w.ore_delivery.is_empty():
-			shipment = w.ore_delivery
+		if destination == task.target:
+			g.unload_delivery(w, task)
+		elif not g.load_belt(w, task, destination):
+			return "running"
+		if not w.delivery_tasks.is_empty():
+			task = w.delivery_tasks[0]
 			elapsed = 0.0
 			return "running" if transport_route(g, w) else "failure"
 		return "success"
@@ -59,15 +48,15 @@ func tick(g, w: Dictionary, delta: float) -> String:
 	if reached == 0:
 		return "running"
 	if phase == "pickup":
-		shipment.picked = true
+		for part in w.delivery_tasks: part.picked = true
 		return "running" if transport_route(g, w) else "failure"
 	phase = "handoff"
 	elapsed = 0.0
 	return "running"
 
-func transport_route(g, w: Dictionary, use_belts := true) -> bool:
-	var target: Vector2i = shipment.target
-	var leg: Dictionary = g.delivery_route(Vector2i(w.pos.round()), target, use_belts)
+func transport_route(g, w: Dictionary) -> bool:
+	var target: Vector2i = task.target
+	var leg: Dictionary = g.delivery_route(Vector2i(w.pos.round()), target)
 	destination = leg.stop
 	path = leg.path
 	receiver = target
@@ -75,8 +64,7 @@ func transport_route(g, w: Dictionary, use_belts := true) -> bool:
 	return not path.is_empty()
 
 func exit(g, w: Dictionary, reason: String) -> void:
-	if not mined and not shipment.is_empty() and not shipment.picked and shipment.owner == w.id:
-		g.release_shipment(shipment)
-		w.freight = {}
+	for part in w.delivery_tasks.duplicate():
+		if not part.picked and part.owner == w.id: g.release_delivery_task(part)
 	# Picked cargo remains with its carrier across sleep and other interruptions.
 	super.exit(g, w, reason)

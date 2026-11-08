@@ -151,7 +151,7 @@ func components(w: Dictionary) -> Dictionary:
 			"claims": a.handles.duplicate(true), "drink_elapsed": w.activity.drink_elapsed})
 		if a.record.kind == "deliver":
 			activity.receiver = cell(a.receiver)
-			activity.shipment = shipment(a.shipment)
+			activity.task = delivery_task(a.task)
 	return {"position": [w.pos.x, w.pos.y],
 		"needs": {"hunger": w.hunger, "fatigue": w.fatigue,
 			"pollution": w.pollution, "clothes_pollution": w.clothes_pollution},
@@ -161,7 +161,7 @@ func components(w: Dictionary) -> Dictionary:
 			"earned_today": w.earned_today, "eaten_today": w.eaten_today,
 			"loan_principal": w.loan_principal, "loan_interest": w.loan_interest},
 		"cargo": {"ore": w.carry, "extra_ore": w.extra_cargo.duplicate(),
-			"freight": shipment(w.freight), "ore_delivery": shipment(w.ore_delivery)},
+			"tasks": w.delivery_tasks.map(func(task): return delivery_task(task))},
 		"equipment": {"gun_uses": w.gun_uses, "backpack_uses": w.backpack_uses,
 			"water": w.water, "buffs": w.buffs.timed, "items": w.items, "equipment": w.equipment},
 		"mood": {"value": w.mood.value, "shopping": w.mood.shopping, "avoids_machines": w.mood.avoids_machines},
@@ -174,8 +174,8 @@ static func proposal(option) -> Dictionary:
 	var result := activity_record(option)
 	result.score = option.score
 	result.slots = option.slots.duplicate()
-	if option.data.has("shipment"):
-		result.shipment = shipment(option.data.shipment)
+	if option.data.has("tasks"):
+		result.tasks = option.data.tasks.map(func(task): return delivery_task(task))
 	return result
 
 static func activity_record(value) -> Dictionary:
@@ -188,9 +188,9 @@ static func activity_record(value) -> Dictionary:
 			result["delivery_target" if key == "target" else key] = cell(value.data[key])
 	return result
 
-static func shipment(value: Dictionary) -> Dictionary:
+static func delivery_task(value: Dictionary) -> Dictionary:
 	if value.is_empty():
 		return {}
-	return {"source": cell(value.source), "target": cell(value.target), "item": value.item,
+	return {"id": value.id, "bound": value.bound, "source": cell(value.source), "target": cell(value.target), "item": value.item,
 		"amount": value.amount, "owner": value.owner, "picked": value.picked,
 		"on_belt": value.get("on_belt", false)}

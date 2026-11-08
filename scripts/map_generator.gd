@@ -1,16 +1,16 @@
 extends RefCounted
 
-const VERSION := 6
+const VERSION := 8
 const CHUNK_SIZE := 32
 const WATER_BLOCK := 9
 const WATER := 10
 const REGION_SIZE := 128
-const SPOT_GRID := 16
-const MIN_RADIUS := 6.0
-const MAX_RADIUS := 14.0
+const SPOT_GRID := 6
+const MIN_RADIUS := 3.0
+const MAX_RADIUS := 7.0
 const SPOT_RATE := 1.5
-const SPOT_SEPARATION := 0.6
-const SPOT_GAP := 0.5
+const SPOT_SEPARATION := 0.3
+const SPOT_GAP := 0.2
 const SPOT_THRESHOLD := 0.025
 const SPECIAL_GRID := 12
 const SPECIAL_GAP := 7.0
@@ -19,35 +19,45 @@ const DIRS := [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
 const PROFILES := [Vector4(0.85, 0.18, 0.25, 0.25), Vector4(0.18, 0.85, 0.2, 0.4),
 	Vector4(0.2, 0.15, 0.9, 0.15), Vector4(0.25, 0.25, 0.2, 0.85)]
 const SPECIALS := {
-	5: {"chance": 0.16, "size": Vector2i(1, 1)},
-	6: {"chance": 0.16, "size": Vector2i(1, 1)},
-	WATER: {"chance": 0.65, "size": Vector2i(1, 1)},
+	5: {"chance": 0.16, "size": Vector2i(1, 1), "outside_start": true},
+	6: {"chance": 0.16, "size": Vector2i(1, 1), "outside_start": true},
+	WATER: {"chance": 0.65, "size": Vector2i(1, 1), "outside_start": true},
 }
 static var chunk_cache: Dictionary = {}
 var seed_value: int
 var camp: Rect2i
+var starting_region: Vector2i
 var region_cache: Dictionary = {}
 var candidate_cache: Dictionary = {}
 var spot_cache: Dictionary = {}
 var special_cache: Dictionary = {}
 var base_cache: Dictionary = {}
-var starting_water: Dictionary = {}
+var starting_water_spot: Dictionary = {}
 
 func _init(world_seed: int, starting_area := Rect2i()) -> void:
 	seed_value = world_seed
 	camp = starting_area
 	if camp.has_area():
-		var center := camp.get_center()
-		match mini(3, int(random_at(camp.position, 90) * 4)):
-			0: center.x = camp.position.x - 2
-			1: center.x = camp.end.x + 1
-			2: center.y = camp.position.y - 2
-			3: center.y = camp.end.y + 1
-		for y in range(-1, 2):
-			for x in range(-1, 2):
-				var cell := center + Vector2i(x, y)
-				if x == 0 or y == 0 or random_at(cell, 91) < 0.5:
-					starting_water[cell] = true
+		starting_region = region_index_at(Vector2(camp.get_center()) + Vector2.ONE * 0.5)
+		select_starting_water_spot()
+
+func select_starting_water_spot() -> void:
+	var center := Vector2(camp.get_center())
+	var index := Vector2i((center / SPOT_GRID).floor())
+	var reach := 2
+	# Reuse a surviving mineral spot without changing its position or outline.
+	while starting_water_spot.is_empty():
+		var nearest := INF
+		for y in range(index.y - reach, index.y + reach + 1):
+			for x in range(index.x - reach, index.x + reach + 1):
+				for spot in spots_at(Vector2i(x, y)):
+					if spot.field == 3 or camp.has_point(Vector2i(spot.center.floor())):
+						continue
+					var distance: float = center.distance_squared_to(spot.center)
+					if distance < nearest:
+						nearest = distance
+						starting_water_spot = spot
+		reach += 1
 
 static func chunk_at(cell: Vector2i) -> Vector2i:
 	return Vector2i(floori(float(cell.x) / CHUNK_SIZE), floori(float(cell.y) / CHUNK_SIZE))
@@ -70,6 +80,19 @@ func region_at(index: Vector2i) -> Dictionary:
 			"profile": PROFILES[mini(3, int(random_at(index, 3) * PROFILES.size()))],
 		}, 128)
 	return region_cache[index]
+
+func region_index_at(point: Vector2) -> Vector2i:
+	var index := Vector2i((point / REGION_SIZE).floor())
+	var nearest := INF
+	var result := index
+	for y in range(index.y - 2, index.y + 3):
+		for x in range(index.x - 2, index.x + 3):
+			var candidate := Vector2i(x, y)
+			var distance := point.distance_squared_to(region_at(candidate).center)
+			if distance < nearest:
+				nearest = distance
+				result = candidate
+	return result
 
 func profile_at(point: Vector2) -> Vector4:
 	var index := Vector2i((point / REGION_SIZE).floor())
@@ -147,8 +170,6 @@ func spots_at(index: Vector2i) -> Array:
 func base_material(cell: Vector2i) -> int:
 	if camp.has_point(cell):
 		return 0
-	if starting_water.has(cell):
-		return WATER_BLOCK
 	if base_cache.has(cell):
 		return base_cache[cell]
 	var point := Vector2(cell) + Vector2.ONE * 0.5
@@ -167,6 +188,8 @@ func base_material(cell: Vector2i) -> int:
 				var edge := 0.84 + 0.1 * sin(angle * 3.0 + spot.phase) + 0.06 * sin(angle * 5.0 - spot.phase * 2.0)
 				var falloff := maxf(0.0, 1.0 - delta.length() / (spot.radius * edge))
 				var material: int = 0 if spot.field == 3 else spot.material
+				if not starting_water_spot.is_empty() and spot.index == starting_water_spot.index and spot.field == starting_water_spot.field:
+					material = WATER_BLOCK
 				strengths[material] = maxf(strengths[material], falloff * falloff)
 	var material := 1
 	if strengths[0] > SPOT_THRESHOLD:
@@ -197,7 +220,7 @@ func special_at(index: Vector2i) -> Dictionary:
 			for step in SPECIAL_GRID * SPECIAL_GRID:
 				var offset := Vector2i((local.x + step % SPECIAL_GRID) % SPECIAL_GRID, (local.y + step / SPECIAL_GRID) % SPECIAL_GRID)
 				var location := index * SPECIAL_GRID + offset
-				if not camp.grow(2).has_point(location) and base_material(location) != 0 and water_accessible(location, []):
+				if special_allowed_at(location, definition) and water_accessible(location, []):
 					center = location
 					found = true
 					break
@@ -213,7 +236,7 @@ func special_at(index: Vector2i) -> Dictionary:
 			var next := center + Vector2i(step, 0) if random_at(index, 85) < 0.5 else center + Vector2i(0, step)
 			cells.append(next)
 		for cell in cells:
-			if camp.grow(2).has_point(cell) or starting_water.has(cell) or base_material(cell) == 0:
+			if not special_allowed_at(cell, definition):
 				cells.clear()
 				break
 		if kind == WATER and not cells.is_empty():
@@ -225,6 +248,16 @@ func special_at(index: Vector2i) -> Dictionary:
 	var result := {"kind": kind, "cells": cells, "priority": random_at(index, 86), "index": index}
 	remember(special_cache, index, result)
 	return result
+
+func special_allowed_at(cell: Vector2i, definition: Dictionary) -> bool:
+	if camp.grow(2).has_point(cell):
+		return false
+	# Check every footprint cell, including a relocated water source, at the hard
+	# Voronoi boundary; blended mineral weights do not define the starting region.
+	if camp.has_area() and definition.get("outside_start", false):
+		if region_index_at(Vector2(cell) + Vector2.ONE * 0.5) == starting_region:
+			return false
+	return base_material(cell) != 0
 
 func water_accessible(cell: Vector2i, footprint: Array) -> bool:
 	# Pump is two horizontal cells; retain room for its full footprint.

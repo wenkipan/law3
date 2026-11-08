@@ -48,8 +48,7 @@ func sync(w: Dictionary, clock: float, cell_size: float, work_active := true, or
 	var gun: bool = w.state == "dig" and w.gun_uses > 0
 	var backpack: bool = w.backpack_uses > 0
 	var in_bed: bool = w.state == "sleep" and w.bed != null
-	var freight: bool = not w.freight.is_empty() and w.freight.picked
-	var cargo_item = w.freight.item if freight else (null if is_same(w.carry, 0) else w.carry)
+	var cargo_item = w.cargo_item
 	$Puppet/Torso.modulate = Color("#d8a8c8").lerp(Color("#888c87"), w.clothes_pollution / 50.0) if w.equipment.get("clothes", 0) > 0 else w.color.lightened(0.2)
 	$Puppet/Head.modulate = Color("#b6cfaa") if w.pollution >= 70 else Color.WHITE
 	if last_origin == origin and last_clock == clock and last_position == w.pos and last_state == w.state and is_same(last_carry, w.carry) and last_facing == w.facing and last_walking == walking and last_in_bed == in_bed and last_gun == gun and last_backpack == backpack and last_work_active == work_active and last_service == w.get("service", "") and is_same(last_cargo_item, cargo_item):
@@ -86,7 +85,7 @@ func sync(w: Dictionary, clock: float, cell_size: float, work_active := true, or
 	$Puppet/LeftArm.rotation = -stride * 0.3
 	$Puppet/RightArm.rotation = stride * 0.3
 	$Puppet/Tool.visible = w.state in ["dig", "build", "work", "eat", "drink", "use_item", "service"] and (w.state != "work" or work_active)
-	$Puppet/Cargo.visible = (not is_same(w.carry, 0) or freight) and not in_bed
+	$Puppet/Cargo.visible = cargo_item != null and not in_bed
 	if not is_same(last_cargo_item, cargo_item):
 		last_cargo_item = cargo_item
 		if cargo_item != null:

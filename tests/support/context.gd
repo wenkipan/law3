@@ -59,19 +59,14 @@ func report_seconds(worker := -1, report_day := 1) -> float:
 		total += value
 	return total
 
-func effect_description(id: String) -> String:
-	var entries: Dictionary = game.get_node("UI").effect_icons.entries
-	return entries[id].description if entries.has(id) and entries[id].visible else ""
-
 func inventory_description(item) -> String:
 	var entries: Dictionary = game.get_node("UI").inventory_icons.entries
 	return entries[item].description if entries.has(item) and entries[item].visible else ""
 
-func personal_feedback_text() -> String:
-	var lines: Array[String] = []
-	for label in game.world_view.get_node("Overlays/WorkerFeedback").find_children("*", "Label", true, false):
-		if label.is_visible_in_tree(): lines.append(label.text)
-	return "\n".join(lines)
+func alert_button(text: String) -> Button:
+	for button in game.hud.alert_rail.buttons.values():
+		if button.visible and button.text == text: return button
+	return null
 
 func track_shows_item(item) -> bool:
 	for p in game.world.belts:
@@ -81,6 +76,8 @@ func track_shows_item(item) -> bool:
 	return false
 
 func world_observations() -> Dictionary:
+	var research: Dictionary = {}
+	for project in game.Technology.PROJECTS: research[project] = game.research_value(project)
 	var people: Array = []
 	for w in game.world.workers:
 		people.append({"name": w.name, "pos": w.pos, "bread": w.bread,
@@ -97,4 +94,4 @@ func world_observations() -> Dictionary:
 		for item in person.inventory: item.erase("texture")
 	return {"day": game.world.day, "time": game.world.day_elapsed,
 		"inventory": game.resource_inventory(), "people": people, "reports": reports,
-		"flows": flows, "mined": game.world.mined, "delivered": game.world.delivered}.duplicate(true)
+		"flows": flows, "mined": game.world.mined, "delivered": game.world.delivered, "research": research}.duplicate(true)

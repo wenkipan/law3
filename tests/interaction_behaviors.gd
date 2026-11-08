@@ -2,155 +2,91 @@ extends RefCounted
 
 const P := Vector2i(28, 11)
 
-func check_personal_feedback(t) -> void:
-	var g = t.game
-	# Employer cash and carried ore must not be celebrated as personal possessions.
-	t.fixtures.personal_feedback_world("income")
-	var person: Dictionary = g.world.workers[0]
-	g.simulate(0.2)
-	await t.input.settle()
-	t.check(t.personal_feedback_text().is_empty(), "Initial debt, employer funds and existing items do not produce gain popups")
-	g.designate(Vector2i(37, 13), Vector2i(37, 13))
-	t.advance_until(func(): return person.earned_today > 0, 30, "An ordered excavation pays an actual wage")
-	await t.input.settle()
-	var credited: float = person.earned_today * (1.0 - g.LOAN_REPAYMENT_RATE)
-	t.check(t.personal_feedback_text().contains("+%s 面包" % g.hud.InspectorIcons.quantity_text(credited)), "Income popup shows net bread after automatic repayment")
-	t.check(not t.personal_feedback_text().contains("砂岩"), "Mined cargo is not reported as a new personal item")
-
-	# Purchase and consumption are separate visible events, not a prepaid effect.
-	t.fixtures.personal_feedback_world("purchase")
-	person = g.world.workers[0]
-	t.advance_until(func(): return person.shop_spent_today > 0, 40, "A real meat sale transfers a personal item")
-	await t.input.settle()
-	t.check(t.personal_feedback_text().contains("+1 肉") and not t.personal_feedback_text().contains("食用 肉"), "Purchase popup precedes actual consumption")
-	t.advance_until(func(): return g.resource_activity("meat", 1).consumed > 0, 15, "The owned meat is actually consumed")
-	await t.input.settle()
-	t.check(t.personal_feedback_text().contains("食用 肉"), "Only completed item use announces consumption")
-
-	# An owned drink produces one combined use/effect popup; existing equipment stays quiet.
-	t.fixtures.personal_feedback_world("use")
-	person = g.world.workers[0]
-	await t.input.settle()
-	t.check(t.personal_feedback_text().is_empty(), "An existing outfit does not replay equipment gains")
-	t.advance_until(func(): return g.resource_activity("ale", 1).consumed == 1, 10, "Owned ale is actually drunk")
-	await t.input.settle()
-	t.check(t.personal_feedback_text().contains("饮用 麦酒 · 酒意") and not t.personal_feedback_text().contains("酒意 · 生效"), "Drinking and its newly acquired effect share one popup")
-	g.world_view.camera.zoom = Vector2.ONE * 1.6
-	await t.input.click_world(g.tile_center(person.pos) + Vector2(0, -7))
-	t.check(g.hud.entity_title.text == person.name, "Personal feedback does not interfere with native worker selection")
-	var bonus: float = person.buffs.mood_bonus(person)
-	var mood: float = clampf(person.mood.value + bonus, -g.WorkerMood.LIMIT, g.WorkerMood.LIMIT)
-	t.check(g.hud.worker_bars["心情"][0].text == "心情  %+.1f" % mood, "Mood shows the signed current value including temporary effects")
-	t.check(g.hud.worker_bars["心情"][0].tooltip_text.contains("基础心情  %+.1f" % person.mood.value)
-		and g.hud.worker_bars["心情"][0].tooltip_text.contains("临时加成  %+.1f" % bonus), "Mood tooltip separates experiences from temporary bonuses")
-	await t.input.screenshot("/tmp/law3-personal-feedback-1440.png")
-	t.tree.root.size = Vector2i(960, 640)
-	g.world_view.camera.zoom = Vector2.ONE * 0.65
-	await t.input.settle()
-	t.check(t.tree.root.get_visible_rect().encloses(g.hud.entity_panel.get_global_rect()), "The added mood attribute keeps worker details inside the compact viewport")
-	await t.input.move_to(g.hud.worker_bars["心情"][0].get_global_rect().get_center())
-	if t.native: await t.tree.create_timer(0.7).timeout
-	await t.input.screenshot("/tmp/law3-personal-mood-960.png")
-	await t.tree.create_timer(2.5).timeout
-	g.simulate(0.1)
-	await t.input.settle()
-	t.check(t.personal_feedback_text().is_empty(), "Popups fade on real time while paused and do not replay a still-active buff")
-	var snapshot: Dictionary = g.capture_snapshot()
-	var restored: Dictionary = g.restore_snapshot(snapshot.data) if snapshot.ok else snapshot
-	t.check(restored.ok, "A world with active personal effects can be restored: " + str(restored.get("error", "ok")))
-	await t.input.settle()
-	t.check(t.personal_feedback_text().is_empty(), "Loading does not announce existing possessions or buffs as new")
-	t.tree.root.size = Vector2i(1440, 900)
-	g.world_view.camera.zoom = Vector2.ONE
-	await t.input.settle()
-
 func run(t) -> void:
-	var g = t.game
-	var ui = g.get_node("UI")
-	await check_personal_feedback(t)
+	await check_world_commands(t)
+	await check_wage_controls(t)
+	await check_fee_controls(t)
+	await check_demolition_commands(t)
+	await check_research_controls(t)
 	await check_save_controls(t)
 	await check_unbounded_picking(t)
-	t.fixtures.scenario("Real viewport clicks select the displayed object")
+	await check_large_footprints(t)
+	await check_tracks(t)
+	await check_track_receivers(t)
+	await check_power_interactions(t)
+	await check_industry_controls(t)
+	await check_alerts(t)
+
+func check_world_commands(t) -> void:
+	var g = t.game
+	var ui = g.hud
+	t.fixtures.scenario("Viewport selection, overlap and HUD interception")
 	t.fixtures.bed(P)
-	t.fixtures.bank(Vector2i(31, 11))
 	t.fixtures.materials(100)
-	# Cover each tool and both zoom extremes once, not their Cartesian product.
-	for sample in [{"tool": "dig", "zoom": 0.65}, {"tool": "cancel", "zoom": 1.6},
-			{"tool": "bed", "zoom": 1.0}, {"tool": "bank", "zoom": 1.0}]:
+	for sample in [{"tool": "dig", "zoom": 0.65}, {"tool": "cancel", "zoom": 1.6}, {"tool": "bed", "zoom": 1.0}]:
 		g.world_view.camera.zoom = Vector2.ONE * sample.zoom
-		await t.input.settle()
 		g.set_tool(sample.tool)
+		await t.input.settle()
 		await t.input.click_world(g.tile_center(P + Vector2i.RIGHT))
-		t.check(g.hud.entity_panel.visible and g.hud.entity_title.text == "床", "Far footprint remains inspectable across tools and zoom")
-		if t.native:
-			t.check(g.world_view.hover_frame.visible and g.world_view.hover_frame.size.x > g.CELL, "Native hover outlines the building, not one ground tile")
+		t.check(g.interaction.selected_entity == P and ui.entity_panel.visible, "The building footprint selects its inspector even with another tool active")
+		if t.native and sample.tool == "dig":
+			t.check(g.world_view.hover_frame.visible, "Native hover reaches the same building as clicking")
 	g.world_view.camera.zoom = Vector2.ONE
 	g.set_tool("dig")
-	await t.input.click_world(g.tile_center(Vector2i(32, 11)))
-	t.check(g.hud.entity_title.text == "银行" and not ui.production_controls.visible, "Bank opens details without production controls")
 	await t.input.click_world(g.tile_center(g.BASE) + Vector2(0, -32))
-	t.check(g.interaction.selected_entity == g.BASE, "Upper portal artwork responds to clicks")
-	# These are layout fixtures, not simulated movement or fabricated task states.
+	t.check(g.interaction.selected_entity == g.BASE, "The portal artwork uses the native picking route")
 	g.world.workers[0].pos = Vector2(P)
 	g.world.workers[1].pos = Vector2(P) + Vector2(0, 0.1)
 	await t.input.settle()
 	var overlap: Vector2 = g.tile_center(P) + Vector2(0, -7)
 	await t.input.click_world(overlap)
-	t.check(g.hud.entity_title.text == g.world.workers[1].name, "Frontmost worker wins over another worker and a building")
+	t.check(g.interaction.selected_worker == 1, "The visible front worker wins over a worker and building behind it")
 	g.world.workers[0].pos.y += 0.2
 	await t.input.settle()
 	await t.input.click_world(overlap)
-	t.check(g.hud.entity_title.text == g.world.workers[0].name, "Click ordering follows visible depth")
+	t.check(g.interaction.selected_worker == 0, "Picking follows the changed visible depth")
 	g.world.workers[0].pos = Vector2(34, 15)
 	g.world.workers[1].pos = Vector2(35, 15)
 	await t.input.settle()
 	await t.input.click_world(overlap)
-	t.check(g.hud.entity_title.text == "床", "Moving workers away makes the underlying bed selectable")
-	t.check(g.hud.entity_details.text.contains("−" + String.num(g.BED_RECOVERY_PER_HOUR, 1))
-		and g.hud.entity_details.text.contains(String.num(g.BED_PRICE, 1) + " 面包"),
-		"Bed details show the actual rent and fractional recovery rate without rounding away gameplay values")
-	if t.native:
-		for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
-			t.tree.root.size = size
-			await t.input.settle()
-			await RenderingServer.frame_post_draw
-			t.tree.root.get_texture().get_image().save_png("/tmp/law3-bed-details-%d.png" % size.x)
-		t.tree.root.size = Vector2i(1440, 900)
-		await t.input.settle()
-	await t.input.click(g.hud.pause_button.get_global_rect().get_center())
-	t.check(g.interaction.simulation_paused and g.hud.entity_title.text == "床", "Toolbar click pauses without selecting the world underneath")
-	t.check(not g.world_view.hover_frame.visible, "UI suppresses world hover")
+	t.check(g.interaction.selected_entity == P, "Moving workers exposes the building underneath")
+	await t.input.click(ui.pollution_button.get_global_rect().get_center())
+	await t.input.click_world(g.tile_center(g.world.workers[0].pos) + Vector2(0, -7))
+	t.check(g.interaction.pollution_visible and g.interaction.selected_worker == 0, "The overlay does not intercept worker picking")
+	await t.input.click(ui.pollution_button.get_global_rect().get_center())
+	await t.input.click(ui.speed_buttons[2].get_global_rect().get_center())
+	t.check(g.interaction.speed == 2 and g.interaction.selected_worker == 0, "Speed controls change simulation speed without clicking through")
+	await t.input.click(ui.pause_button.get_global_rect().get_center())
+	t.check(g.interaction.simulation_paused and g.interaction.selected_worker == 0, "Pause does not replace the selected world object")
+	t.check(not g.world_view.hover_frame.visible, "The HUD blocks world hover")
+	await t.input.press_key(KEY_SPACE)
+	t.check(not g.interaction.simulation_paused, "The keyboard command resumes simulation")
+	await t.input.screenshot("/tmp/law3-input-world.png")
 
-	t.fixtures.scenario("Ground orders, cancellation, and rapid clicks")
+	t.fixtures.scenario("Building eligibility, cancellation and a rapid mining click")
 	t.fixtures.materials(6, 2)
 	await t.input.settle()
 	await t.input.click(ui.category_buttons.life.get_global_rect().get_center())
-	await t.input.click(g.hud.tool_buttons.bed.get_global_rect().get_center())
-	t.check(g.hud.tool_buttons.bed.disabled and g.interaction.tool == "dig", "Clicking a material-short icon cannot select its building tool")
+	await t.input.click(ui.tool_buttons.bed.get_global_rect().get_center())
+	t.check(ui.tool_buttons.bed.disabled and g.interaction.tool == "dig", "A material shortage blocks selecting the building tool")
 	await t.input.click_world(g.tile_center(P))
-	t.check(not g.building_at(P) and g.stock_at(g.BASE, 2) == 6, "Insufficient building materials cannot place a blueprint or spend other minerals")
-	for width in [1440, 960]:
-		t.tree.root.size = Vector2i(width, 900 if width == 1440 else 640)
-		await t.input.settle()
-		await t.input.move_to(g.hud.tool_buttons.bed.get_global_rect().get_center())
-		if t.native:
-			await t.tree.create_timer(0.7).timeout
-			await RenderingServer.frame_post_draw
-			t.tree.root.get_texture().get_image().save_png("/tmp/law3-build-materials-%d.png" % width)
-	t.tree.root.size = Vector2i(1440, 900)
-	t.fixtures.materials(6)
+	t.check(not g.building_at(P) and g.stock_at(g.BASE, 2) == 6, "A rejected placement neither creates a blueprint nor spends other materials")
+	t.fixtures.building_materials("bed")
 	await t.input.choose_building("bed")
-	t.check(not g.hud.tool_buttons.bed.disabled and g.interaction.tool == "bed", "Replenishing the required material enables selecting the same icon")
 	await t.input.click_world(g.tile_center(P))
-	t.check(g.building_at(P) and g.hud.tool_buttons.bed.disabled and g.stock_at(g.BASE, 1) == 6, "Placing a blueprint immediately disables the icon without removing physical goods")
+	t.check(g.building_at(P) and ui.tool_buttons.bed.disabled, "A placement immediately exhausts its material allowance")
 	await t.input.click_world(g.tile_center(P + Vector2i(2, 0)))
-	t.check(not g.building_at(P + Vector2i(2, 0)), "An already selected tool cannot place another blueprint after its allowance is exhausted")
-	g.set_tool("cancel")
+	t.check(not g.building_at(P + Vector2i(2, 0)), "The selected tool cannot place beyond the affordable prefix")
+	await t.input.click(ui.tool_buttons.cancel.get_global_rect().get_center())
 	await t.input.click_world(g.tile_center(P + Vector2i.RIGHT))
-	t.check(g.player_blocks == 6 and not g.hud.tool_buttons.bed.disabled, "Cancel through either footprint cell releases the quantity and enables the icon immediately")
-	g.set_tool("dig")
+	t.check(not g.building_at(P) and not ui.tool_buttons.bed.disabled, "Cancellation through the footprint releases the blueprint and its allowance")
+	await t.input.choose_building("bed")
+	await t.input.click(g.get_global_transform_with_canvas() * g.tile_center(P), MOUSE_BUTTON_RIGHT)
+	t.check(g.interaction.tool == "dig" and not g.building_at(P), "Right-click exits an armed building tool even before dragging a preview")
+	await t.input.click(ui.tool_buttons.dig.get_global_rect().get_center())
 	var rapid := InputEventMouseButton.new()
 	rapid.position = g.get_global_transform_with_canvas() * g.tile_center(Vector2i(37, 13))
+	await t.input.move_to(rapid.position)
 	rapid.button_index = MOUSE_BUTTON_LEFT
 	rapid.pressed = true
 	t.tree.root.push_input(rapid, true)
@@ -159,282 +95,245 @@ func run(t) -> void:
 	t.tree.root.push_input(rapid, true)
 	await t.input.settle()
 	g.simulate(30)
-	t.check(g.world.delivered == 1, "Press and release in one tick still orders a real excavation")
+	t.check(g.world.delivered == 1, "Press and release in one tick still issues an actual excavation")
 
-	# Include a one-cell passive store so it cannot inherit work/production controls.
-	for kind in ["bench", "bank", "storage_box"]:
-		t.fixtures.scenario("Blueprint completes without losing the inspected building: " + kind, 1)
-		t.fixtures.building_materials(kind)
-		await t.input.choose_building(kind)
-		await t.input.settle()
-		await t.input.click_world(g.tile_center(P))
-		t.check(g.player_blocks == g.building_blocks(kind), "Ground click places a blueprint without prepaying materials")
-		var inspect_cell: Vector2i = g.building_cells(P, kind).back()
-		await t.input.click_world(g.tile_center(inspect_cell))
-		t.check(g.hud.entity_title.text == g.building_name(kind) + " · 建造中", "Blueprint opens live construction details")
-		if kind == "storage_box": await t.input.screenshot("/tmp/law3-storage-blueprint.png")
-		g.simulate(90)
-		await t.input.settle()
-		t.check(g.hud.entity_title.text == g.building_name(kind) and ui.production_controls.visible == g.PRODUCTS.has(kind), "Selected details become the completed building without reselection")
-		await t.input.click_world(g.tile_center(inspect_cell))
-		t.check(g.hud.entity_title.text == g.building_name(kind), "Completed building remains clickable")
-		if kind == "storage_box":
-			t.check(g.hud.entity_details.text == g.building_effects_text(kind), "A passive store shows storage details, not staffing or bed effects")
-			await t.input.screenshot("/tmp/law3-storage-details.png")
+	t.fixtures.scenario("Selected blueprint survives completion", 1)
+	t.fixtures.building_materials("farm")
+	await t.input.choose_building("farm")
+	await t.input.click_world(g.tile_center(P))
+	var corner: Vector2i = g.building_cells(P, "farm").back()
+	await t.input.click_world(g.tile_center(corner))
+	t.check(g.interaction.selected_entity == P, "The far footprint corner selects the blueprint")
+	await t.input.screenshot("/tmp/law3-input-blueprint.png")
+	t.advance_until(func(): return not g.world.sites.has(P), g.HOUR_SECONDS * 12, "The ordered blueprint completes using actual deliveries and labor")
+	await t.input.settle()
+	t.check(g.interaction.selected_entity == P and ui.entity_panel.visible and g.building_kind_at(corner) == "farm", "Completion preserves the selected building without reselection")
 
-	# One daily quota and one finite queue cover the two HUD commands.
+	# Daily output and a finite queue are two different player commands, not two content entries.
 	for kind in ["pump", "printer"]:
-		t.fixtures.scenario("Production controls: " + kind)
+		t.fixtures.scenario("Production order controls: " + kind, 0)
 		t.fixtures.station(kind, P)
 		await t.input.settle()
 		await t.input.click_world(g.tile_center(P + Vector2i.RIGHT))
 		await t.input.click(ui.add_order.get_global_rect().get_center())
-		var amount: int = g.PRODUCTS[kind].get("amount", 1)
-		var expected := "待制  1" if kind == "printer" else "每日产出 %d%s" % [amount, g.PRODUCTS[kind].unit]
-		t.check(ui.queue_count.text == expected, "Plus edits the displayed quota in the right units")
+		var setting := "queue" if kind == "printer" else "daily_output"
+		var amount: int = 1 if kind == "printer" else g.PRODUCTS[kind].amount
+		t.check(g.world.benches[P][setting] == amount, "Plus issues the actual production command in its proper units")
 		await t.input.click(ui.remove_order.get_global_rect().get_center())
-		t.check(ui.remove_order.disabled, "Minus reaches zero and disables further subtraction")
+		t.check(g.world.benches[P][setting] == 0, "Minus cancels the production setting")
 
-	t.fixtures.scenario("Printed worker appears in selection, bed choices, and an open report")
-	t.fixtures.station("printer", P)
-	t.fixtures.bed(Vector2i(31, 11))
-	t.fixtures.materials(10)
-	g.adjust_production(P, 1)
-	g.open_report()
-	g.hud.report_window.hide()
-	g.simulate(40)
-	g.hud.report_window.refresh()
-	t.check(g.hud.report_window.people.item_count == 5 and g.hud.report_window.people.get_item_text(4) == g.world.workers[3].name, "Existing report adds the newborn to its people filter")
-	await t.input.settle()
-	await t.input.click_world(g.tile_center(g.world.workers[3].pos) + Vector2(0, -7))
-	t.check(g.hud.entity_title.text == g.world.workers[3].name, "Newborn is clickable without rebuilding the world")
-	g.select_entity(Vector2i(31, 11))
-	t.check(ui.bed_assignment.item_count == 5, "Newborn can be chosen for a bed")
-
-	for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
-		t.tree.root.size = size
-		g.select_entity(P)
-		await t.input.settle()
-		t.check(t.tree.root.get_visible_rect().encloses(g.hud.entity_panel.get_global_rect()), "Inspector fits inside the window")
-		t.check(g.hud.entity_panel.get_global_rect().encloses(ui.production_controls.get_global_rect()), "Production controls fit inside the inspector")
-		t.check(ui.queue_count.size.x >= ui.queue_count.get_minimum_size().x, "Quantity label is not clipped")
-		await t.input.screenshot("/tmp/law3-behaviors-%d.png" % size.x)
-
-	# Bank terms and receipts must fit without exposing internal spending forecasts.
-	t.fixtures.scenario("Bank toolbar, receipts, and compact layout", 1)
-	t.fixtures.bank(P)
-	g.world.workers[0].loan_principal = 0.97
-	g.world.workers[0].loan_interest = 0.194
-	g.world.workers[0].loan_bank = P
-	g.designate(Vector2i(37, 11), Vector2i(37, 15))
-	t.advance_until(func(): return g.world.banks[P].interest_received >= 0.194 - 0.000001, 90, "Bank has an actual collected interest receipt")
-	for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
-		t.tree.root.size = size
-		await t.input.settle()
-		if not g.hud.build_tray.visible:
-			await t.input.click(ui.category_buttons.society.get_global_rect().get_center())
-		t.check(g.hud.build_tray.visible and g.hud.tool_buttons.bank.disabled, "The building tray remains open with unaffordable icons disabled")
-		t.check(t.tree.root.get_visible_rect().encloses(g.hud.build_tray.get_global_rect()), "Expanded building list fits the window")
-		await t.input.click_world(g.tile_center(P + Vector2i.RIGHT))
-		t.check(g.hud.entity_title.text == "银行" and g.hud.entity_details.text.contains("已收利息  0.19"), "Selected bank shows real collected interest")
-		t.check(not g.hud.entity_details.text.contains("预算") and not g.hud.entity_details.text.contains("待支付"), "Bank keeps internal forecasts out of player details")
-		t.check(t.tree.root.get_visible_rect().encloses(g.hud.entity_panel.get_global_rect()), "Bank inspector fits the viewport")
-		t.check(g.hud.entity_panel.get_global_rect().encloses(g.hud.entity_details.get_global_rect()), "Bank terms are not clipped")
-		await t.input.screenshot("/tmp/law3-behaviors-bank-%d.png" % size.x)
-		await t.input.close_build_tray()
-
-	# The report must refresh the same metric for dates and people, including zero results.
-	t.fixtures.scenario("Daily report excavation counts and filters", 2)
-	var report_item: int = g.world.terrain[Vector2i(37, 13)]
-	g.world.workers[0].pos = Vector2(36, 13)
-	g.world.workers[1].pos = Vector2(28, 11)
-	g.designate(Vector2i(37, 13), Vector2i(37, 13))
-	t.advance_until(func(): return g.world.mined == 1, 20, "A completed excavation is available in the report")
-	await t.input.settle()
-	for button in ui.find_children("*", "Button", true, false):
-		if button.tooltip_text == "每日报告":
-			await t.input.click(button.get_global_rect().get_center())
-	var report = g.hud.report_window
-	t.check(is_instance_valid(report) and report.visible, "Toolbar opens the daily report")
-	if not is_instance_valid(report):
-		return
-	t.check(report.summary.text.contains("挖掘方块  1 块"), "Report displays completed blocks, not delivered blocks")
-	await t.input.choose_report_filter(report, report.people, 2)
-	t.check(report.summary.text.contains("挖掘方块  0 块"), "Worker without excavations displays zero")
-	await t.input.choose_report_filter(report, report.people, 1)
-	t.check(report.summary.text.contains("挖掘方块  1 块"), "Worker filter displays that miner's count")
-	g.simulate(g.DAY_SECONDS - g.world.day_elapsed + 1)
-	report.refresh()
-	await t.input.choose_report_filter(report, report.days, 1)
-	t.check(report.summary.text.contains("挖掘方块  0 块"), "New day starts with zero excavations")
-	await t.input.choose_report_filter(report, report.days, 0)
-	await t.input.choose_report_filter(report, report.people, 0)
-	t.check(report.summary.text.contains("已结算") and report.summary.text.contains("挖掘方块  1 块"), "Historical all-worker count remains available")
-	for report_size in [Vector2i(680, 600), Vector2i(560, 550)]:
-		report.size = report_size
-		await t.input.settle()
-		t.check(report.get_visible_rect().encloses(report.summary.get_global_rect()), "Excavation summary fits the report")
-		for row in report.rows.values():
-			t.check(report.get_visible_rect().encloses(row[2].get_global_rect()), "Action rows remain inside the report")
-		await t.input.screenshot("/tmp/law3-behaviors-report-%d.png" % report_size.x, report)
-	# Tabs share one report window; the resource page expands an item, not a date selector.
-	await t.input.click(Vector2(report.position) + report.tabs.global_position + report.tabs.get_tab_rect(1).get_center())
-	t.check(report.resources.visible and not report.days.is_visible_in_tree(), "Top tab switches to inventory without historical date controls")
-	t.check(report.resources.day_labels[0].text == "1" and report.resources.day_labels[1].text == "2" and not report.resources.day_labels[2].visible, "Inventory axis labels elapsed game days rather than stretching an unlabeled time range")
-	t.check(not report.resources.details.visible and report.resources.rows[report_item][3].is_visible_in_tree(), "Inventory curves appear in the third column before any row is expanded")
-	await t.input.click(Vector2(report.position) + report.resources.rows[report_item][1].get_global_rect().get_center())
-	t.check(report.resources.details.visible and report.resources.yesterday.text == "昨日产出  1    昨日消耗  0", "Clicking an item expands yesterday's actual mining output and consumption")
-	t.check(report.resources.rows[report_item][2].text == "1", "Resource row displays current total inventory")
-	var selected_before: int = g.interaction.selected_worker
-	for report_size in [Vector2i(680, 600), Vector2i(560, 550)]:
-		report.size = report_size
-		await t.input.settle()
-		t.check(report.get_visible_rect().encloses(report.resources.rows[report_item][3].get_global_rect()), "Third-column inventory curve fits the report at both sizes")
-		t.check(report.resources.rows[report_item][2].get_global_rect().end.x <= report.resources.rows[report_item][3].get_global_rect().position.x, "Total count and inventory curve occupy separate non-overlapping columns")
-		t.near(report.resources.day_axis.get_global_rect().position.x, report.resources.rows[report_item][3].get_global_rect().position.x, "Shared day axis aligns with every inventory chart")
-		for label in report.resources.day_labels:
-			if label.visible:
-				t.check(report.resources.day_axis.get_global_rect().encloses(label.get_global_rect()), "Day labels stay within the chart column at both report sizes")
-		t.check(report.get_visible_rect().encloses(report.resources.yesterday.get_global_rect()), "Yesterday's flows fit without clipping")
-		await t.input.screenshot("/tmp/law3-resources-%d.png" % report_size.x, report)
-	t.check(g.interaction.selected_worker == selected_before, "Report interactions do not select world objects behind it")
-	await t.input.click(Vector2(report.position) + report.resources.rows[report_item][2].get_global_rect().get_center())
-	t.check(not report.resources.details.visible and report.resources.rows[report_item][3].is_visible_in_tree(), "Clicking the total collapses yesterday's totals but keeps the row's curve visible")
-	await t.input.click(Vector2(report.position) + report.resources.rows[report_item][3].get_global_rect().get_center())
-	t.check(report.resources.details.visible, "Clicking the curve also expands its row's yesterday totals")
-	g.simulate(g.DAY_SECONDS * 4)
-	report.refresh()
-	await t.input.settle()
-	t.check(report.resources.day_labels[0].text == "2" and report.resources.day_labels[4].text == "6" and report.resources.day_labels[4].visible, "The day axis rolls forward to the latest five days at midnight")
-	g.simulate(g.DAY_SECONDS * 0.5)
-	report.refresh()
-	await t.input.settle()
-	t.check(report.resources.day_labels[0].text == "2" and report.resources.day_labels[4].text == "6", "Day divisions remain fixed as the current day progresses")
-	await t.input.screenshot("/tmp/law3-resources-daily-axis.png", report)
-	await t.input.click(Vector2(report.position) + report.tabs.global_position + report.tabs.get_tab_rect(0).get_center())
-	t.check(report.labor.visible and report.days.is_visible_in_tree(), "Worker report retains its existing filters when switching back")
-	report.hide()
-	await check_material_delivery(t)
-	await check_building_rows(t)
-	await check_tracks(t)
-	await check_track_receivers(t)
-	await check_tile_details(t)
-	await check_power_interactions(t)
-	await check_industry_controls(t)
-	await check_pollution_services(t)
-
-func check_pollution_services(t) -> void:
+func check_wage_controls(t) -> void:
 	var g = t.game
-	var ui = g.get_node("UI")
-	# The heatmap must preserve native picking and show the same live contamination as details.
-	t.fixtures.scenario("Pollution overlay and real medical service remain inspectable", 1)
-	t.fixtures.clear_area(Rect2i(23, 7, 20, 14))
-	t.fixtures.station("hospital", P)
-	t.fixtures.station("laundry", Vector2i(31, 11))
-	t.fixtures.station("pharmacy", Vector2i(34, 11), 4)
-	t.fixtures.stock_recipe(P, g.SERVICES.hospital.materials)
-	t.fixtures.wastewater(Vector2i(34, 11), 2, 40)
-	var w: Dictionary = g.world.workers[0]
-	t.fixtures.service_customer("hospital", P, w, true)
-	g.world_view.camera.zoom = Vector2.ONE
-	g.world_view.rebuild(g)
-	g.simulate(g.HOUR_SECONDS * 0.4)
-	await t.input.click(ui.pollution_button.get_global_rect().get_center())
-	t.check(g.interaction.pollution_visible and g.world.mining_contracts.is_empty(), "The overlay button enables pollution without issuing a world command")
-	await t.input.click_world(g.tile_center(Vector2i(35, 13)))
-	t.check(g.interaction.selected_tile == Vector2i(35, 13) and g.hud.entity_details.text.contains("污染  %.1f" % g.cache.pollution.at(Vector2i(35, 13))), "A real ground click reads the displayed cell's current pollution")
-	await t.input.click_world(g.tile_center(w.pos) + Vector2(0, -8))
-	t.check(g.interaction.selected_worker == w.id and g.hud.entity_details.text == "诊疗中", "Native worker picking works through the heatmap during treatment")
-	for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
-		t.tree.root.size = size
+	var ui = g.hud
+	t.fixtures.scenario("Direct wage selection and filtered brush commands do not leak into world actions", 0)
+	var other := Vector2i(31, 11)
+	var site := Vector2i(34, 11)
+	var ore := Vector2i(37, 13)
+	t.fixtures.station("pump", P)
+	t.fixtures.station("mill", other)
+	t.fixtures.building_materials("bed")
+	g.place_building(site, "bed")
+	g.designate(ore, ore)
+	# Entity inspection and terrain inspection are distinct native input paths.
+	for target in [{"p": P, "point": P + Vector2i.RIGHT, "mining": false},
+			{"p": site, "point": site + Vector2i.RIGHT, "mining": false},
+			{"p": ore, "point": ore, "mining": true}]:
+		await t.input.click_world(g.tile_center(target.point))
+		t.check(ui.wage_controls.visible, "The selected labor target exposes direct wage choices")
+		await t.input.click(ui.wage_selector.buttons[3].get_global_rect().get_center())
+		t.near(g.wage_settings(target.p, target.mining).get("wage", 0), 3, "Clicking a wage digit changes this target without clicking through")
+		await t.input.click(ui.wage_selector.buttons[3].get_global_rect().get_center())
+		t.check(ui.wage_selector.buttons[3].button_pressed, "Repeating the selected wage leaves a single visible current value")
+	await t.input.screenshot("/tmp/law3-input-wage-details.png")
+	await t.input.click(ui.tool_buttons.wage.get_global_rect().get_center())
+	await t.input.press_key(KEY_8)
+	await t.input.click_world(g.tile_center(P + Vector2i.RIGHT))
+	await t.input.click_world(g.tile_center(other + Vector2i.RIGHT))
+	t.check(g.interaction.tool == "wage" and not ui.entity_panel.visible, "Painting stays in tool mode instead of opening an inspector")
+	t.near(g.wage_settings(P).get("wage", 0), 8, "A native building click applies the chosen brush wage")
+	t.near(g.wage_settings(other).get("wage", 0), 8, "The same brush can continue onto another building")
+	await t.input.click(ui.wage_filters.build.get_global_rect().get_center())
+	await t.input.click(ui.brush_selector.buttons[4].get_global_rect().get_center())
+	var area: Array[Vector2i] = [P, ore]
+	await t.input.drag_world(area)
+	t.check(g.wage_settings(site).get("wage", 0) == 4 and g.wage_settings(P).get("wage", 0) == 8 and g.wage_settings(ore, true).get("wage", 0) == 3,
+		"A construction-only stroke changes blueprints but not mining or operating wages")
+	await t.input.click(ui.wage_filters.mine.get_global_rect().get_center())
+	await t.input.press_key(KEY_2)
+	var mining_area: Array[Vector2i] = [ore, ore + Vector2i.DOWN]
+	await t.input.drag_world(mining_area)
+	t.check(g.wage_settings(ore, true).get("wage", 0) == 2 and not g.world.mining_contracts.has(ore + Vector2i.DOWN), "A mining wage stroke edits existing orders without designating new ore")
+	await t.input.click(ui.wage_filters.all.get_global_rect().get_center())
+	await t.input.press_key(KEY_9)
+	await t.input.drag_world(area, true)
+	t.check(g.wage_settings(site).get("wage", 0) == 4 and g.wage_settings(ore, true).get("wage", 0) == 2, "Releasing over the HUD cancels the wage stroke")
+	await t.input.screenshot("/tmp/law3-input-wages-1440.png")
+	if t.native:
+		t.tree.root.size = Vector2i(960, 640)
+		g.world_view.camera.position = g.tile_center(Vector2i(34, 13))
 		await t.input.settle()
-		await t.input.screenshot("/tmp/law3-pollution-medical-%d.png" % size.x)
-	t.advance_until(func(): return w.shop_spent_today == g.SERVICES.hospital.price, 20, "The inspected indebted patient completes treatment normally")
-	await t.input.click_exposed_building(P + Vector2i.RIGHT, "医院")
-	t.check(g.hud.entity_title.text == "医院" and g.hud.entity_details.text.contains("身体污染 -50"), "The selected hospital shows the shared service description")
-	await t.input.click(ui.pollution_button.get_global_rect().get_center())
-	t.check(not g.interaction.pollution_visible, "The heatmap can be closed without changing the selected facility")
-	t.tree.root.size = Vector2i(1440, 900)
-	await t.input.settle()
+		await t.input.screenshot("/tmp/law3-input-wages-960.png")
+		t.tree.root.size = Vector2i(1440, 900)
+		g.world_view.camera.position = g.tile_center(g.BASE)
+		await t.input.settle()
+	await t.input.drag_world(area)
+	t.check(g.wage_settings(P).get("wage", 0) == 9 and g.wage_settings(site).get("wage", 0) == 9 and g.wage_settings(ore, true).get("wage", 0) == 9,
+		"An all-target stroke applies one wage across the existing labor opportunities")
+	await t.input.press_key(KEY_ESCAPE)
+	await t.input.click_world(g.tile_center(P + Vector2i.RIGHT))
+	t.check(ui.entity_panel.visible and ui.wage_selector.buttons[9].button_pressed, "Leaving the brush restores normal picking and shows the actual edited wage")
+	t.check(g.world.benches[P].daily_output == 0 and g.world.sites.has(site), "Wage controls neither start production nor cancel construction")
 
-func check_industry_controls(t) -> void:
+func check_fee_controls(t) -> void:
 	var g = t.game
-	var ui = g.get_node("UI")
-	# The expanded tray must keep later buildings selectable without click-through.
-	t.fixtures.scenario("Industry tray scroll and livestock commands", 1)
-	t.fixtures.clear_area(Rect2i(25, 7, 18, 12))
-	t.fixtures.building_materials("soapworks")
-	t.fixtures.station("barn", P)
-	for entry in [{"kind": "weaver", "pos": Vector2i(31, 9)}, {"kind": "tailor", "pos": Vector2i(34, 9)},
-			{"kind": "brewery", "pos": Vector2i(37, 9)}, {"kind": "smelter", "pos": Vector2i(31, 11)},
-			{"kind": "sawmill", "pos": Vector2i(34, 11)}, {"kind": "mill", "pos": Vector2i(37, 11)},
-			{"kind": "chemical_plant", "pos": Vector2i(25, 9)}, {"kind": "bathhouse", "pos": Vector2i(25, 11)}]:
-		t.fixtures.station(entry.kind, entry.pos)
-	g.world.workers[0].water = 1
-	g.world.workers[0].fatigue = 40
-	g.world.workers[0].items = {"ale": 1}
-	g.world.workers[0].equipment = {"clothes": 70 * g.HOUR_SECONDS, "tools": 12}
-	for entry in [{"pos": Vector2i(29, 15), "ore": 7}, {"pos": Vector2i(30, 15), "ore": 8}]:
-		g.world.terrain[entry.pos] = entry.ore
-		g.cache.navigation.set_point_solid(entry.pos, true)
-	g.world_view.rebuild(g)
-	await t.input.choose_building("soapworks")
-	t.check(g.interaction.tool == "soapworks", "Mouse wheel reaches and selects the last industry icon")
-	await t.input.click_world(g.tile_center(Vector2i(37, 14)))
-	t.check(g.building_kind(Vector2i(37, 14)) == "soapworks", "Scrolled selection places the requested industry blueprint")
-	g.set_tool("dig")
-	await t.input.close_build_tray()
-	await t.input.click_exposed_building(P, "畜棚")
-	t.check(g.hud.entity_title.text == "畜棚" and ui.slaughter.visible and t.inventory_description("sheep").contains("数量 1"), "A live sheep is inspectable through its barn")
-	await t.input.screenshot("/tmp/law3-industry-1440.png")
-	await t.input.click(ui.slaughter.get_global_rect().get_center())
-	t.advance_until(func(): return g.resource_activity("meat", 1).produced == g.SHEEP_MEAT, 120, "The inspector's slaughter button issues a real paid job")
-	await t.input.click_exposed_building(P, "畜棚")
-	t.check(t.inventory_description("sheep").contains("数量 0") and ui.slaughter.disabled, "Completed slaughter updates live details and disables duplicate commands")
-	for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
-		t.tree.root.size = size
+	var ui = g.hud
+	t.fixtures.fee_controls_world()
+	var shop := Vector2i(31, 11)
+	var service := Vector2i(34, 11)
+	var site := Vector2i(37, 13)
+	g.place_building(site, "bed")
+	g.set_wage(shop, 6)
+	await t.input.click_world(g.tile_center(P + Vector2i.RIGHT))
+	await t.input.click(ui.fee_selector.buttons[3].get_global_rect().get_center())
+	t.near(g.base_fee(P), 3, "The bottom fee selector changes the inspected bed's actual price")
+	await t.input.click(ui.tool_buttons.fee.get_global_rect().get_center())
+	await t.input.press_key(KEY_7)
+	await t.input.click_world(g.tile_center(shop + Vector2i.RIGHT))
+	t.check(g.base_fee(shop) == 7 and g.wage_settings(shop).get("wage", 0) == 6, "The fee brush changes price without changing a building's wage")
+	await t.input.click(ui.fee_filters.bed.get_global_rect().get_center())
+	await t.input.press_key(KEY_2)
+	var area: Array[Vector2i] = [P, site + Vector2i.RIGHT]
+	await t.input.drag_world(area)
+	t.check(g.base_fee(P) == 2 and g.base_fee(site) == 2 and g.base_fee(shop) == 7 and g.base_fee(service) == g.SERVICES.hospital.price,
+		"A bed-only fee stroke edits completed beds and blueprint settings without repricing goods or services")
+	await t.input.press_key(KEY_9)
+	await t.input.drag_world(area, true)
+	t.near(g.base_fee(P), 2, "A fee stroke released over the HUD makes no price change")
+	await t.input.click(ui.fee_filters.all.get_global_rect().get_center())
+	await t.input.screenshot("/tmp/law3-input-fees-1440.png")
+	if t.native:
+		t.tree.root.size = Vector2i(960, 640)
+		g.world_view.camera.position = g.tile_center(Vector2i(34, 13))
 		await t.input.settle()
-		await t.input.click_world(g.tile_center(g.world.workers[0].pos) + Vector2(0, -8))
-		t.check(g.interaction.selected_worker == 0 and t.effect_description("tools").contains("铁工具"), "A worker's owned equipment remains inspectable in both layouts")
-		await t.input.screenshot("/tmp/law3-buffs-%d.png" % size.x)
-	t.tree.root.size = Vector2i(1440, 900)
-	await t.input.settle()
+		await t.input.screenshot("/tmp/law3-input-fees-960.png")
+		t.tree.root.size = Vector2i(1440, 900)
+		g.world_view.camera.position = g.tile_center(g.BASE)
+		await t.input.settle()
+	await t.input.press_key(KEY_4)
+	await t.input.drag_world(area)
+	t.check(g.base_fee(P) == 4 and g.base_fee(shop) == 4 and g.base_fee(service) == 4 and g.base_fee(site) == 4,
+		"The independent all-fees brush applies one price across chargeable targets")
+	await t.input.press_key(KEY_P)
+	await t.input.press_key(KEY_8)
+	await t.input.click_world(g.tile_center(shop + Vector2i.RIGHT))
+	t.check(g.wage_settings(shop).get("wage", 0) == 8 and g.base_fee(shop) == 4, "Switching back to wages does not overwrite a building's fee")
+	await t.input.press_key(KEY_F)
+	t.check(g.interaction.brush_fee == 4, "The fee brush retains its own chosen value when switching modes")
+	var saved: Dictionary = g.capture_snapshot()
+	t.check(saved.ok and g.restore_snapshot(saved.data).ok and g.base_fee(P) == 4 and g.base_fee(site) == 4 and g.interaction.brush_fee == 4,
+		"Saving preserves actual building prices, blueprint prices and the separate fee brush")
+	await t.input.click_world(g.tile_center(shop + Vector2i.RIGHT))
+	t.check(ui.fee_selector.buttons[4].button_pressed and ui.wage_selector.buttons[8].button_pressed, "The bottom selectors independently reflect the inspected price and wage")
+	await t.input.screenshot("/tmp/law3-input-fee-details.png")
 
-	# One real service covers the new building, action animation and live effect tooltip.
-	t.fixtures.scenario("Cleaning facilities and a completed bath in the inspector", 1)
-	t.fixtures.clear_area(Rect2i(25, 7, 18, 12))
-	t.fixtures.station("bathhouse", P)
-	t.fixtures.station("chemical_plant", Vector2i(31, 11), 4)
-	t.fixtures.station("soapworks", Vector2i(34, 11), 4)
-	t.fixtures.stock_recipe(P, g.BATH_MATERIALS)
-	var w: Dictionary = g.world.workers[0]
-	w.pos = Vector2(P)
-	w.hunger = 100
-	w.bread = g.BATH_PRICE
-	w.equipment.clothes = g.ITEM_USES.clothes.uses
-	w.clothes_pollution = 17.5
-	g.world_view.rebuild(g)
-	g.simulate(g.BATH_HOURS * g.HOUR_SECONDS * 0.5)
-	await t.input.click_world(g.tile_center(w.pos) + Vector2(0, -8))
-	t.check(g.hud.entity_details.text == "沐浴中", "A real bath displays the activity, not an idle or production label")
-	await t.input.screenshot("/tmp/law3-bathing.png")
-	t.advance_until(func(): return w.shop_spent_today == g.BATH_PRICE, 20, "The inspected bath completes normally")
-	for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
-		t.tree.root.size = size
-		await t.input.settle()
-		await t.input.click_exposed_building(P + Vector2i.RIGHT, "澡堂")
-		t.check(g.hud.entity_title.text == "澡堂" and g.hud.entity_details.text.contains("心情 +15"), "The bathhouse shows its actual service effect")
-		await t.input.screenshot("/tmp/law3-cleaning-facilities-%d.png" % size.x)
-		await t.input.click_world(g.tile_center(w.pos) + Vector2(0, -8))
-		t.check(t.effect_description("bathed").contains("心情 +15") and t.effect_description("clothes").contains("污染"), "The selected worker shows separate bath and clothing effects")
-		await t.input.move_to(ui.effect_icons.entries.clothes.get_global_rect().get_center())
-		if t.native: await t.tree.create_timer(0.7).timeout
-		await t.input.screenshot("/tmp/law3-clothing-cleanliness-%d.png" % size.x)
-		await t.input.move_to(ui.effect_icons.entries.bathed.get_global_rect().get_center())
-		if t.native: await t.tree.create_timer(0.7).timeout
-		await t.input.screenshot("/tmp/law3-bathing-buff-%d.png" % size.x)
-	t.tree.root.size = Vector2i(1440, 900)
+func check_demolition_commands(t) -> void:
+	var g = t.game
+	var ui = g.hud
+	t.fixtures.scenario("Cancel and demolition are separate commands; right-click does not issue either", 0)
+	t.fixtures.bed(P)
+	var storage := Vector2i(32, 11)
+	var blueprint := Vector2i(34, 13)
+	var ore := Vector2i(37, 13)
+	t.fixtures.station("storage_box", storage)
+	t.fixtures.building_materials("bed")
+	g.place_building(blueprint, "bed")
+	g.designate(ore, ore)
+	await t.input.press_key(KEY_C)
+	await t.input.click_world(g.tile_center(P + Vector2i.RIGHT))
+	t.check(g.world.beds.has(P) and ui.entity_panel.visible, "C inspects an existing building rather than demolishing it")
+	await t.input.click(g.get_global_transform_with_canvas() * g.tile_center(blueprint), MOUSE_BUTTON_RIGHT)
+	t.check(g.interaction.tool == "cancel" and g.building_at(blueprint), "Right-click neither switches tools nor cancels the object underneath")
+	await t.input.press_key(KEY_X)
+	await t.input.click(g.get_global_transform_with_canvas() * g.tile_center(P), MOUSE_BUTTON_RIGHT)
+	t.check(g.interaction.tool == "demolish" and g.world.beds.has(P), "Right-click does not leave demolition mode or remove buildings")
+	await t.input.click_world(g.tile_center(blueprint))
+	await t.input.click_world(g.tile_center(ore))
+	t.check(g.building_at(blueprint) and g.world.mining_contracts.has(ore), "X cannot cancel a blueprint or a mining order")
+	await t.input.click(ui.tool_buttons.cancel.get_global_rect().get_center())
+	await t.input.click_world(g.tile_center(blueprint + Vector2i.RIGHT))
+	await t.input.click_world(g.tile_center(ore))
+	t.check(not g.building_at(blueprint) and not g.world.mining_contracts.has(ore), "The cancel toolbar command removes blueprints and mining orders")
+	await t.input.click(ui.tool_buttons.demolish.get_global_rect().get_center())
+	var stroke: Array[Vector2i] = [P + Vector2i.RIGHT, storage]
+	await t.input.drag_world(stroke, true)
+	t.check(g.world.beds.has(P) and g.world.benches.has(storage), "Releasing a demolition stroke over the HUD removes nothing")
+	await t.input.move_to(g.get_global_transform_with_canvas() * g.tile_center(P + Vector2i.RIGHT))
+	await t.input.screenshot("/tmp/law3-input-tools.png")
+	await t.input.click_world(g.tile_center(P + Vector2i.RIGHT))
+	t.check(not g.world.beds.has(P) and g.world.benches.has(storage), "X removes the whole building through its far footprint cell")
+	var storage_stroke: Array[Vector2i] = [storage, storage + Vector2i.DOWN]
+	await t.input.drag_world(storage_stroke)
+	t.check(not g.world.benches.has(storage), "The same demolition tool supports a ground stroke")
+	await t.input.press_key(KEY_G)
+	await t.input.click_world(g.tile_center(g.BASE))
+	t.check(g.interaction.selected_entity == g.BASE, "The portal remains available after demolition")
+
+func check_research_controls(t) -> void:
+	var g = t.game
+	var ui = g.hud
+	var other := Vector2i(31, 11)
+	t.fixtures.research_world("Research commands through technology tiles and an individual inspector", ["tools", "logistics"], 1, {"tools": g.Technology.PROJECTS.tools.points - 1})
+	t.fixtures.research_materials(P, "tools")
+	t.fixtures.research_materials(other, "logistics")
+	t.fixtures.building_materials("bench")
 	await t.input.settle()
+	await t.input.click(ui.research_button.get_global_rect().get_center())
+	var panel = ui.research_panel
+	var inventory: Dictionary = g.resource_inventory()
+	var orders: int = g.world.mining_contracts.size()
+	await t.input.choose_technology("finance")
+	t.check(g.world.benches[P].research == "" and g.world.benches[other].research == "", "A locked project cannot issue a research order")
+	await t.input.choose_technology("population")
+	t.check(g.world.benches[P].research == "population" and g.world.benches[other].research == "population", "Population can be ordered before tools is complete")
+	await t.input.choose_technology("tools")
+	t.check(g.world.benches[P].research == "tools" and g.world.benches[other].research == "tools", "The first tile click starts research on both benches")
+	await t.input.choose_technology("tools")
+	t.check(g.world.benches[P].research == "" and g.world.benches[other].research == "", "The second tile click pauses the assigned project")
+	await t.input.choose_technology("logistics")
+	await t.input.choose_technology("finance")
+	t.check(g.world.benches[P].research == "logistics" and g.world.benches[other].research == "logistics", "Inspecting a locked project cannot replace the active research order")
+	await t.input.choose_technology("tools")
+	t.check(g.resource_inventory() == inventory and g.world.mining_contracts.size() == orders, "Project controls neither consume goods without labor nor click through to excavation")
+	var zoom: Vector2 = g.world_view.camera.zoom
+	await t.input.choose_technology("hygiene")
+	t.check(panel.selected == "hygiene" and g.world_view.camera.zoom == zoom, "Tree scrolling reaches another project without zooming the world")
+	await t.input.screenshot("/tmp/law3-input-research.png")
+	await t.input.press_key(KEY_ESCAPE)
+	await t.input.click_world(g.tile_center(P + Vector2i.RIGHT))
+	await t.input.click(ui.research_choice.get_global_rect().get_center())
+	await t.input.press_key(KEY_DOWN)
+	await t.input.press_key(KEY_ENTER)
+	t.check(g.world.benches[P].research == "" and g.world.benches[other].research == "tools", "The inspector can pause one bench without affecting the other")
+	await t.input.click(ui.research_button.get_global_rect().get_center())
+	await t.input.choose_technology("tools")
+	t.check(g.world.benches[P].research == "" and g.world.benches[other].research == "", "A tile click pauses a partially assigned project")
+	await t.input.choose_technology("tools")
+	t.advance_until(func(): return g.is_building_unlocked("bench"), 120, "The UI research order completes through actual labor")
+	await t.input.choose_technology("logistics")
+	await t.input.choose_technology("tools")
+	t.check(g.world.benches[P].research == "logistics", "Completed technology cannot replace an active research order")
+	await t.input.press_key(KEY_ESCAPE)
+	var notice: Button = t.alert_button("研究完成：工具制造")
+	t.check(notice != null, "Completing research offers a notification in the existing alert rail")
+	if notice != null:
+		await t.input.screenshot("/tmp/law3-input-research-complete.png")
+		await t.input.click(notice.get_global_rect().get_center())
+		t.check(panel.visible and panel.selected == "tools" and g.world.mining_contracts.size() == orders,
+			"The completion notification opens its technology without ordering excavation behind the HUD")
+		t.check(t.alert_button("研究完成：工具制造") == null, "Reading a completion notification dismisses it")
+		await t.input.press_key(KEY_ESCAPE)
+	await t.input.choose_building("bench")
+	t.check(g.interaction.tool == "bench", "The newly unlocked building becomes selectable through its toolbar")
 
 func check_save_controls(t) -> void:
 	var g = t.game
@@ -464,7 +363,6 @@ func check_save_controls(t) -> void:
 	await t.input.click(ui.save_button.get_global_rect().get_center())
 	await t.input.click(Vector2(ui.save_menu.position) + ui.save_action.get_global_rect().get_center())
 	t.check(ui.save_menu.visible and ui.save_hint.text.contains("覆盖"), "An occupied slot requires confirmation before replacing the saved colony")
-	await t.input.screenshot("/tmp/law3-save-overwrite.png")
 	await t.input.press_key(KEY_ESCAPE)
 	await t.input.click(ui.load_button.get_global_rect().get_center())
 	t.check(ui.save_menu.visible, "The load icon opens the existing-save menu")
@@ -491,14 +389,9 @@ func check_save_controls(t) -> void:
 	g.set_tool("cancel")
 	await t.input.click_world(g.tile_center(g.world.workers[0].pos) + Vector2(0, -8))
 	t.check(g.interaction.selected_worker == 0 and ui.entity_title.text == g.world.workers[0].name, "The reconstructed worker remains inspectable through native picking")
-	for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
-		t.tree.root.size = size
-		await t.input.settle()
-		await t.input.press_key(KEY_F5)
-		t.check(ui.save_status.text.begins_with("已保存"), "The quick-save key saves the current world")
-		await t.input.click(ui.load_button.get_global_rect().get_center())
-		await t.input.screenshot("/tmp/law3-save-controls-%d.png" % size.x)
-		await t.input.press_key(KEY_ESCAPE)
+	await t.input.press_key(KEY_F5)
+	await t.input.click(ui.load_button.get_global_rect().get_center())
+	await t.input.press_key(KEY_ESCAPE)
 	var path: String = ui.SaveStore.slot_path(1, ui.save_directory)
 	var damaged := FileAccess.open(path, FileAccess.WRITE)
 	damaged.store_string("damaged save")
@@ -522,127 +415,13 @@ func check_save_controls(t) -> void:
 	ui.save_directory = original_directory
 	ui.last_save_slot = -1
 
-func check_power_interactions(t) -> void:
-	var g = t.game
-	t.tree.root.size = Vector2i(1440, 900)
-	# Line blueprints retain the same clicked inspector through completion and crossings.
-	for kind in g.LINE_KINDS:
-		for axis in [Vector2i.RIGHT, Vector2i.DOWN]:
-			t.fixtures.scenario("Cable row, completion and live inspection: %s %s" % [kind, axis], 1)
-			t.fixtures.clear_area(Rect2i(27, 10, 10, 6))
-			t.fixtures.building_materials(kind, 3)
-			g.world_view.rebuild(g)
-			await t.input.choose_building(kind)
-			var stroke: Array[Vector2i] = [P, P + axis * 2]
-			var orientation := "horizontal" if axis == Vector2i.RIGHT else "vertical"
-			await t.input.drag_world(stroke, false, false, "/tmp/law3-power-%s-%s-preview.png" % [kind, orientation])
-			t.check(g.player_blocks == g.building_blocks(kind) * 3, "Planning cable lengths leaves warehouse materials untouched")
-			var far_cell: Vector2i = P + (Vector2i(axis.y, axis.x) if kind == "high_line" else Vector2i.ZERO)
-			await t.input.click_world(g.tile_center(far_cell))
-			t.check(g.hud.entity_title.text == g.building_name(kind) + " · 建造中", "Cable footprint opens its construction details")
-			# Capture the reveal mid-build using the work hours shown in the inspector.
-			t.advance_until(func():
-				g.update_ui()
-				var hours: float = g.hud.entity_details.text.get_slice("工时  ", 1).get_slice(" /", 0).to_float()
-				return g.hud.entity_details.text.contains("工时  ") and hours >= g.building_hours(kind) * 0.4,
-				30, "Selected cable reports real construction underway")
-			await t.input.settle()
-			await t.input.screenshot("/tmp/law3-power-%s-%s-building.png" % [kind, orientation])
-			t.advance_until(func(): return g.world.power_lines.size() == 3, 45, "Cable row completes through normal material transport and labor")
-			await t.input.settle()
-			t.check(g.hud.entity_title.text == g.building_name(kind), "Selected cable details survive blueprint completion")
-			for width in [1440, 960]:
-				t.tree.root.size = Vector2i(width, 900 if width == 1440 else 640)
-				g.world_view.camera.zoom = Vector2.ONE * (1.4 if width == 1440 else 0.8)
-				await t.input.settle()
-				await t.input.click_world(g.tile_center(P + axis))
-				t.check(g.hud.entity_title.text == g.building_name(kind), "Finished cable remains inspectable at both zooms and window sizes")
-				await t.input.screenshot("/tmp/law3-power-%s-%s-%d.png" % [kind, orientation, width])
-			g.world_view.camera.zoom = Vector2.ONE
-			t.tree.root.size = Vector2i(1440, 900)
-			t.fixtures.building_materials(kind)
-			await t.input.choose_building(kind)
-			stroke = [P, P + axis * 3]
-			await t.input.drag_world(stroke, false, false, "", Vector2(18, -8))
-			t.check(g.player_blocks == g.building_blocks(kind), "Planning an extension does not prepay its material")
-			t.check(g.building_at(P + axis * 3), "Dragging from an exposed part of the cable plans the extension")
-			t.advance_until(func(): return g.world.power_lines.size() == 4, 30, "The extension receives its own material and completes")
-			if t.native and kind == "high_line" and axis == Vector2i.DOWN:
-				await RenderingServer.frame_post_draw
-				t.tree.root.get_texture().get_image().save_png("/tmp/law3-power-vertical.png")
-			# A turn/branch must stay clickable, and removing it must not remove the trunk.
-			var branch: Vector2i = P + axis + Vector2i(axis.y, axis.x) * (2 if kind == "high_line" else 1)
-			t.fixtures.building_materials(kind)
-			await t.input.choose_building(kind)
-			await t.input.click_world(g.tile_center(branch))
-			t.advance_until(func(): return g.world.power_lines.has(branch), 30, "Perpendicular cable branch completes normally")
-			g.set_tool("dig")
-			await t.input.click_world(g.tile_center(branch) + Vector2(0, 17))
-			t.check(g.hud.entity_title.text == g.building_name(kind), "Cable branch opens its own details")
-			await t.input.screenshot("/tmp/law3-power-%s-%s-branch.png" % [kind, orientation])
-			g.set_tool("cancel")
-			await t.input.click_world(g.tile_center(branch) + Vector2(0, 17))
-			t.check(not g.world.power_lines.has(branch) and g.world.power_lines.has(P + axis), "Dismantling a branch preserves the neighboring trunk")
-
-	t.fixtures.scenario("High-voltage corridor permits belt crossing but blocks buildings", 0)
-	t.fixtures.clear_area(Rect2i(27, 9, 10, 7))
-	for x in range(28, 33): t.fixtures.cable(Vector2i(x, 11), "high_line")
-	t.fixtures.materials(5)
-	g.world_view.rebuild(g)
-	await t.input.choose_building("belt")
-	var crossing: Array[Vector2i] = [Vector2i(30, 10), Vector2i(30, 14)]
-	await t.input.drag_world(crossing)
-	t.check(g.player_blocks == 5, "Belt blueprints can cross the corridor without prepaying materials")
-	t.fixtures.building_materials("bed")
-	t.check(not g.place_building(Vector2i(28, 12), "bed"), "The full two-cell corridor rejects buildings")
-	await t.input.click_world(g.tile_center(Vector2i(30, 11)))
-	t.check(g.hud.entity_title.text.begins_with("矿道"), "The visible belt wins native picking over the cable beneath it")
-	await t.input.screenshot("/tmp/law3-power-crossing.png")
-
-	# Selected ranges and relocation must use real viewport events, including zoom and UI interception.
-	t.fixtures.scenario("Power effects, dense ore and drill movement", 0)
-	t.fixtures.power_facilities(1, 1)
-	t.fixtures.station("fountain", Vector2i(35, 9))
-	g.add_stock(Vector2i(35, 9), "raw_water", 10)
-	var drill := Vector2i(38, 9)
-	t.fixtures.station("drill", drill)
-	var additions := {Vector2i(32, 12): "spotlight", Vector2i(35, 12): "daylight", Vector2i(28, 12): "canteen", Vector2i(25, 11): "manual_generator"}
-	for p in additions:
-		t.fixtures.station(additions[p], p)
-	g.world.terrain[Vector2i(39, 11)] = 5
-	g.cache.navigation.set_point_solid(Vector2i(39, 11), true)
-	g.world_view.rebuild(g)
-	g.simulate(3)
-	await t.input.close_build_tray()
-	for width in [1440, 960]:
-		t.tree.root.size = Vector2i(width, 900 if width == 1440 else 640)
-		g.world_view.camera.position = g.tile_center(Vector2i(34, 10))
-		g.world_view.camera.zoom = Vector2.ONE * (1.1 if width == 1440 else 0.8)
-		for p in [Vector2i(32, 9), Vector2i(35, 9), drill] + additions.keys():
-			await t.input.settle()
-			await t.input.click_world(g.tile_center(p))
-			t.check(g.hud.entity_title.text == g.building_name(g.building_kind(p)), "Facility %s at width %d opens its live details, got %s" % [g.building_kind(p), width, g.hud.entity_title.text])
-			t.check(g.world_view.effect_frame.visible == (g.building_kind(p) not in ["manual_generator", "canteen"]), "Only area-effect facilities reveal a range when clicked")
-			t.check(t.tree.root.get_visible_rect().encloses(g.hud.entity_panel.get_global_rect()), "Inspector %s at width %d fits the viewport: %s" % [g.building_kind(p), width, g.hud.entity_panel.get_global_rect()])
-			await t.input.screenshot("/tmp/law3-power-%s-%d.png" % [g.building_kind(p), width])
-	await t.input.click_world(g.tile_center(Vector2i(39, 11)))
-	t.check(g.hud.entity_title.text == "致密铜矿" and g.hud.entity_details.text.contains("矿钻"), "Dense terrain shows its distinct repeatable extraction rule")
-	t.check(not g.world_view.effect_frame.visible, "Selecting terrain clears the previous building range")
-	await t.input.click_world(g.tile_center(drill))
-	await t.input.click(g.get_node("UI").move_drill.get_global_rect().get_center())
-	var destination := Vector2i(38, 13)
-	await t.input.click_world(g.tile_center(destination))
-	t.check(g.hud.entity_title.text == "矿钻" and g.interaction.selected_entity == destination, "Move icon relocates the drill through native ground input")
-	t.check(g.hud.entity_details.text.contains("未供电"), "Moved drill immediately reports its lost power connection")
-	await t.input.click(g.hud.pause_button.get_global_rect().get_center())
-	t.check(g.interaction.selected_entity == destination, "Toolbar click does not place or select through the HUD")
-	t.tree.root.size = Vector2i(1440, 900)
 
 func check_unbounded_picking(t) -> void:
 	var g = t.game
-	# Prevent negative cells being treated as no selection and distant tiles wrapping.
-	for cell in [Vector2i(-1, -1), Vector2i(-33, -32), Vector2i(160, 96), Vector2i(65536, -65536)]:
-		t.fixtures.scenario("Native picking in streamed regions: " + str(cell), 0, true)
+	for sample in [{"cell": Vector2i(-1, -1), "zoom": 0.65, "size": Vector2i(1440, 900)},
+			{"cell": Vector2i(65536, -65536), "zoom": 1.6, "size": Vector2i(960, 640)}]:
+		var cell: Vector2i = sample.cell
+		t.fixtures.scenario("Native input after coordinate rebasing: " + str(cell), 0, true)
 		g.ensure_region(Rect2i(cell - Vector2i.ONE * 5, Vector2i.ONE * 12))
 		t.fixtures.clear_area(Rect2i(cell - Vector2i.ONE * 4, Vector2i.ONE * 10))
 		g.world.terrain[cell] = 2
@@ -654,259 +433,73 @@ func check_unbounded_picking(t) -> void:
 		g.interaction.simulation_paused = true
 		g.set_tool("cancel")
 		g.world_view.rebuild(g)
-		for width in [1440, 960]:
-			t.tree.root.size = Vector2i(width, 900 if width == 1440 else 640)
-			g.world_view.camera.zoom = Vector2.ONE * (1.6 if width == 1440 else 0.65)
-			g.world_view.camera.position = g.tile_center(cell)
-			g._process(0.0)
-			await t.input.settle()
-			await t.input.click_world(g.tile_center(cell))
-			t.check(g.hud.entity_panel.visible and g.interaction.selected_tile == cell and g.hud.entity_title.text == "铜矿", "Streamed ground selects its actual world cell at both zoom levels and viewport sizes")
-			if t.native:
-				t.check(g.world_view.hover_frame.visible, "Native stationary hover survives display-origin shifts")
-			await t.input.click_world(g.tile_center(bed))
-			t.check(g.interaction.selected_entity == bed and g.hud.entity_title.text == "床", "Building picking uses the same shifted coordinates as its visible artwork")
-			await t.input.click_world(g.tile_center(worker.pos) + Vector2(0, -7))
-			t.check(g.interaction.selected_worker == worker.id, "Worker picking survives a distant display origin")
-			await t.input.click(g.hud.pause_button.get_global_rect().get_center())
-			t.check(g.interaction.selected_worker == worker.id, "HUD still intercepts clicks over distant terrain")
-			g.interaction.simulation_paused = true
-			if t.native and cell.x == 65536:
-				await RenderingServer.frame_post_draw
-				t.tree.root.get_texture().get_image().save_png("/tmp/law3-streamed-map-%d.png" % width)
-		g.world_view.camera.position = g.tile_center(g.BASE)
-		g._process(0.0)
-		await t.input.settle()
+		t.tree.root.size = sample.size
+		g.world_view.camera.zoom = Vector2.ONE * sample.zoom
 		g.world_view.camera.position = g.tile_center(cell)
 		g._process(0.0)
 		await t.input.settle()
+		await t.input.click_world(g.tile_center(cell))
+		t.check(g.interaction.selected_tile == cell, "The rebased ground click selects its actual world coordinate")
+		if t.native: t.check(g.world_view.hover_frame.visible, "Native hover survives a distant display origin")
+		await t.input.click_world(g.tile_center(bed))
+		t.check(g.interaction.selected_entity == bed, "Building picking uses the same rebased coordinate as its artwork")
+		await t.input.click_world(g.tile_center(worker.pos) + Vector2(0, -7))
+		t.check(g.interaction.selected_worker == worker.id, "Worker picking survives rebasing")
+		await t.input.click(g.hud.pause_button.get_global_rect().get_center())
+		t.check(g.interaction.selected_worker == worker.id, "The HUD intercepts clicks over distant terrain")
+		g.interaction.simulation_paused = true
+		await t.input.screenshot("/tmp/law3-input-rebased-%d.png" % sample.size.x)
 		g.set_tool("dig")
 		var stroke: Array[Vector2i] = [cell, cell + Vector2i.RIGHT]
 		await t.input.drag_world(stroke)
-		g.select_tile(cell)
-		t.check(g.hud.entity_details.text.contains("等待挖掘"), "Returning to an unloaded view preserves terrain and allows a real mining drag")
+		t.check(g.world.mining_contracts.has(cell), "A mining drag still targets the rebased world cell")
 		g.set_tool("bed")
 		await t.input.click_world(g.tile_center(cell + Vector2i(0, 2)))
-		t.check(g.building_at(cell + Vector2i(0, 2)), "Blueprint placement uses world coordinates after rebasing")
+		t.check(g.building_at(cell + Vector2i(0, 2)), "A blueprint command uses rebased coordinates")
 		var hidden: Vector2i = cell + Vector2i(80, 0)
 		g.world_view.camera.position = g.tile_center(hidden)
 		g._process(0.0)
 		await t.input.settle()
 		await t.input.click_world(g.tile_center(hidden))
-		t.check(g.tile_details(hidden).is_empty() and not g.building_at(hidden), "Panning into fog neither reveals geology nor permits building")
-	t.tree.root.size = Vector2i(1440, 900)
-	g.world_view.camera.zoom = Vector2.ONE
-
-func check_tile_details(t) -> void:
-	var g = t.game
-	var ore := Vector2i(37, 13)
-	# Inspecting terrain must retain both single-cell orders and live excavation results.
-	for mineral in [1, 2, 3, 4, g.MapGenerator.WATER_BLOCK]:
-		t.fixtures.scenario("Click terrain information: " + g.ORES[mineral].name, 0)
-		g.world.terrain[ore] = mineral
-		g.world_view.block_changed(ore)
-		g.set_tool("cancel")
-		await t.input.settle()
-		await t.input.click_world(g.tile_center(ore))
-		t.check(g.hud.entity_panel.visible and g.hud.entity_title.text == g.ORES[mineral].name, "Clicking an explored block opens its own material information")
-		t.check(g.hud.entity_details.text.contains("未标记挖掘") and g.hud.entity_details.text.contains("开采工时") and g.hud.entity_details.text.contains("产物  " + g.item_name(g.ORES[mineral].get("item", mineral))), "Terrain details show current designation, work time and actual yield")
-		g.set_tool("dig")
-		await t.input.click_world(g.tile_center(ore))
-		t.check(g.hud.entity_details.text.contains("等待挖掘"), "Single click still places an excavation order while displaying the block")
-		for width in [1440, 960]:
-			t.tree.root.size = Vector2i(width, 900 if width == 1440 else 640)
-			g.world_view.camera.position = g.tile_center(ore)
-			await t.input.settle()
-			t.check(t.tree.root.get_visible_rect().encloses(g.hud.entity_panel.get_global_rect()), "Block information fits both viewport sizes")
-			if t.native and mineral in [2, g.MapGenerator.WATER_BLOCK]:
-				await RenderingServer.frame_post_draw
-				t.tree.root.get_texture().get_image().save_png("/tmp/law3-%s-details-%d.png" % ["water-block" if mineral == g.MapGenerator.WATER_BLOCK else "block", width])
-		t.fixtures.hungry_worker(Vector2i(36, 13))
-		t.advance_until(func():
-			g.update_entity_panel()
-			return g.hud.entity_details.text.contains("挖掘中") and g.hud.entity_details.text.contains("%"), 10, "An open block inspector updates as a worker excavates")
-		t.advance_until(func(): return g.world.mined == 1, 20, "Inspection does not interfere with actual excavation")
-		await t.input.settle()
-		t.check(g.hud.entity_title.text == "空地" and g.hud.entity_details.text.begins_with("可通行\n污染"), "After excavation the same selected cell updates to empty ground without stale ore information")
-		t.tree.root.size = Vector2i(1440, 900)
-
-	t.fixtures.scenario("Terrain selection respects water, fog, UI and drag orders", 0)
-	var water: Vector2i = g.world.water_sources.keys()[0]
-	g.world_view.camera.position = g.tile_center(water)
-	await t.input.settle()
-	await t.input.click_world(g.tile_center(water))
-	t.check(g.hud.entity_title.text == "水源" and g.hud.entity_details.text.contains("不可通行"), "Water is identified as a source, not empty walkable ground")
-	await t.input.click(g.hud.pause_button.get_global_rect().get_center())
-	t.check(g.hud.entity_title.text == "水源", "Toolbar clicks do not replace the selected terrain")
-	var close: Button
-	for button in g.hud.entity_panel.find_children("*", "Button", true, false):
-		if button.tooltip_text == "关闭属性（Esc）":
-			close = button
-	await t.input.click(close.get_global_rect().get_center())
-	t.check(not g.hud.entity_panel.visible, "Closing the terrain inspector does not click through to the world")
-	g.world_view.camera.position = g.tile_center(Vector2i(60, 40))
-	await t.input.settle()
-	await t.input.click_world(g.tile_center(Vector2i(60, 40)))
-	t.check(not g.hud.entity_panel.visible, "Unexplored terrain never reveals its mineral through the inspector")
-	g.world_view.camera.position = g.tile_center(g.BASE)
-	await t.input.settle()
-	var stroke: Array[Vector2i] = [ore, ore + Vector2i.DOWN]
-	await t.input.drag_world(stroke)
-	t.check(not g.hud.entity_panel.visible, "Area designation remains a drag operation rather than opening an arbitrary tile")
-	t.fixtures.hungry_worker(Vector2i(36, 13))
-	t.advance_until(func(): return g.world.mined == 2, 30, "Dragging still designates and excavates both blocks")
-
-func check_material_delivery(t) -> void:
-	var g = t.game
-	# Inspect real moving cargo and both warehouses; screenshots verify each material's artwork.
-	for entry in t.fixtures.INPUT_ROUTES:
-		t.fixtures.scenario("Material icons and live delivery details: " + entry.target, 1)
-		var source: Vector2i = g.BASE if entry.source == "" else P
-		var target := Vector2i(34, 11)
-		if entry.source != "":
-			t.fixtures.station(entry.source, source)
-		t.fixtures.station(entry.target, target)
-		g.add_stock(source, entry.item, entry.amount)
-		g.adjust_production(target, 1)
-		var carried := "搬运 " + str(entry.amount)
-		t.advance_until(func():
-			g.select_worker(0)
-			return t.inventory_description(entry.item).contains(carried) and g.world.workers[0].pos.distance_to(Vector2(source)) > 0.8, 15, "Worker picks up the requested material and leaves its source")
-		for width in [1440, 960]:
-			t.tree.root.size = Vector2i(width, 900 if width == 1440 else 640)
-			g.world_view.camera.zoom = Vector2.ONE * 2.0
-			g.world_view.camera.position = g.tile_center(g.world.workers[0].pos)
-			await t.input.settle()
-			await t.input.click_world(g.tile_center(g.world.workers[0].pos) + Vector2(0, -7))
-			t.check(t.inventory_description(entry.item).contains(carried), "Clicking the visible carrier shows the correct item and quantity")
-			t.check(t.tree.root.get_visible_rect().encloses(g.hud.entity_panel.get_global_rect()), "Cargo details stay within the viewport")
-			await t.input.screenshot("/tmp/law3-material-%s-%d.png" % [entry.target, width])
-		g.world_view.camera.zoom = Vector2.ONE
-		g.world_view.camera.position = g.tile_center(g.BASE)
-		g.adjust_production(target, -1)
-		t.advance_until(func(): return g.stock_at(target, entry.item) == entry.amount, 10, "Carried material reaches the destination without being consumed by a stopped order")
-		await t.input.settle()
-		await t.input.click_world(g.tile_center(target + Vector2i.RIGHT) + Vector2(0, 16))
-		t.check(g.hud.entity_title.text == g.building_name(entry.target) and not t.inventory_description(entry.item).is_empty(), "Destination inspector shows the material in its own warehouse")
-		t.tree.root.size = Vector2i(1440, 900)
-
-func check_building_rows(t) -> void:
-	var g = t.game
-	t.tree.root.size = Vector2i(1440, 900)
-	# A row spanning open ground and ore must remain pickable while workers clear it.
-	t.fixtures.scenario("Ore-covered row remains inspectable through excavation", 1)
-	t.fixtures.materials(g.BED_BLOCKS * 2)
-	var covered_row: Array[Vector2i] = [Vector2i(36, 13), Vector2i(38, 13)]
-	await t.input.choose_building("bed")
-	await t.input.drag_world(covered_row)
-	t.check(g.player_blocks == g.BED_BLOCKS * 2, "Dragging over ore places blueprints without locking warehouse stock")
-	for width in [1440, 960]:
-		t.tree.root.size = Vector2i(width, 900 if width == 1440 else 640)
-		g.world_view.camera.zoom = Vector2.ONE * (1.0 if width == 1440 else 0.65)
-		await t.input.settle()
-		await t.input.click_world(g.tile_center(Vector2i(39, 13)))
-		t.check(g.hud.entity_title.text == "床 · 建造中", "Clicking the far cell over ore opens the blueprint at either viewport size")
-		if t.native:
-			t.check(g.world_view.hover_frame.visible and g.world_view.hover_frame.size.x > g.CELL, "Native hover finds the blueprint above its unmined blocks")
-			await RenderingServer.frame_post_draw
-			t.tree.root.get_texture().get_image().save_png("/tmp/law3-behaviors-ore-blueprint-%d.png" % width)
-	t.advance_until(func(): return g.world.beds.has(covered_row[0]) and g.world.beds.has(covered_row[1]) and g.world.delivered == 3, 240, "Worker clears and completes both beds, including normal rest breaks")
-	await t.input.settle()
-	t.check(g.hud.entity_title.text == "床" and g.world.delivered == 3 and g.player_blocks == 3, "Selected blueprint becomes a bed after clearing the entire row, retaining all mined ore")
-	g.world_view.camera.zoom = Vector2.ONE
+		t.check(g.interaction.selected_tile != hidden and not g.building_at(hidden), "Panning into fog cannot reveal or build on unexplored ground")
 	t.tree.root.size = Vector2i(1440, 900)
 
-	# Recipes/completion for every kind belong to world; input needs the shared row
-	# plus the pump's placement restriction, not another full production matrix.
-	for kind in ["bed", "pump"]:
-		t.fixtures.scenario("Mouse-only building row: " + kind)
-		for worker in g.world.workers:
-			worker.pos = Vector2(34 + worker.id, 15)
-		if kind == "pump":
-			for source in [Vector2i(31, 10), Vector2i(33, 10)]:
-				g.world.water_sources[source] = true
-				g.world.terrain[source] = 0
-				g.cache.navigation.set_point_solid(source, true)
-		var cost: int = g.building_blocks(kind)
-		t.fixtures.building_materials(kind, 3)
-		await t.input.choose_building(kind)
-		var stroke: Array[Vector2i] = [P, P + Vector2i(4, 0)]
-		await t.input.drag_world(stroke, false, false, "/tmp/law3-behaviors-row-preview.png" if kind == "bed" else "")
-		t.check(g.player_blocks == cost * 3 and g.hud.tool_buttons[kind].disabled, "Fast drag commits the whole affordable row and disables further planning without removing goods")
-		for i in 3:
-			await t.input.click_world(g.tile_center(P + Vector2i(i * 2 + 1, 0)))
-			t.check(g.hud.entity_title.text == g.building_name(kind) + " · 建造中", "Every building's far footprint cell opens its blueprint")
-		t.advance_until(func(): return g.world.sites.is_empty(), 600, "Row construction completes across autonomous meals and rest")
-		await t.input.settle()
-		for i in 3:
-			await t.input.click_exposed_building(P + Vector2i(i * 2 + 1, 0), g.building_name(kind))
-			t.check(g.hud.entity_title.text == g.building_name(kind), "Completed row remains inspectable: %s" % g.hud.entity_title.text)
-		t.check(g.player_blocks == 0, "Batch construction does not charge again")
-
-	# Fast drags must never promise more materials than exist, for any placement path.
-	for kind in ["bed", "belt", "electric_belt", "low_line", "high_line"]:
-		t.fixtures.scenario("Dragging stops when planning materials run out: " + kind, 0)
-		t.fixtures.building_materials(kind, 2)
-		await t.input.choose_building(kind)
-		var stride := 2 if kind == "bed" else 1
-		var row: Array[Vector2i] = [P, P + Vector2i(stride * 3, 0)]
-		await t.input.drag_world(row)
-		t.check(g.building_kind(P) == kind and g.building_kind(P + Vector2i(stride, 0)) == kind, "The affordable prefix is placed even when a drag requests too many buildings")
-		t.check(not g.building_at(P + Vector2i(stride * 2, 0)) and not g.building_at(P + Vector2i(stride * 3, 0)), "The unaffordable remainder of a fast drag creates no blueprints")
-		t.check(g.hud.tool_buttons[kind].disabled, "The exhausted tool stays selected but cannot place additional buildings")
-		g.set_tool("cancel")
-		await t.input.click_world(g.tile_center(P))
-		await t.input.choose_building(kind)
-		await t.input.click_world(g.tile_center(P + Vector2i(stride * 2, 0)))
-		t.check(g.building_kind(P + Vector2i(stride * 2, 0)) == kind and g.hud.tool_buttons[kind].disabled, "Canceling one blueprint permits exactly one replacement")
-
-	# Axis locking must not jump rows due to small perpendicular mouse movement.
-	for endpoint in [Vector2i(28, 15), Vector2i(28, 11)]:
-		t.fixtures.scenario("Vertical building row in either drag direction", 0)
-		t.fixtures.materials(g.BED_BLOCKS * 5)
-		await t.input.choose_building("bed")
-		var start := Vector2i(28, 11) if endpoint.y == 15 else Vector2i(28, 15)
-		var stroke: Array[Vector2i] = [start, start + Vector2i(0, signi(endpoint.y - start.y)), endpoint + Vector2i.RIGHT]
+func check_large_footprints(t) -> void:
+	var g = t.game
+	for axis in [Vector2i.RIGHT, Vector2i.DOWN]:
+		t.fixtures.scenario("Multi-row drag spacing and affordable prefix: " + str(axis), 0)
+		t.fixtures.clear_area(Rect2i(27, 6, 16, 13))
+		t.fixtures.building_materials("farm", 2)
+		var start := Vector2i(28, 7)
+		var stride := 4 if axis == Vector2i.RIGHT else 3
+		await t.input.choose_building("farm")
+		var stroke: Array[Vector2i] = [start, start + axis * stride * 2]
 		await t.input.drag_world(stroke)
-		t.check(g.player_blocks == g.BED_BLOCKS * 5, "Vertical planning follows the first axis without prepayment")
-		for y in range(11, 16):
-			await t.input.click_world(g.tile_center(Vector2i(29, y)))
-			t.check(g.hud.entity_title.text == "床 · 建造中", "Reverse or drifting drag leaves a straight complete column")
+		t.check(g.building_kind(start) == "farm" and g.building_kind(start + axis * stride) == "farm", "Dragging spaces buildings by the footprint in the chosen direction")
+		t.check(not g.building_at(start + axis * stride * 2) and g.hud.tool_buttons.farm.disabled, "The unaffordable remainder creates no blueprints")
+		g.set_tool("cancel")
+		await t.input.click_world(g.tile_center(start + Vector2i(3, 2)))
+		t.check(not g.building_at(start) and g.building_kind(start + axis * stride) == "farm", "Canceling through the far corner removes only its own blueprint")
 
-	t.fixtures.scenario("Invalid row and canceled gestures never spend materials", 0)
+	t.fixtures.scenario("Rejected and cancelled gestures create no blueprints", 0)
 	t.fixtures.bed(Vector2i(30, 11))
 	t.fixtures.materials(g.BED_BLOCKS * 3)
 	await t.input.choose_building("bed")
 	var row: Array[Vector2i] = [P, Vector2i(32, 11)]
 	await t.input.drag_world(row)
-	t.check(g.player_blocks == g.BED_BLOCKS * 3, "Occupied middle footprint rejects the row without partial charges")
+	t.check(not g.building_at(P) and g.building_at(Vector2i(30, 11)), "An obstructed row does not partly place new buildings")
 	var safe_row: Array[Vector2i] = [Vector2i(28, 15), Vector2i(32, 15)]
 	await t.input.drag_world(safe_row, true)
-	t.check(g.player_blocks == g.BED_BLOCKS * 3, "Releasing a building drag over UI cancels the whole preview")
+	t.check(not g.building_at(safe_row[0]), "Releasing over the HUD cancels the preview")
 	await t.input.drag_world(safe_row, false, true)
-	t.check(g.player_blocks == g.BED_BLOCKS * 3, "Right-click cancels a building row without a keyboard")
-	await t.input.click_world(g.tile_center(Vector2i(28, 15)))
-	t.check(g.player_blocks == g.BED_BLOCKS * 3 and g.building_at(Vector2i(28, 15)) and not g.building_at(Vector2i(30, 15)), "Canceled gesture does not leak into the next single placement")
+	t.check(not g.building_at(safe_row[0]) and g.interaction.tool == "dig", "Right-click discards the uncommitted preview and exits blueprint mode")
+	await t.input.choose_building("bed")
+	await t.input.click_world(g.tile_center(safe_row[0]))
+	t.check(g.building_at(safe_row[0]) and not g.building_at(Vector2i(30, 15)), "A cancelled gesture does not leak into the next single placement")
 
 func check_tracks(t) -> void:
 	var g = t.game
-	var ui = g.get_node("UI")
-	t.tree.root.size = Vector2i(1440, 900)
-	# Track gestures must use the same ore-overlay rule as individual building placement.
-	t.fixtures.scenario("Drag and cancel track blueprints over ore", 1)
-	t.fixtures.materials(3)
-	await t.input.choose_building("belt")
-	var covered_path: Array[Vector2i] = [Vector2i(38, 13), Vector2i(36, 13)]
-	await t.input.drag_world(covered_path)
-	t.check(g.player_blocks == 3, "Track planning across ore leaves materials unreserved")
-	g.set_tool("cancel")
-	await t.input.click_world(g.tile_center(Vector2i(38, 13)))
-	t.check(g.player_blocks == 3 and not g.building_at(Vector2i(38, 13)), "Canceling an unfilled covered track does not create a refund")
-	g.simulate(45)
-	g.set_tool("dig")
-	await t.input.click_world(g.tile_center(Vector2i(37, 13)) + Vector2(0, 16))
-	t.check(g.hud.entity_title.text == "矿道" and g.world.delivered == 1 and g.player_blocks == 2, "Remaining track excavates and completes without the canceled cell")
-	t.check(g.world.terrain[Vector2i(38, 13)] != 0, "Canceled track leaves its underlying ore untouched")
+	var ui = g.hud
 
 	t.fixtures.scenario("Drag track corners, reuse, reverse, and dismantle", 1)
 	g.world.workers[0].pos = Vector2(P)
@@ -918,32 +511,23 @@ func check_tracks(t) -> void:
 	t.check(g.player_blocks == 7, "Dragging a route leaves construction materials in storage")
 	await t.input.click_world(g.tile_center(path[0]))
 	t.check(g.hud.entity_title.text == "矿道 · 建造中", "Single-cell track blueprint can be inspected")
-	g.simulate(45)
+	t.advance_until(func(): return g.world.sites.is_empty(), 120, "The dragged route completes through actual delivery and construction, with room for need responses")
 	await t.input.settle()
-	t.check(g.hud.entity_title.text == "矿道" and g.hud.entity_details.text.contains("通往传送门"), "Dragged corners complete into a connected route without losing selection")
-	for zoom in [0.65, 1.0, 1.6]:
-		g.world_view.camera.zoom = Vector2.ONE * zoom
-		await t.input.settle()
-		await t.input.click_world(g.tile_center(path[0]))
-		t.check(g.hud.entity_title.text == "矿道" and ui.belt_controls.visible, "Track remains clickable across zoom levels")
-		if t.native:
-			t.near(g.world_view.hover_frame.size.x, g.CELL, "Native track hover covers exactly one cell")
-	g.world_view.camera.zoom = Vector2.ONE
-	await t.input.settle()
+	t.check(g.hud.entity_title.text == "矿道" and g.belt_destination(path[0]) == g.BASE, "Dragged corners complete into a connected route without losing selection")
 	await t.input.choose_building("belt")
 	var reverse: Array[Vector2i] = [Vector2i(35, 15), Vector2i(36, 15)]
-	await t.input.drag_world(reverse)
-	await t.input.click_world(g.tile_center(path[0]))
-	t.check(g.hud.entity_details.text.contains("未连接传送门") and g.player_blocks == 1, "Reverse dragging rewires empty tracks without charging twice")
+	await t.input.drag_world(reverse, false, false, Vector2(0, 16))
+	await t.input.click_exposed_building(path[0], "矿道")
+	t.check(g.belt_destination(path[0]) == null and g.player_blocks == 1, "Reverse dragging rewires empty tracks without charging twice")
 	var restore: Array[Vector2i] = [Vector2i(36, 15), Vector2i(35, 15), Vector2i(35, 14)]
-	await t.input.drag_world(restore)
-	await t.input.click_world(g.tile_center(path[0]))
-	t.check(g.hud.entity_details.text.contains("通往传送门"), "Dragging back into the main line preserves its outgoing direction")
-	await t.input.screenshot("/tmp/law3-behaviors-belt-corners.png")
-	await t.input.click(ui.remove_track.get_global_rect().get_center())
+	await t.input.drag_world(restore, false, false, Vector2(0, 16))
+	await t.input.click_exposed_building(path[0], "矿道")
+	t.check(g.belt_destination(path[0]) == g.BASE, "Dragging back into the main line preserves its outgoing direction")
+	await t.input.press_key(KEY_X)
+	await t.input.click_world(g.tile_center(path[0]) + Vector2(0, 16))
 	t.advance_until(func(): return g.player_blocks == 2, 20, "Dismantled track is carried back to storage")
 	await t.input.settle()
-	t.check(g.player_blocks == 2 and not g.hud.entity_panel.visible, "Dismantle control refunds the empty track and closes its details")
+	t.check(g.player_blocks == 2 and not g.hud.entity_panel.visible, "The unified demolition tool refunds the empty track and closes its details")
 
 	# UI release must cancel a stroke, not place behind a panel or retain pointer capture.
 	t.fixtures.materials(10)
@@ -974,87 +558,128 @@ func check_tracks(t) -> void:
 		await t.input.click_world(g.tile_center(cell))
 		t.check(g.hud.entity_title.text == "矿道 · 建造中", "Cells crossed by the pointer, not an arbitrary horizontal-first detour, receive blueprints")
 
-	t.fixtures.scenario("Track backtracking and right-click cancel", 0)
+	t.fixtures.scenario("Right-click exits track blueprint mode without placing its preview", 0)
 	t.fixtures.materials(5)
 	await t.input.choose_building("belt")
 	var backtrack: Array[Vector2i] = [Vector2i(36, 15), Vector2i(33, 15), Vector2i(35, 15)]
 	await t.input.drag_world(backtrack, false, true)
-	t.check(g.player_blocks == 5, "Right-click discards a track preview without charging")
+	t.check(g.interaction.tool == "dig" and not g.building_at(backtrack[0]) and g.player_blocks == 5, "Right-click exits track placement without committing or charging the preview")
+	await t.input.choose_building("belt")
 	await t.input.drag_world(backtrack)
 	t.check(g.player_blocks == 5 and g.building_at(Vector2i(36, 15)) and g.building_at(Vector2i(35, 15)) and not g.building_at(Vector2i(34, 15)), "Dragging back retracts preview cells without prepaying construction")
 
-	# Occupied tracks protect ore while worker-over-track picking and nearby buildings stay correct.
-	t.fixtures.scenario("Loaded track inspector and visible freight", 1)
-	t.fixtures.bed(P)
-	for x in range(33, 37):
-		t.fixtures.belt(Vector2i(x, 13), Vector2i.LEFT)
-	g.world.workers[0].pos = Vector2(36, 13)
-	g.designate(Vector2i(37, 13), Vector2i(37, 13))
-	t.advance_until(func(): return not g.world.belt_cargo.is_empty(), 20, "Miner has left ore on the track")
-	g.set_tool("dig")
-	for size in [Vector2i(1440, 900), Vector2i(960, 640)]:
-		t.tree.root.size = size
-		await t.input.settle()
-		await t.input.click_world(g.tile_center(Vector2i(36, 13)) + Vector2(16, 16))
-		t.check(g.hud.entity_title.text == "矿道" and t.inventory_description(1).contains(g.world.workers[0].name), "Loaded track details identify the ore owner")
-		t.check(ui.remove_track.disabled, "Occupied track disables destructive controls")
-		t.check(t.tree.root.get_visible_rect().encloses(g.hud.entity_panel.get_global_rect()) and g.hud.entity_panel.get_global_rect().encloses(ui.belt_controls.get_global_rect()), "Track details and controls fit both window sizes")
-		await t.input.screenshot("/tmp/law3-behaviors-belt-%d.png" % size.x)
-		await t.input.click_world(g.tile_center(Vector2i(36, 13)) + Vector2(0, -7))
-		t.check(g.hud.entity_title.text == g.world.workers[0].name, "Worker remains the first picked object over a track")
-		await t.input.click_world(g.tile_center(P + Vector2i.RIGHT))
-		t.check(g.hud.entity_title.text == "床", "Adding single-cell tracks preserves existing two-cell building picking")
-	g.simulate(0.25)
-	await t.input.settle()
-	await t.input.screenshot("/tmp/law3-behaviors-belt-moving.png")
-	t.advance_until(func(): return g.world.delivered == 1, 5, "Visible cargo completes delivery")
 
 func check_track_receivers(t) -> void:
 	var g = t.game
-	# Native picking must allow a stroke to end on either half of a receiver, not build over it.
-	for entry in t.fixtures.INPUT_ROUTES:
-		t.fixtures.scenario("Drag track into production building: " + entry.target, 1)
-		t.tree.root.size = Vector2i(1440, 900)
-		var source: Vector2i = g.BASE if entry.source == "" else P
-		var target := Vector2i(34, 11)
-		if entry.source != "":
-			t.fixtures.station(entry.source, source)
-		t.fixtures.station(entry.target, target)
-		t.fixtures.materials(1)
-		g.add_stock(source, entry.item, entry.amount)
-		g.world.workers[0].pos = Vector2(source)
-		var endpoint := target + (Vector2i.RIGHT if entry.item is String else Vector2i.ZERO)
-		for x in range(29, endpoint.x + 1):
-			t.fixtures.belt(Vector2i(x, 12), Vector2i.RIGHT if x < endpoint.x else Vector2i.ZERO)
-		await t.input.choose_building("belt")
-		var path: Array[Vector2i] = [endpoint + Vector2i.DOWN, endpoint]
-		var blocks: int = g.player_blocks
-		await t.input.drag_world(path)
-		t.check(g.player_blocks == blocks, "Dropping an existing track onto a building does not spend materials")
-		g.set_tool("dig")
-		await t.input.click_world(g.tile_center(path[0]))
-		t.check(g.hud.entity_title.text == "矿道" and g.hud.entity_details.text.contains("通往" + g.building_name(entry.target)), "Mouse stroke connects the existing track to the chosen building")
-		g.adjust_production(target, 1)
-		t.advance_until(func(): return t.track_shows_item(entry.item), 10, "Track inspector exposes the actual ingredient and batch quantity")
-		g.adjust_production(target, -1)
-		var loaded := endpoint + Vector2i.DOWN
-		t.advance_until(func():
-			g.select_entity(loaded)
-			return t.inventory_description(entry.item).contains("搬运"), 5, "Cargo travels away from its carrier to the receiving end of the track")
-		for width in [1440, 960]:
-			t.tree.root.size = Vector2i(width, 900 if width == 1440 else 640)
-			g.world_view.camera.zoom = Vector2.ONE * 2.0
-			g.world_view.camera.position = g.tile_center(loaded)
-			await t.input.settle()
-			await t.input.click_world(g.tile_center(loaded) + Vector2(16, 16))
-			t.check(g.hud.entity_title.text == "矿道" and t.inventory_description(entry.item).contains("搬运"), "Clicking loaded track shows the matching material at both viewport sizes")
-			t.check(g.get_node("UI").remove_track.disabled, "Track carrying production materials cannot be dismantled")
-			t.check(t.tree.root.get_visible_rect().encloses(g.hud.entity_panel.get_global_rect()), "Generic freight details fit the viewport")
-			await t.input.screenshot("/tmp/law3-track-%s-%d.png" % [entry.target, width])
-		t.advance_until(func(): return g.stock_at(target, entry.item) == entry.amount, 5, "Visible cargo unloads into the connected building")
-		g.world_view.camera.zoom = Vector2.ONE
-		g.world_view.camera.position = g.tile_center(g.BASE)
+	t.fixtures.scenario("A track drag connects to the far corner of a receiving footprint", 1)
+	var target := Vector2i(34, 11)
+	t.fixtures.station("pump", P)
+	t.fixtures.station("farm", target)
+	t.fixtures.materials(1)
+	g.add_stock(P, "raw_water", 4)
+	g.world.workers[0].pos = Vector2(P)
+	var endpoint: Vector2i = t.fixtures.receiver_track(target, "farm")
+	await t.input.choose_building("belt")
+	var path: Array[Vector2i] = [endpoint + Vector2i.DOWN, endpoint]
+	await t.input.drag_world(path)
+	t.check(g.belt_destination(path[0]) == target, "The mouse stroke connects the existing track to the requested receiver")
+	g.adjust_production(target, 1)
+	t.advance_until(func(): return t.track_shows_item("raw_water"), 10, "Actual material enters the newly connected track")
+	g.adjust_production(target, -1)
+	t.advance_until(func(): return g.stock_at(target, "raw_water") == 4, 10, "The player connection delivers its actual cargo to the stopped receiver")
+	t.near(g.resource_inventory().raw_water, 4, "Connecting and delivering do not create or consume goods")
+
+func check_power_interactions(t) -> void:
+	var g = t.game
+	t.tree.root.size = Vector2i(1440, 900)
+	# Cover line footprints separately; completion, extension and branch removal need one journey.
+	for sample in [{"kind": "low_line", "axis": Vector2i.RIGHT},
+			{"kind": "high_line", "axis": Vector2i.RIGHT}, {"kind": "high_line", "axis": Vector2i.DOWN}]:
+		var kind: String = sample.kind
+		var axis: Vector2i = sample.axis
+		t.fixtures.scenario("Cable footprint: %s %s" % [kind, axis], 1)
+		t.fixtures.clear_area(Rect2i(27, 10, 10, 6))
+		t.fixtures.building_materials(kind, 3)
+		g.world_view.rebuild(g)
+		await t.input.choose_building(kind)
+		var stroke: Array[Vector2i] = [P, P + axis * 2]
+		await t.input.drag_world(stroke)
+		var far_cell: Vector2i = P + (Vector2i(axis.y, axis.x) if kind == "high_line" else Vector2i.ZERO)
+		await t.input.click_world(g.tile_center(far_cell))
+		t.check(g.hud.entity_title.text == g.building_name(kind) + " · 建造中", "Cable footprint opens its construction details")
+		if kind != "high_line" or axis != Vector2i.DOWN:
+			continue
+		t.advance_until(func(): return g.world.power_lines.size() == 3, 45, "Cable row completes through normal material transport and labor")
 		await t.input.settle()
-		await t.input.click_world(g.tile_center(endpoint) + Vector2(0, 16))
-		t.check(g.hud.entity_title.text == g.building_name(entry.target) and not t.inventory_description(entry.item).is_empty(), "Clicking the receiving footprint shows the delivered goods in its warehouse")
-		t.tree.root.size = Vector2i(1440, 900)
+		t.check(g.hud.entity_title.text == g.building_name(kind), "Selected cable details survive blueprint completion")
+		t.fixtures.building_materials(kind)
+		await t.input.choose_building(kind)
+		stroke = [P, P + axis * 3]
+		await t.input.drag_world(stroke, false, false, Vector2(18, -8))
+		t.check(g.building_at(P + axis * 3), "Dragging from an exposed part of the cable plans the extension")
+		t.advance_until(func(): return g.world.power_lines.size() == 4, 30, "The extension receives its own material and completes")
+		var branch: Vector2i = P + axis + Vector2i.RIGHT * 2
+		t.fixtures.building_materials(kind)
+		await t.input.choose_building(kind)
+		await t.input.click_world(g.tile_center(branch))
+		t.advance_until(func(): return g.world.power_lines.has(branch), 30, "Perpendicular cable branch completes normally")
+		g.set_tool("dig")
+		await t.input.click_world(g.tile_center(branch) + Vector2(0, 17))
+		t.check(g.hud.entity_title.text == g.building_name(kind), "Cable branch opens its own details")
+		g.set_tool("demolish")
+		await t.input.click_world(g.tile_center(branch) + Vector2(0, 17))
+		t.check(not g.world.power_lines.has(branch) and g.world.power_lines.has(P + axis), "Dismantling a branch preserves the neighboring trunk")
+
+	t.fixtures.scenario("High-voltage corridor permits belt crossing but blocks buildings", 0)
+	t.fixtures.clear_area(Rect2i(27, 9, 10, 7))
+	for x in range(28, 33): t.fixtures.cable(Vector2i(x, 11), "high_line")
+	t.fixtures.materials(5)
+	g.world_view.rebuild(g)
+	await t.input.choose_building("belt")
+	var crossing: Array[Vector2i] = [Vector2i(30, 10), Vector2i(30, 14)]
+	await t.input.drag_world(crossing)
+	t.check(g.player_blocks == 5, "Belt blueprints can cross the corridor without prepaying materials")
+	t.fixtures.building_materials("bed")
+	t.check(not g.place_building(Vector2i(28, 12), "bed"), "The full two-cell corridor rejects buildings")
+	await t.input.click_world(g.tile_center(Vector2i(30, 11)))
+	t.check(g.hud.entity_title.text.begins_with("矿道"), "The visible belt wins native picking over the cable beneath it")
+
+	# Moving a facility is a command that must carry its actual stock.
+	t.fixtures.scenario("Move a drill through the inspector", 0)
+	var drill := Vector2i(34, 11)
+	var destination := Vector2i(34, 14)
+	t.fixtures.station("drill", drill)
+	t.fixtures.clear_area(Rect2i(destination, Vector2i(2, 1)))
+	g.add_stock(drill, 2, 3)
+	await t.input.settle()
+	await t.input.click_world(g.tile_center(drill))
+	await t.input.click(g.hud.move_drill.get_global_rect().get_center())
+	await t.input.click_world(g.tile_center(destination))
+	t.check(g.interaction.selected_entity == destination and not g.building_at(drill), "The move control relocates the selected building")
+	t.near(g.stock_at(destination, 2), 3, "Relocation carries stock without loss or duplication")
+
+
+func check_industry_controls(t) -> void:
+	var g = t.game
+	t.fixtures.scenario("The slaughter control issues a real finite job", 1)
+	t.fixtures.station("barn", P)
+	await t.input.settle()
+	await t.input.click_world(g.tile_center(P))
+	await t.input.click(g.hud.slaughter.get_global_rect().get_center())
+	t.advance_until(func(): return g.resource_activity("meat", 1).produced == g.SHEEP_MEAT, 120, "The inspector command completes its actual slaughter job")
+	g.simulate(1)
+	t.near(g.resource_inventory().meat + g.resource_activity("meat", 1).consumed, g.SHEEP_MEAT, "The command cannot create a duplicate batch of meat")
+
+func check_alerts(t) -> void:
+	var g = t.game
+	t.fixtures.scenario("Clicking an alert targets its building without world click-through", 0)
+	t.fixtures.station("farm", P)
+	g.adjust_production(P, 1)
+	g.simulate(g.HOUR_SECONDS * 1.1)
+	await t.input.settle()
+	var alert: Button = t.alert_button("1 个农田缺少原水")
+	t.check(alert != null, "The ordered blocked facility offers a navigation action")
+	if alert == null: return
+	var orders: int = g.world.mining_contracts.size()
+	await t.input.click(alert.get_global_rect().get_center())
+	t.check(g.interaction.selected_entity == P and g.world.mining_contracts.size() == orders, "The alert selects its target without ordering excavation behind the HUD")

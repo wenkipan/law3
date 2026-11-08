@@ -101,8 +101,11 @@ static func prepared_work(e, item: String, state: Dictionary) -> float:
 		if item == "meat": continue
 		if item in ["bench", "workbench"] and work.kind != "mine": continue
 		if item == "tools" and work.kind != "produce": continue
-		var amount: float = minf(w.payroll, work.hours * g.station_wage(work.target if work.station != "" else null))
+		var rate: float = maxf(0.001, w.buffs.work_rate(g, w, work.kind, work.station))
+		var wage: float = g.labor_wage(work.kind, work.target, work.contract)
+		var hours: float = minf(P.LABOR_EVALUATION_HOURS, minf(work.hours, w.payroll / wage) / rate)
+		var amount: float = hours * rate * wage
 		var income: float = e.resources.income(amount)
-		var cost: float = -e.needs.fatigue_gain(state.fatigue, -work.hours * g.FATIGUE_PER_HOUR * w.buffs.fatigue_factor(g, w))
-		best = maxf(best, (income - cost) / (1.0 + P.TIME_COST * work.hours))
+		var cost: float = -e.needs.fatigue_gain(state.fatigue, -hours * g.FATIGUE_PER_HOUR * w.buffs.fatigue_factor(g, w))
+		best = maxf(best, (income - cost) / (1.0 + P.TIME_COST * hours))
 	return best

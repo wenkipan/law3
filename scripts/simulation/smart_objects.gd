@@ -11,6 +11,9 @@ var next_claim := 1
 static func key(kind: String, p: Vector2i) -> String:
 	return "%s:%d:%d" % [kind, p.x, p.y]
 
+static func delivery_key(task: Dictionary) -> String:
+	return "delivery:%d" % task.id
+
 func clear() -> void:
 	for id in objects:
 		note(objects[id].owner, "invalidated", {"slot": id, "reason": "world_reset"})
@@ -18,20 +21,19 @@ func clear() -> void:
 	# Keep serials monotonic so stale handles cannot refer to a reset world's slots.
 
 func sync(game) -> void:
+	game.sync_delivery_tasks()
 	var present: Dictionary = {}
 	for p in game.world.beds:
 		register(present, key("bed", p), game.world.beds[p], p)
 	for p in game.world.sites:
 		if not game.world.sites[p].get("cancelled", false):
 			register(present, key("build", p), game.world.sites[p], p)
-			register(present, key("supply", p), game.world.sites[p], p, true)
 	for p in game.world.benches:
 		register(present, key("work", p), game.world.benches[p], p)
-		register(present, key("supply", p), game.world.benches[p], p, true)
 		if not game.shop_goods(p).is_empty():
 			register(present, key("shop", p), game.world.benches[p], p, true)
 		if game.building_kind(p) == "canteen":
-			for seat in game.building_cells(p, "canteen"):
+			for seat in game.canteen_seats(p):
 				register(present, key("seat", seat), game.world.benches[p], seat)
 		var kind: String = game.building_kind(p)
 		if game.SERVICES.has(kind):
@@ -40,7 +42,8 @@ func sync(game) -> void:
 		register(present, key("mine", p), game.world.mining_contracts[p], p)
 	for p in game.world.banks:
 		register(present, key("bank", p), game.world.banks[p], p, true)
-		register(present, key("supply", p), game.world.banks[p], p, true)
+	for task in game.world.delivery_tasks:
+		register(present, delivery_key(task), task, task.target)
 	for p in game.stock_locations():
 		var source: Dictionary = game.world.benches[p] if game.world.benches.has(p) else game.world.stores.get(p, {})
 		register(present, key("store", p), source, p, true)
@@ -51,6 +54,7 @@ func sync(game) -> void:
 func register(present: Dictionary, id: String, source: Dictionary, p: Vector2i, shared := false) -> void:
 	present[id] = true
 	if objects.has(id) and is_same(objects[id].source, source):
+		objects[id].position = p
 		return
 	if objects.has(id):
 		note(objects[id].owner, "invalidated", {"slot": id, "reason": "object_replaced"})
@@ -64,6 +68,15 @@ func query(kind: String) -> Array[Vector2i]:
 		if id.begins_with(kind + ":"):
 			positions.append(objects[id].position)
 	return positions
+
+func delivery_requests() -> Array[Dictionary]:
+	var requests: Array[Dictionary] = []
+	for id in objects:
+		if id.begins_with("delivery:") and available(id):
+			var task: Dictionary = objects[id].source
+			if not task.bound or task.owner == -1:
+				requests.append(task)
+	return requests
 
 func available(id: String, worker_id := -1) -> bool:
 	return objects.has(id) and (objects[id].owner == -1 or objects[id].owner == worker_id)

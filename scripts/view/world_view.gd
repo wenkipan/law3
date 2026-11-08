@@ -4,6 +4,7 @@ const Art = preload("res://scripts/view/art.gd")
 const WorkerScene = preload("res://scenes/worker.tscn")
 const BedScene = preload("res://scenes/bed.tscn")
 const BeltArt = preload("res://scripts/view/belt_art.gd")
+const RateSelector = preload("res://scripts/view/rate_selector.gd")
 var game: Node
 var camera := Camera2D.new()
 var initialized := false
@@ -30,6 +31,59 @@ var effect_frame: NinePatchRect
 var chunks: Dictionary = {}
 var chunk_pool: Array[Dictionary] = []
 var view_chunks := Rect2i()
+var alert_frames: Array[NinePatchRect] = []
+var alert_targets: Array = []
+var alert_fade := 0.0
+var wage_labels: Dictionary = {}
+
+func sync_tool_cursor(tool: String) -> void:
+	if tool in ["cancel", "demolish", "wage", "fee"]:
+		Input.set_custom_mouse_cursor(Art.texture("res://assets/icons/%s.svg" % tool), Input.CURSOR_CROSS, Vector2(16, 16))
+		Input.set_default_cursor_shape(Input.CURSOR_CROSS)
+	else:
+		Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+
+func _exit_tree() -> void:
+	Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+	Input.set_custom_mouse_cursor(null, Input.CURSOR_CROSS)
+
+func _process(delta: float) -> void:
+	if alert_fade <= 0: return
+	alert_fade = maxf(0, alert_fade - delta)
+	sync_alert_highlights()
+
+func flash_alert_targets(targets: Array) -> void:
+	alert_targets = targets.duplicate()
+	alert_fade = 2.0
+	while alert_frames.size() < targets.size():
+		alert_frames.append(make_frame("AlertHighlight"))
+	sync_alert_highlights()
+
+func sync_alert_highlights() -> void:
+	for i in alert_frames.size():
+		var frame := alert_frames[i]
+		frame.hide()
+		if i >= alert_targets.size() or alert_fade <= 0 or not initialized: continue
+		var target: Dictionary = alert_targets[i]
+		var bounds: Rect2
+		if target.has("worker"):
+			if not worker_nodes.has(target.worker): continue
+			var w: Dictionary = game.world.workers[target.worker]
+			if not game.cache.visible_tiles.has(Vector2i(w.pos.round())): continue
+			bounds = pick_bounds(worker_nodes[target.worker])
+		else:
+			var p: Vector2i = target.entity
+			if not game.world.explored.has(p): continue
+			if p == game.BASE:
+				bounds = Rect2(portal.position - Vector2(32, 40), Vector2(64, 80))
+			else:
+				var kind: String = game.building_kind(p)
+				if kind.is_empty(): continue
+				bounds = Rect2(game.tile_corner(p), game.building_size(p, kind))
+		frame.position = bounds.position - Vector2.ONE * 3
+		frame.size = bounds.size + Vector2.ONE * 6
+		frame.modulate = Color(1.0, 0.77, 0.3, alert_fade / 2.0)
+		frame.show()
 
 func _ready() -> void:
 	add_child(camera)
@@ -84,6 +138,11 @@ func make_frame(node_name: String) -> NinePatchRect:
 
 func rebuild(controller: Node) -> void:
 	game = controller
+	for label in wage_labels.values(): label.free()
+	wage_labels.clear()
+	alert_targets.clear()
+	alert_fade = 0.0
+	for frame in alert_frames: frame.hide()
 	$Overlays/WorkerFeedback.rebuild(game)
 	hovered = null
 	if not $GroundInput.input_event.is_connected(_on_pick_input.bind($GroundInput)):
@@ -323,6 +382,8 @@ func sync_buildings() -> void:
 		var progress: float = game.world.sites[p].progress / game.world.sites[p].seconds if game.world.sites.has(p) and game.world.sites[p].kind == kind else 1.0
 		building_nodes[p].set_progress(progress)
 		building_nodes[p].set_size(game.building_size(p, kind))
+		building_nodes[p].set_shortages(game.alerts.production_shortages(game, p) if game.world.explored.has(p) else [])
+		building_nodes[p].position_shortage(camera.zoom.x)
 		building_nodes[p].animate(game.cache.powered_devices.has(p) or game.cache.power_output.get(p, 0.0) > 0, game.interaction.animation_time)
 		if kind == "barn":
 			building_nodes[p].sync_sheep(game.world.benches.get(p, {}).get("sheep", 0), game.interaction.animation_time)
@@ -421,11 +482,56 @@ func sync_dynamic() -> void:
 	sync_belt_preview()
 	sync_building_preview()
 	sync_line_preview()
+	sync_wages()
 	drag_frame.visible = game.interaction.dragging
 	if game.interaction.dragging:
 		drag_frame.position = game.tile_corner(game.interaction.selection_start.min(game.interaction.selection_end))
 		drag_frame.size = Vector2((game.interaction.selection_start - game.interaction.selection_end).abs() + Vector2i.ONE) * game.CELL
-		drag_frame.modulate = Color("#e39d90") if game.interaction.tool == "cancel" else Color("#e3d29d")
+		var value: float = game.interaction.brush_fee if game.interaction.tool == "fee" else game.interaction.brush_wage
+		drag_frame.modulate = Color(RateSelector.COLORS[int(value) - 1]) if game.interaction.tool in ["wage", "fee"] else (Color("#e39d90") if game.interaction.tool in ["cancel", "demolish"] else Color("#e3d29d"))
+
+func sync_wages() -> void:
+	$Overlays/Wages.visible = game.interaction.tool in ["wage", "fee"]
+	if not $Overlays/Wages.visible: return
+	var active: Dictionary = {}
+	var screen := get_viewport_rect().grow(48)
+	var fees: bool = game.interaction.tool == "fee"
+	var targets: Array = game.fee_targets() if fees else game.wage_targets()
+	var covered: Dictionary = {}
+	for target in targets:
+		if target.kind != "mine":
+			for cell in game.building_cells(target.position, game.building_kind(target.position)):
+				covered[cell] = true
+	for target in targets:
+		var p: Vector2i = target.position
+		if target.kind == "mine" and covered.has(p): continue
+		var key := "%s:%s:%s" % [game.interaction.tool, target.kind, p]
+		var extent: Vector2 = Vector2.ONE * game.CELL if target.kind == "mine" else game.building_size(p, game.building_kind(p))
+		var bottom: Vector2 = game.tile_corner(p) + Vector2(extent.x * 0.5, extent.y)
+		if not game.world.explored.has(p) or not screen.has_point(get_global_transform_with_canvas() * bottom): continue
+		active[key] = true
+		if not wage_labels.has(key):
+			var label := Label.new()
+			label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			label.add_theme_font_override("font", game.hud.font)
+			label.add_theme_font_size_override("font_size", 18)
+			label.add_theme_color_override("font_outline_color", Color("#172126"))
+			label.add_theme_constant_override("outline_size", 5)
+			label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			label.size = Vector2(24, 24)
+			$Overlays/Wages.add_child(label)
+			wage_labels[key] = label
+		var label: Label = wage_labels[key]
+		var value: int = target.settings.get("fee", game.default_fee(game.building_kind(p))) if fees else target.settings.get("wage", game.WAGE_PER_HOUR)
+		label.text = str(value)
+		label.add_theme_color_override("font_color", Color(RateSelector.COLORS[value - 1]))
+		label.scale = Vector2.ONE / maxf(0.8, camera.zoom.x)
+		label.position = bottom - Vector2(label.size.x * label.scale.x * 0.5, label.size.y * label.scale.y + 2)
+	for key in wage_labels.keys():
+		if not active.has(key):
+			wage_labels[key].free()
+			wage_labels.erase(key)
 
 func sync_belt_preview() -> void:
 	var path: Array[Vector2i] = []
@@ -566,7 +672,7 @@ func sync_line_preview() -> void:
 		line_previews[i].hide()
 
 func configure_blueprint(sprite: Sprite2D, p: Vector2i, kind: String) -> void:
-	sprite.texture = Art.texture("res://assets/icons/%s-blueprint.svg" % kind)
+	sprite.texture = Art.building_texture(kind, true)
 	var size: Vector2 = game.building_size(p, kind)
 	var vertical := kind == "high_line" and size.x > size.y
 	sprite.centered = false

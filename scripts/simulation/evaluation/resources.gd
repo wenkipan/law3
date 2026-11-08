@@ -25,16 +25,14 @@ func prepare() -> void:
 		for p in g.world.smart_objects.query(rule.slot):
 			if not g.recipe_ready(p, rule.materials) or e.context.path_to(p).is_empty(): continue
 			var parts: Dictionary = e.service_effects(kind, state)
-			offers.append({"group": "clothing" if kind == "laundry" else "pollution", "price": rule.price, "value": total(parts)})
-			break
+			offers.append({"group": "clothing" if kind == "laundry" else "pollution", "price": g.base_fee(p), "value": total(parts)})
 	if w.fatigue >= g.MAX_FATIGUE * e.Parameters.SLEEP_START:
 		for p in g.world.smart_objects.query("bed"):
 			if g.world.beds[p].assigned not in [-1, w.id] or e.context.path_to(p).is_empty(): continue
 			var hours: float = minf(g.BED_LEASE_HOURS, w.fatigue / g.BED_RECOVERY_PER_HOUR)
 			var saved: float = hours * (g.BED_RECOVERY_PER_HOUR / g.SLEEP_RECOVERY_PER_HOUR - 1.0)
-			offers.append({"group": "fatigue", "price": g.BED_PRICE,
+			offers.append({"group": "fatigue", "price": g.base_fee(p),
 				"value": e.Parameters.TIME_VALUE * saved + e.needs.mood_gain(state.mood, w.mood.BED_GAIN_PER_HOUR * hours, e.Parameters.FORECAST_HOURS)})
-			break
 
 static func total(parts: Dictionary) -> float:
 	var value := 0.0
