@@ -36,7 +36,8 @@ func refresh(g: Node, force := false) -> void:
 	var observed: Dictionary = {}
 	var groups: Dictionary = {}
 	var inventory: Dictionary = g.resource_inventory()
-	var reserve: float = g.world.workers.size() * g.HUNGER_DECAY_PER_DAY / g.HUNGER_PER_BREAD
+	var reserve := 0.0
+	for w in g.world.workers: reserve += g.hunger_decay(w) / g.HUNGER_PER_BREAD
 	bread_low = reserve > 0 and inventory.bread < reserve * (1.25 if bread_low else 1.0)
 	if bread_low:
 		groups.bread = {"id": "bread", "text": "面包不足", "severity": 1, "targets": bread_targets(g)}

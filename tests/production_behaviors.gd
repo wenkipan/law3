@@ -82,6 +82,7 @@ func check_research(t) -> void:
 		t.check(g.place_building(Vector2i(34, 14), definition.unlocks[0]), "The newly unlocked building accepts a normal player construction command")
 
 func run(t) -> void:
+	check_age_labor(t)
 	check_research(t)
 	var g = t.game
 	var kind := "bench"
@@ -186,11 +187,18 @@ func run(t) -> void:
 	g.simulate(g.DAY_SECONDS)
 	t.check(g.world.workers.size() == 4, "Printing does not automatically recur tomorrow")
 
-	t.fixtures.scenario("Finite printing with enough materials for another worker", 1)
-	t.fixtures.station("printer", P)
-	t.fixtures.materials(20)
+	t.fixtures.population_world("clone")
 	g.adjust_production(P, 1)
-	g.simulate(g.DAY_SECONDS + 40)
+	t.advance_until(func(): return g.world.workers.size() == 2, g.DAY_SECONDS, "An elderly operator completes the finite printing order")
+	if g.world.workers.size() == 2:
+		var operator: Dictionary = g.world.workers[0]
+		var copy: Dictionary = g.world.workers[1]
+		for field in ["age_days", "hunger", "fatigue", "pollution"]:
+			t.near(copy[field], operator[field], "Printing copies the final operator's " + field, 0.05)
+		t.check(copy.color == operator.color and copy.name != operator.name, "A printed individual copies appearance without sharing identity")
+		var checkpoint: Dictionary = g.capture_snapshot()
+		t.check(checkpoint.ok and g.restore_snapshot(checkpoint.data).ok, "A printed person's copied age and conditions survive saving")
+	g.simulate(g.DAY_SECONDS + 40 - g.world.day_elapsed)
 	t.check(g.world.workers.size() == 2 and g.player_blocks == 10, "One order creates only one person even with tomorrow's materials available")
 
 	# Reservations and carried goods are not local inputs; stopped orders retain delivered material.
@@ -244,6 +252,26 @@ func run(t) -> void:
 	check_drilling(t)
 	check_electric_freight(t)
 	check_livestock(t)
+
+func check_age_labor(t) -> void:
+	var g = t.game
+	# Equivalent workshop orders retain full pay while age changes real labor time.
+	for days in [5.0, 30.0]:
+		t.fixtures.age_labor(days)
+		g.adjust_production(P, 1)
+		t.advance_until(func(): return g.stock_at(P, "workbench") == 1, 150, "An eligible person can finish the ordered workshop batch")
+		var hours: float = g.PRODUCTS.workbench.hours
+		t.near(g.report_totals(1)["工作"] / g.HOUR_SECONDS, hours * (2.0 if days >= 30 else 1.0), "Old age halves labor efficiency without inventing additional output")
+		t.near(g.world.workers[0].earned_today, hours, "Age changes duration, not the completed batch's wage")
+	# A forbidden childhood job must wait, then become usable on the actual birthday.
+	t.fixtures.age_labor(5.0 - 2.0 / g.DAY_SECONDS)
+	g.adjust_production(P, 1)
+	g.simulate(1.0)
+	t.near(g.report_totals(1)["工作"], 0, "Children cannot begin a forbidden workshop job")
+	t.advance_until(func(): return g.stock_at(P, "workbench") == 1, 120, "Growing into youth makes the existing order executable without reissuing it")
+	t.fixtures.age_labor(1.0, "mill")
+	g.adjust_production(P, 1)
+	t.advance_until(func(): return g.resource_activity("bread", 1).produced == g.PRODUCTS.mill.amount, 120, "Children can perform an allowed food-production job")
 
 func check_livestock(t) -> void:
 	var g = t.game

@@ -73,9 +73,9 @@ func observe_effects(w: Dictionary) -> void:
 	known_effects[w.id] = current
 
 func can_show(worker_id: int) -> bool:
-	if not is_instance_valid(game) or not game.world_view.initialized or worker_id < 0 or worker_id >= game.world.workers.size():
+	if not is_instance_valid(game) or not game.world_view.initialized or game.world.worker(worker_id).is_empty():
 		return false
-	var w: Dictionary = game.world.workers[worker_id]
+	var w: Dictionary = game.world.worker(worker_id)
 	if not game.cache.visible_tiles.has(Vector2i(w.pos.round())):
 		return false
 	var point: Vector2 = get_global_transform_with_canvas() * game.tile_center(w.pos)
@@ -181,7 +181,7 @@ func _process(delta: float) -> void:
 		var width: float = 28 + row.label.get_minimum_size().x
 		row.scale = Vector2.ONE / zoom
 		var height := maxf(40.0, 36.0 * zoom) + 30.0
-		row.position = game.tile_center(game.world.workers[row.worker].pos) + Vector2(-width / 2, -height - lane * 30 - minf(row.age, 1.0) * 12) / zoom
+		row.position = game.tile_center(game.world.worker(row.worker).pos) + Vector2(-width / 2, -height - lane * 30 - minf(row.age, 1.0) * 12) / zoom
 		row.modulate.a = minf(1.0, (LIFETIME - row.age) / 0.45)
 		# Nearby workers share screen space; discard excess rather than stack unreadable text.
 		for attempt in 5:

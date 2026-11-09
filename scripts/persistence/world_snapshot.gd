@@ -1,7 +1,7 @@
 extends RefCounted
 
-const VERSION := 4
-const RULES_VERSION := 13
+const VERSION := 5
+const RULES_VERSION := 14
 const MAX_NODES := 200000
 const MAX_BYTES := 64 * 1024 * 1024
 const MAGIC := "LAW3SNAP"
@@ -25,7 +25,7 @@ const ACTIVITY_FIELDS := ["record", "source_identity", "handles", "path", "desti
 static var FIELDS := {
 	"world": ["world_seed", "generated_chunks", "terrain", "water_sources", "explored",
 		"mining_contracts", "sites", "beds", "benches", "banks", "belts", "power_lines",
-		"belt_cargo", "next_cargo_id", "stores", "delivery_tasks", "next_delivery_task_id", "workers", "smart_objects",
+		"belt_cargo", "next_cargo_id", "stores", "delivery_tasks", "next_delivery_task_id", "workers", "next_worker_id", "smart_objects",
 		"delivered", "mined", "day", "day_elapsed", "portal", "wander_rng", "daily_records",
 		"daily_mined", "resource_flows", "inventory_history", "inventory_sample_time",
 		"fog_timer", "recovery_timer", "wastewater", "pollution_operations", "research_progress"],
@@ -83,7 +83,7 @@ static func decode(data: PackedByteArray, building_kinds: Array, day_seconds: fl
 	if digest(encoded) != data.slice(8, 40): return failure("Snapshot checksum failed.")
 	var payload = bytes_to_var(encoded)
 	if not payload is Dictionary: return failure("Invalid snapshot data.")
-	if payload.get("version") != VERSION or payload.get("rules") not in [12, RULES_VERSION] or payload.get("map") != MapGenerator.VERSION:
+	if payload.get("version") != VERSION or payload.get("rules") != RULES_VERSION or payload.get("map") != MapGenerator.VERSION:
 		return failure("Incompatible snapshot or game rules version.", "version")
 	if not payload.get("nodes") is Array or payload.nodes.size() > MAX_NODES:
 		return failure("Invalid snapshot object table.")
@@ -256,6 +256,13 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 	if not root is Dictionary or not root.get("world") is WorldState or not root.get("sample") is Dictionary or not root.get("view") is Dictionary:
 		return invalid("Incomplete snapshot.")
 	var w: WorldState = root.world
+	if w.next_worker_id < 0: return invalid("Invalid population sequence.")
+	var people: Dictionary = {}
+	var previous_id := -1
+	for person in w.workers:
+		if not person.get("id") is int or person.id <= previous_id or person.id >= w.next_worker_id: return invalid("Invalid worker identity.")
+		people[person.id] = person
+		previous_id = person.id
 	if not w.smart_objects is Slots or not w.portal is Portal or not w.wander_rng is RandomNumberGenerator or w.day < 1 or w.day_elapsed < 0 or w.day_elapsed >= day_seconds:
 		return invalid("Invalid world clock or services.")
 	for field in ["powered_devices", "ready_drills", "power_output", "visible_tiles"]:
@@ -296,7 +303,7 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 		if bench.kind == "barn" and (not numeric_fields(bench, ["sheep"]) or not bench.get("slaughter") is bool): return invalid("Invalid livestock.")
 	if not validate_research(w, day_seconds): return false
 	for bed in w.beds.values():
-		if not bed is Dictionary or not numeric_fields(bed, ["remaining", "assigned"]) or bed.assigned < -1 or bed.assigned >= w.workers.size(): return invalid("Invalid bed.")
+		if not bed is Dictionary or not numeric_fields(bed, ["remaining", "assigned"]) or not valid_owner(bed.assigned, people): return invalid("Invalid bed.")
 	for bank in w.banks.values():
 		if not bank is Dictionary or not numeric_fields(bank, ["interest_received"]): return invalid("Invalid bank.")
 	for line in w.power_lines.values():
@@ -305,7 +312,7 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 		if not belt is Dictionary or not belt.get("direction") is Vector2i or not belt.get("inputs") is Array or not belt.get("last_input") is int or not valid_stock(belt.get("materials")): return invalid("Invalid conveyor.")
 	var task_ids: Dictionary = {}
 	for shipment in w.delivery_tasks:
-		if not valid_delivery_task(shipment, w.workers.size()): return invalid("Invalid freight.")
+		if not valid_delivery_task(shipment, people): return invalid("Invalid freight.")
 		if shipment.id < 0 or shipment.id >= w.next_delivery_task_id or task_ids.has(shipment.id): return invalid("Invalid delivery request identity.")
 		task_ids[shipment.id] = true
 		if not shipment.receiver_identity.is_empty() and shipment.amount != 1.0: return invalid("Supply requests must contain exactly one item.")
@@ -316,11 +323,11 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 			var slot = w.smart_objects.objects.get(handle.key)
 			if not slot is Dictionary or not numeric_fields(slot, ["identity", "claim", "owner"]) or not is_same(slot.get("source"), shipment): return invalid("Missing delivery task slot.")
 			if not w.smart_objects.valid(handle) or handle.owner != shipment.owner or handle.key != Slots.delivery_key(shipment): return invalid("Invalid delivery task claim.")
-			var carrier = w.workers[shipment.owner].get("delivery_tasks")
+			var carrier = people[shipment.owner].get("delivery_tasks")
 			if not carrier is Array or (not shipment.get("on_belt", false) and not carrier.any(func(task): return is_same(task, shipment))): return invalid("Delivery task has no carrier.")
 	for id in w.belt_cargo:
 		var cargo = w.belt_cargo[id]
-		if not id is int or id >= w.next_cargo_id or not cargo is Dictionary or not cargo.get("from") is Vector2i or not cargo.get("to") is Vector2i or not numeric_fields(cargo, ["progress", "fee", "worker"]) or cargo.worker < 0 or cargo.worker >= w.workers.size() or not valid_delivery_task(cargo.get("delivery"), w.workers.size()): return invalid("Invalid conveyor cargo.")
+		if not id is int or id >= w.next_cargo_id or not cargo is Dictionary or not cargo.get("from") is Vector2i or not cargo.get("to") is Vector2i or not numeric_fields(cargo, ["progress", "fee", "worker"]) or not valid_owner(cargo.worker, people) or not valid_delivery_task(cargo.get("delivery"), people): return invalid("Invalid conveyor cargo.")
 		if not w.delivery_tasks.has(cargo.delivery) or not cargo.delivery.bound or not cargo.delivery.picked or not cargo.delivery.get("on_belt", false) or cargo.delivery.owner != cargo.worker: return invalid("Conveyor cargo is not bound to its delivery task.")
 	for load in w.wastewater.values():
 		if not is_number(load) or load < 0: return invalid("Invalid wastewater load.")
@@ -328,11 +335,12 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 		if not source is Dictionary or not numeric_fields(source, ["strength", "radius"]) or not source.radius is int or source.radius < 0 or source.radius > 256: return invalid("Invalid emission sample.")
 	for key in w.smart_objects.objects:
 		var slot = w.smart_objects.objects[key]
-		if not key is String or not slot is Dictionary or not slot.get("source") is Dictionary or not slot.get("position") is Vector2i or not slot.get("shared") is bool or not slot.get("occupied") is bool or not numeric_fields(slot, ["owner", "identity", "claim"]) or not slot.owner is int or slot.owner < -1 or slot.owner >= w.workers.size(): return invalid("Invalid reservation.")
-	for i in w.workers.size():
-		var person: Dictionary = w.workers[i]
-		if person.get("id") != i or not person.get("name") is String or not person.get("pos") is Vector2 or not person.get("activity") is StateTree or not person.get("mood") is Mood or not person.get("buffs") is Buffs:
+		if not key is String or not slot is Dictionary or not slot.get("source") is Dictionary or not slot.get("position") is Vector2i or not slot.get("shared") is bool or not slot.get("occupied") is bool or not numeric_fields(slot, ["owner", "identity", "claim"]) or not valid_owner(slot.owner, people): return invalid("Invalid reservation.")
+	for person in w.workers:
+		if not person.get("name") is String or not person.get("pos") is Vector2 or not person.get("activity") is StateTree or not person.get("mood") is Mood or not person.get("buffs") is Buffs:
 			return invalid("Invalid worker.")
+		if not numeric_fields(person, ["age_days", "mood_integral", "mood_seconds"]) or person.age_days < 0 or person.age_days >= 45 or person.mood_seconds < 0 or person.mood_seconds > day_seconds + 0.000001 or not person.get("happy_days") is int or person.happy_days < 0 or person.happy_days >= 3 or not person.get("producer") is int or person.producer < -1 or person.producer >= w.next_worker_id or person.producer == person.id:
+			return invalid("Invalid worker life history.")
 		for field in ["bread", "earned_today", "eaten_today", "hunger", "meal_bread", "bed_spent_today", "shop_spent_today", "fatigue", "gun_uses", "backpack_uses", "water", "pollution", "clothes_pollution", "loan_principal", "loan_interest", "loan_day", "unloaded_this_trip", "payroll"]:
 			if not person.get(field) is float and not person.get(field) is int: return invalid("Missing worker balance or condition.")
 		for field in ["items", "equipment"]:
@@ -343,8 +351,8 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 		if not person.get("delivery_tasks") is Array: return invalid("Missing worker delivery tasks.")
 		var carried_ids: Dictionary = {}
 		for task in person.delivery_tasks:
-			if not valid_delivery_task(task, w.workers.size()): return invalid("Invalid carried freight.")
-			if not task.bound or task.owner != i or task.get("on_belt", false) or not w.delivery_tasks.any(func(other): return is_same(other, task)) or carried_ids.has(task.id): return invalid("Carried goods are not bound to their worker's task.")
+			if not valid_delivery_task(task, people): return invalid("Invalid carried freight.")
+			if not task.bound or task.owner != person.id or task.get("on_belt", false) or not w.delivery_tasks.any(func(other): return is_same(other, task)) or carried_ids.has(task.id): return invalid("Carried goods are not bound to their worker's task.")
 			carried_ids[task.id] = true
 		if not person.get("extra_cargo") is Array or not (is_same(person.get("carry"), 0) or valid_mined_item(person.get("carry"))) or not person.get("color") is Color or not person.get("facing") is float or not person.has("loan_bank"):
 			return invalid("Incomplete worker state.")
@@ -360,14 +368,16 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 				if not handle.get("key") is String or not numeric_fields(handle, ["identity", "claim", "owner"]): return invalid("Invalid reservation handle.")
 			if entry.kind == "work" and not process.segment.is_empty():
 				if not valid_task(process.segment.get("task")) or not numeric_fields(process.segment, ["goal", "rate", "labor", "fatigue_factor"]) or process.segment.rate <= 0 or not process.segment.get("kind") is String: return invalid("Invalid labor segment.")
-			if entry.kind == "delivery" and not valid_delivery_task(process.task, w.workers.size()): return invalid("Invalid delivery process.")
+			if entry.kind == "delivery" and not valid_delivery_task(process.task, people): return invalid("Invalid delivery process.")
 		if entry.kind == "record":
 			var values: Dictionary = instances[i]._values
-			if values.get("kind") not in ["mine", "build", "produce", "operate", "eat", "sleep", "rest", "use_item", "service", "purchase", "borrow", "payroll", "deliver"] or not values.get("target") is Vector2i or not values.get("data") is Dictionary:
+			if values.get("kind") not in ["mine", "build", "produce", "operate", "eat", "sleep", "rest", "use_item", "service", "purchase", "borrow", "payroll", "deliver", "give_bread", "receive_bread"] or not values.get("target") is Vector2i or not values.get("data") is Dictionary:
 				return invalid("Invalid chosen activity.")
 			var required: Array = Record.PARAMETER_KEYS.get(values.kind, [])
 			for field in required:
 				if field not in ["canteen", "mined"] and not values.data.has(field): return invalid("Missing activity parameter.")
+			if values.kind in ["give_bread", "receive_bread"]:
+				if not values.data.producer is int or not people.has(values.data.producer) or not values.data.child is int or not people.has(values.data.child) or not is_number(values.data.amount) or values.data.amount <= 0: return invalid("Invalid bread support.")
 	return true
 
 func validate_research(w: WorldState, day_seconds: float) -> bool:
@@ -422,12 +432,15 @@ func valid_stock(value) -> bool:
 func valid_task(value) -> bool:
 	return value is Dictionary and numeric_fields(value, ["progress", "seconds"]) and value.seconds > 0 and value.progress >= 0 and (not value.has("reward") or (numeric_fields(value, ["reward", "paid"]) and value.reward > 0))
 
-func valid_delivery_task(value, population: int) -> bool:
+func valid_owner(value, people: Dictionary) -> bool:
+	return value is int and (value == -1 or people.has(value))
+
+func valid_delivery_task(value, people: Dictionary) -> bool:
 	if not value is Dictionary or not value.get("id") is int or not value.get("target") is Vector2i:
 		return false
 	if not (value.get("item") is int or value.get("item") is String) or not (value.get("requested_item") is int or value.get("requested_item") is String):
 		return false
-	if not numeric_fields(value, ["amount", "owner"]) or value.amount <= 0 or value.amount > 1.0 or not value.owner is int or value.owner < -1 or value.owner >= population:
+	if not numeric_fields(value, ["amount", "owner"]) or value.amount <= 0 or value.amount > 1.0 or not valid_owner(value.owner, people):
 		return false
 	if not value.get("bound") is bool or not value.get("picked") is bool or (value.picked and not value.bound):
 		return false

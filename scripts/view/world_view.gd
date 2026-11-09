@@ -68,7 +68,8 @@ func sync_alert_highlights() -> void:
 		var bounds: Rect2
 		if target.has("worker"):
 			if not worker_nodes.has(target.worker): continue
-			var w: Dictionary = game.world.workers[target.worker]
+			var w: Dictionary = game.world.worker(target.worker)
+			if w.is_empty(): continue
 			if not game.cache.visible_tiles.has(Vector2i(w.pos.round())): continue
 			bounds = pick_bounds(worker_nodes[target.worker])
 		else:
@@ -414,6 +415,15 @@ func sync_dynamic() -> void:
 	sync_pollution()
 	sync_buildings()
 	sync_belt_cargo()
+	for id in worker_nodes.keys():
+		if not game.world.worker(id).is_empty(): continue
+		var node: Area2D = worker_nodes[id]
+		if hovered == node:
+			hovered = null
+			hover_frame.hide()
+		$Characters.remove_child(node)
+		node.queue_free()
+		worker_nodes.erase(id)
 	for w in game.world.workers:
 		$Overlays/WorkerFeedback.observe_effects(w)
 		if not worker_nodes.has(w.id):

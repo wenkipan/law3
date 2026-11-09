@@ -45,6 +45,8 @@ static func options(g, w: Dictionary, reason := "select", responses_only := fals
 	return choices
 
 static func add(c, e, choices: Array, kind: String, p: Vector2i, data: Dictionary = {}, slots: Array[String] = [], scoring: Dictionary = {}):
+	if kind in ["mine", "build", "produce", "operate"] and not c.game.can_work(c.worker, kind, c.game.building_kind(p)):
+		return null
 	for id in slots:
 		if not c.game.world.smart_objects.available(id, c.worker.id):
 			e.reject(kind, p, "slot_unavailable", {"slot": id, "owner": c.game.world.smart_objects.owner(id)})
@@ -71,6 +73,17 @@ static func add(c, e, choices: Array, kind: String, p: Vector2i, data: Dictionar
 static func life_options(c, e, choices: Array) -> void:
 	var g = c.game
 	var w: Dictionary = c.worker
+	for child in g.children_of(w):
+		var amount: float = g.support_amount(w, child)
+		for portion in range(1, ceili(amount) + 1):
+			add(c, e, choices, "give_bread", Vector2i(child.pos.round()),
+				{"producer": w.id, "child": child.id, "amount": minf(portion, amount)}, [Slots.person_key(child.id)])
+	if g.is_child(w):
+		var producer: Dictionary = g.world.worker(w.producer)
+		var amount: float = g.support_amount(producer, w)
+		if amount > 0:
+			add(c, e, choices, "receive_bread", Vector2i(producer.pos.round()),
+				{"producer": producer.id, "child": w.id, "amount": amount}, [Slots.person_key(w.id)])
 	for item in w.items:
 		if w.items[item] <= 0: continue
 		if g.ITEM_USES.has(item) and g.equipped_amount(w, item) <= 0:

@@ -6,6 +6,12 @@ const CELL := 40.0
 const BASE := Vector2i(32, 13)
 const VISION_RADIUS := 9
 const DAY_SECONDS := 360.0
+const CHILD_DAYS := 5.0
+const OLD_DAYS := 30.0
+const LIFESPAN_DAYS := 45.0
+const BIRTH_MOOD := 20.0
+const BIRTH_DAYS := 3
+const CHILD_WORK_KINDS := ["farm", "mill", "weaver", "tailor"]
 # 面包兼作食物和支付物。饱食度全天衰减，最低为零；出生时满饱食，不增加实物面包。
 const MEAL_SECONDS := 2.0
 const HUNGER_PER_BREAD := 10.0
@@ -172,6 +178,7 @@ const WorkerBuffs = preload("res://scripts/simulation/worker_buffs.gd")
 const Pollution = preload("res://scripts/simulation/pollution.gd")
 const WorkerStateTree = preload("res://scripts/simulation/worker_state_tree.gd")
 const ActivityRecord = preload("res://scripts/simulation/activity_record.gd")
+const ActivityParameters = preload("res://scripts/simulation/activity_parameters.gd")
 const SmartObjects = preload("res://scripts/simulation/smart_objects.gd")
 const WorkerTrace = preload("res://scripts/simulation/worker_trace.gd")
 const Art = preload("res://scripts/view/art.gd")
@@ -329,9 +336,11 @@ func ensure_region(area: Rect2i) -> void:
 						cache.navigation.set_point_solid(cell, false)
 			world_view.refresh_chunk(index)
 
-func create_worker(p: Vector2i) -> Dictionary:
-	var id := world.workers.size()
+func create_worker(p: Vector2i, days := CHILD_DAYS, producer := -1) -> Dictionary:
+	var id := world.next_worker_id
+	world.next_worker_id += 1
 	var worker := {"id": id, "name": WORKER_NAMES[id] if id < WORKER_NAMES.size() else "矿工%d" % (id + 1),
+		"age_days": days, "producer": producer, "mood_integral": 0.0, "mood_seconds": 0.0, "happy_days": 0,
 		"color": WORKER_COLORS[id % WORKER_COLORS.size()], "pos": Vector2(p), "facing": 1.0,
 		"activity": WorkerStateTree.new(), "carry": 0, "extra_cargo": [], "delivery_tasks": [],
 		"bread": 0.0, "earned_today": 0.0, "eaten_today": 0.0, "hunger": STARTING_HUNGER, "meal_bread": 0.0,
@@ -344,9 +353,42 @@ func create_worker(p: Vector2i) -> Dictionary:
 	ai_trace.record(self, worker, "simulation", "spawn")
 	return worker
 
+func is_child(w: Dictionary) -> bool:
+	return w.age_days < CHILD_DAYS
+
+func age_work_factor(w: Dictionary) -> float:
+	return 0.5 if w.age_days >= OLD_DAYS else 1.0
+
+func hunger_decay(w: Dictionary) -> float:
+	return HUNGER_DECAY_PER_DAY * (0.5 if is_child(w) else 1.0)
+
+func can_work(w: Dictionary, activity: String, station := "") -> bool:
+	return not is_child(w) or (activity == "produce" and station in CHILD_WORK_KINDS)
+
+func children_of(w: Dictionary) -> Array[Dictionary]:
+	var children: Array[Dictionary] = []
+	for child in world.workers:
+		if child.producer == w.id and is_child(child): children.append(child)
+	return children
+
+func support_amount(producer: Dictionary, child: Dictionary) -> float:
+	if producer.is_empty() or child.is_empty() or child.producer != producer.id or not is_child(child) or child.hunger >= ActivityParameters.MEAL_HUNGER:
+		return 0.0
+	var food: float = child.bread + child.meal_bread + child.items.get("meat", 0) * MEAT_HUNGER / HUNGER_PER_BREAD
+	return minf(producer.bread, maxf(0, (MAX_HUNGER - child.hunger) / HUNGER_PER_BREAD - food))
+
+func transfer_support(producer: Dictionary, child: Dictionary, requested: float) -> float:
+	var amount := minf(requested, support_amount(producer, child))
+	if amount <= 0: return 0.0
+	producer.bread -= amount
+	child.bread += amount
+	personal_item_event.emit(child.id, "gain", "bread", amount)
+	return amount
+
 func trace_smart_object(worker_id: int, event: String, data: Dictionary) -> void:
-	if worker_id >= 0 and worker_id < world.workers.size():
-		ai_trace.record(self, world.workers[worker_id], "smart_objects", event, data)
+	var w := world.worker(worker_id)
+	if not w.is_empty():
+		ai_trace.record(self, w, "smart_objects", event, data)
 
 func tile_center(p: Vector2) -> Vector2:
 	return (p - Vector2(interaction.view_origin) + Vector2(0.5, 0.5)) * CELL
@@ -1038,7 +1080,7 @@ func move_drill_to(target: Vector2i) -> bool:
 			return false
 	var owner := slot_owner("work", origin)
 	if owner >= 0:
-		world.workers[owner].activity.exit(self, world.workers[owner], "moved")
+		world.worker(owner).activity.exit(self, world.worker(owner), "moved")
 	world.smart_objects.invalidate(SmartObjects.key("work", origin))
 	world.benches[target] = world.benches[origin]
 	world.benches.erase(origin)
@@ -1138,7 +1180,7 @@ func cancel_site(p: Vector2i) -> bool:
 		return false
 	var owner := slot_owner("build", origin)
 	if owner >= 0:
-		world.workers[owner].activity.exit(self, world.workers[owner], "cancelled")
+		world.worker(owner).activity.exit(self, world.worker(owner), "cancelled")
 	world.smart_objects.invalidate(SmartObjects.key("build", origin))
 	task.cancelled = true
 	cache.invalidate_delivery()
@@ -1162,7 +1204,7 @@ func redirect_site_deliveries(origin: Vector2i) -> void:
 			# Carriers and belts replan against the shipment's current receiver.
 		else:
 			if shipment.owner >= 0:
-				var carrier: Dictionary = world.workers[shipment.owner]
+				var carrier: Dictionary = world.worker(shipment.owner)
 				carrier.activity.exit(self, carrier, "cancelled")
 			if world.delivery_tasks.has(shipment):
 				release_delivery_task(shipment)
@@ -1216,7 +1258,7 @@ func assign_research(p: Vector2i, project: String) -> bool:
 	if bench.research == project: return true
 	var owner := slot_owner("work", p)
 	if owner >= 0:
-		world.workers[owner].activity.exit(self, world.workers[owner], "research_changed")
+		world.worker(owner).activity.exit(self, world.worker(owner), "research_changed")
 	# Suspended batches keep their consumed materials, labor and paid shares.
 	bench.research = project
 	bench.task = bench.research_tasks.get(project, {})
@@ -1451,6 +1493,11 @@ func simulate(delta: float) -> void:
 	var remaining := delta
 	while remaining > 0.0000001:
 		var step := minf(0.05, minf(remaining, DAY_SECONDS - world.day_elapsed))
+		for w in world.workers:
+			for boundary in [CHILD_DAYS, OLD_DAYS, LIFESPAN_DAYS]:
+				if boundary > w.age_days + 0.0000000001:
+					step = minf(step, (boundary - w.age_days) * DAY_SECONDS)
+					break
 		world.recovery_timer += step
 		if world.recovery_timer >= 0.2:
 			recover_cancelled_sites()
@@ -1468,6 +1515,7 @@ func simulate(delta: float) -> void:
 		if (world.day - 1) * DAY_SECONDS + world.day_elapsed >= world.inventory_sample_time + HOUR_SECONDS - 0.000001:
 			sample_inventory()
 		if world.day_elapsed >= DAY_SECONDS - 0.0000001:
+			finish_population_day()
 			world.day_elapsed = 0.0
 			world.day += 1
 			world.resource_flows.erase(world.day - 2)
@@ -1488,7 +1536,7 @@ func simulate_workers(delta: float) -> void:
 		w.buffs.advance(delta)
 		wear_clothes(w, delta)
 		w.mood.advance(delta / HOUR_SECONDS, w.buffs.mood_bonus(w))
-		w.hunger = maxf(0.0, w.hunger - HUNGER_DECAY_PER_DAY * delta / DAY_SECONDS)
+		w.hunger = maxf(0.0, w.hunger - hunger_decay(w) * delta / DAY_SECONDS)
 		var experience: Dictionary = w.activity.tick(self, w, delta)
 		if not experience.is_empty():
 			experience.worker = w
@@ -1502,18 +1550,92 @@ func simulate_workers(delta: float) -> void:
 			experience.worker.mood.slept(experience.bed_hours)
 		else:
 			experience.worker.mood.ate_meal(experience.meal_fraction, experience.comfortable)
-	for p in world.newborns:
-		create_worker(p)
-	if not world.newborns.is_empty():
-		update_fog()
-	world.newborns.clear()
+	for w in world.workers.duplicate():
+		var previous_factor := age_work_factor(w)
+		if not is_child(w) and w.age_days < OLD_DAYS:
+			w.mood_integral += clampf(w.mood.value + w.buffs.mood_bonus(w), -WorkerMood.LIMIT, WorkerMood.LIMIT) * delta
+			w.mood_seconds += delta
+		w.age_days += delta / DAY_SECONDS
+		for boundary in [CHILD_DAYS, OLD_DAYS, LIFESPAN_DAYS]:
+			if absf(w.age_days - boundary) < 0.0000000001: w.age_days = boundary
+		if w.age_days >= LIFESPAN_DAYS:
+			remove_worker(w)
+		elif previous_factor != age_work_factor(w):
+			w.activity.exit(self, w, "age_changed")
+	spawn_newborns()
 	world.fog_timer += delta
 	if world.fog_timer >= 0.15:
 		world.fog_timer = 0.0
 		update_fog()
 
+func finish_population_day() -> void:
+	for w in world.workers:
+		if w.mood_seconds >= DAY_SECONDS - 0.000001:
+			w.happy_days = w.happy_days + 1 if not is_child(w) and w.age_days < OLD_DAYS and w.mood_integral / w.mood_seconds >= BIRTH_MOOD else 0
+			if w.happy_days >= BIRTH_DAYS:
+				world.newborns.append({"position": Vector2i(w.pos.round()), "age_days": 0.0, "producer": w.id})
+				w.happy_days = 0
+		w.mood_integral = 0.0
+		w.mood_seconds = 0.0
+	spawn_newborns()
+
+func spawn_newborns() -> void:
+	if world.newborns.is_empty(): return
+	for birth in world.newborns:
+		var source: Dictionary = birth.get("copy", {})
+		var days: float = source.get("age_days", birth.get("age_days", 0.0))
+		if days >= LIFESPAN_DAYS: continue
+		var person := create_worker(birth.position, days, birth.producer)
+		if not source.is_empty():
+			for field in ["color", "facing", "hunger", "fatigue", "pollution"]: person[field] = source[field]
+			person.mood.value = source.mood.value
+			person.buffs.timed = source.buffs.timed.duplicate()
+	world.newborns.clear()
+	update_fog()
+
+func remove_worker(w: Dictionary) -> void:
+	w.activity.exit(self, w, "death")
+	for other in world.workers:
+		var active = other.activity.active
+		if active != null and active.record.kind in ["give_bread", "receive_bread"] and w.id in [active.record.data.producer, active.record.data.child]:
+			other.activity.exit(self, other, "invalidated")
+	var p := Vector2i(w.pos.round())
+	var goods: Dictionary = w.items.duplicate()
+	goods.bread = goods.get("bread", 0.0) + w.bread + w.payroll
+	goods.clean_water = goods.get("clean_water", 0.0) + w.water
+	for item in ([w.carry] + w.extra_cargo):
+		if not is_same(item, 0): goods[item] = goods.get(item, 0.0) + 1
+	for task in w.delivery_tasks.duplicate():
+		if not task.picked:
+			release_delivery_task(task)
+			continue
+		if not task.get("mined", false):
+			goods[task.item] = goods.get(task.item, 0.0) + task.amount
+			if is_same(task.item, "wastewater"): world.add_waste(p, task.get("pollution", 0.0))
+		remove_delivery_task(task)
+	# Cargo already on a belt no longer needs its original carrier.
+	for cargo in world.belt_cargo.values():
+		if cargo.worker != w.id: continue
+		world.smart_objects.release([cargo.delivery.handle])
+		cargo.worker = -1
+		cargo.delivery.owner = -1
+		cargo.delivery.handle = {}
+	for bed in world.beds.values():
+		if bed.assigned == w.id: bed.assigned = -1
+	for item in goods:
+		if goods[item] <= 0: continue
+		add_stock(p, item, goods[item])
+		if p != BASE: reserve_recovery_tasks(p, BASE, item, goods[item])
+	if w.gun_uses > 0: record_resource_use("bench", 1)
+	if w.backpack_uses > 0: record_resource_use("workbench", 1)
+	for item in w.equipment:
+		if w.equipment[item] > 0: record_resource_use(item, 1)
+	if interaction.selected_worker == w.id: clear_entity_selection()
+	world.workers.erase(w)
+	world.smart_objects.invalidate(SmartObjects.person_key(w.id))
+
 func assign_bed(p: Vector2i, worker_id: int) -> void:
-	if not world.beds.has(p) or worker_id < -1 or worker_id >= world.workers.size():
+	if not world.beds.has(p) or worker_id < -1 or (worker_id >= 0 and world.worker(worker_id).is_empty()):
 		return
 	for other in world.beds:
 		if worker_id >= 0 and world.beds[other].assigned == worker_id:
@@ -1568,7 +1690,7 @@ func open_report() -> void:
 	hud.open_report()
 
 func alert_target_position(target: Dictionary) -> Vector2:
-	return world.workers[target.worker].pos if target.has("worker") else Vector2(target.entity)
+	return world.worker(target.worker).pos if target.has("worker") else Vector2(target.entity)
 
 func activate_alert(id: String) -> void:
 	alerts.refresh(self, true)
@@ -1653,7 +1775,7 @@ func add_mining_order(p: Vector2i) -> bool:
 func cancel_mining_order(p: Vector2i) -> void:
 	var owner := slot_owner("mine", p)
 	if owner >= 0:
-		world.workers[owner].activity.exit(self, world.workers[owner], "cancelled")
+		world.worker(owner).activity.exit(self, world.worker(owner), "cancelled")
 	world.smart_objects.invalidate(SmartObjects.key("mine", p))
 	world.mining_contracts.erase(p)
 
@@ -1730,14 +1852,14 @@ func tile_details(p: Vector2i) -> Dictionary:
 	if world.mining_contracts.has(p):
 		var task: Dictionary = world.mining_contracts[p]
 		var worker_id := slot_owner("mine", p)
-		status = "挖掘中" if worker_id >= 0 and action_for(world.workers[worker_id]) == "挖掘" else "等待挖掘"
+		status = "挖掘中" if worker_id >= 0 and action_for(world.worker(worker_id)) == "挖掘" else "等待挖掘"
 		if task.progress > 0:
 			status += "  %.0f%%" % (task.progress / task.seconds * 100)
 	return {"title": ORES[ore].name,
 		"text": "%s\n开采工时  %.1fh\n产物  %s × 1" % [status, mining_seconds(p) / HOUR_SECONDS, item_name(ORES[ore].get("item", ore))]}
 
 func select_worker(worker_id: int) -> bool:
-	if worker_id < 0 or worker_id >= world.workers.size():
+	if world.worker(worker_id).is_empty():
 		return false
 	interaction.selected_worker = worker_id
 	interaction.selected_entity = null
@@ -2080,7 +2202,7 @@ func new_delivery_task(target: Vector2i, item, receiver: Dictionary = {}) -> Dic
 	return task
 
 func remove_delivery_task(task: Dictionary) -> void:
-	if task.owner >= 0: world.workers[task.owner].delivery_tasks.erase(task)
+	if task.owner >= 0: world.worker(task.owner).delivery_tasks.erase(task)
 	world.smart_objects.invalidate(SmartObjects.delivery_key(task))
 	world.delivery_tasks.erase(task)
 
@@ -2101,7 +2223,7 @@ func release_delivery_task(task: Dictionary) -> void:
 	if task.bound:
 		add_stock(task.source, task.item, task.amount)
 		if is_same(task.item, "wastewater"): world.add_waste(task.source, task.get("pollution", 0.0))
-	if task.owner >= 0: world.workers[task.owner].delivery_tasks.erase(task)
+	if task.owner >= 0: world.worker(task.owner).delivery_tasks.erase(task)
 	var claims: Array[Dictionary] = []
 	if not task.handle.is_empty(): claims.append(task.handle)
 	world.smart_objects.release(claims)
@@ -2326,9 +2448,9 @@ func drill_target(p: Vector2i, worker_id := -1):
 
 func station_staffed(p: Vector2i) -> bool:
 	var owner := slot_owner("work", p)
-	if owner < 0 or owner >= world.workers.size():
+	if world.worker(owner).is_empty():
 		return false
-	var w: Dictionary = world.workers[owner]
+	var w: Dictionary = world.worker(owner)
 	var active = w.activity.active
 	return active != null and active.record.target == p and active.phase == "use" and w.activity.drink_elapsed < 0 and w.payroll > 0.000001 and w.fatigue < MAX_FATIGUE
 
@@ -2465,10 +2587,11 @@ func simulate_power(delta: float) -> void:
 		if world.benches[p].kind in GENERATOR_KINDS:
 			var supply := 400.0 if world.benches[p].kind == "manual_generator" else minf(3200.0, stock_at(p, 3) * 1600.0 * HOUR_SECONDS / delta)
 			if not station_staffed(p): supply = 0.0
+			else: supply = minf(supply, (400.0 if world.benches[p].kind == "manual_generator" else 3200.0) * age_work_factor(world.worker(slot_owner("work", p))))
 			supplies[p] = supply
 			residual.source[key + ":out"] = supply
-		elif world.benches[p].kind == "transformer" and not station_staffed(p):
-			residual[key + ":in"][key + ":out"] = 0.0
+		elif world.benches[p].kind == "transformer":
+			residual[key + ":in"][key + ":out"] = 800.0 * age_work_factor(world.worker(slot_owner("work", p))) if station_staffed(p) else 0.0
 	for p in cache.power_nodes:
 		var load := power_demand(p)
 		if load <= 0 or (building_kind(p) == "drill" and not station_staffed(p)):
@@ -2579,6 +2702,7 @@ func sample_inventory() -> void:
 # Domain operations own all material, production and payment writes.
 func work_available(record: ActivityRecord, w: Dictionary, source_identity: Dictionary) -> bool:
 	var p = record.target
+	if not can_work(w, record.kind, building_kind(p)): return false
 	match record.kind:
 		"mine":
 			return world.mining_contracts.has(p) and is_same(world.mining_contracts[p], source_identity) and world.terrain[p] in [1, 2, 3, 4, 7, 8, MapGenerator.WATER_BLOCK] and cargo_count(w) < carry_capacity(w)
@@ -2669,7 +2793,7 @@ func complete_work(record: ActivityRecord, w: Dictionary) -> void:
 			if tool_work(building_kind(p)) and w.equipment.get("tools", 0) > 0:
 				w.equipment.tools -= 1
 				if w.equipment.tools == 0: record_resource_use("tools", 1)
-			complete_product(p)
+			complete_product(p, w)
 		"operate":
 			var bench: Dictionary = world.benches[p]
 			if bench.kind == "drill":
@@ -2689,7 +2813,7 @@ func record_excavation(w: Dictionary) -> void:
 	if not world.daily_mined.has(world.day): world.daily_mined[world.day] = {}
 	world.daily_mined[world.day][w.id] = world.daily_mined[world.day].get(w.id, 0) + 1
 
-func complete_product(p: Vector2i) -> void:
+func complete_product(p: Vector2i, operator: Dictionary) -> void:
 	var bench: Dictionary = world.benches[p]
 	if bench.kind == "research_bench":
 		var project: String = bench.task.research
@@ -2698,7 +2822,7 @@ func complete_product(p: Vector2i) -> void:
 		if Technology.completed(world.research_progress, project):
 			alerts.research_completed(self, project)
 	elif bench.kind == "printer":
-		world.newborns.append(p + Vector2i.RIGHT)
+		world.newborns.append({"position": p + Vector2i.RIGHT, "producer": operator.id, "copy": operator})
 		bench.queue -= 1
 	elif bench.task.get("slaughter", false):
 		bench.sheep = 0

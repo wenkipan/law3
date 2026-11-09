@@ -40,8 +40,8 @@ godot --resolution 1440x900 --log-file /tmp/law3-map-preview.log --path . --scri
 | `support/fixtures.gd` | 合法的初始地图、资源、设备和人口；不伪造执行中的活动 |
 | `support/context.gd` | 断言、有界等待、报告与实物观察 |
 | `support/viewport_input.gd` | 鼠标和键盘事件、窗口等待与代表性输入截图；不包含结果断言 |
-| `world_behaviors.gd` | 开采、建造承诺与逐件供料、任务专用库存的取消和续接、取消回收、多件上带与入口等待、物流和借贷结算、报告、重置、快照续接与文件完整性 |
-| `production_behaviors.gd` | 日产与有限订单、已投入批次、跨日、实际供料、竞争接收、供电耗料、科研切换和最后一点结算 |
+| `world_behaviors.gd` | 出生与死亡、个体支持的实际交付、开采、建造承诺与逐件供料、任务专用库存的取消和续接、取消回收、多件上带与入口等待、物流和借贷结算、报告、重置、快照续接与文件完整性 |
+| `production_behaviors.gd` | 年龄劳动资格与报酬、日产与有限订单、打印复制、已投入批次、跨日、实际供料、竞争接收、供电耗料、科研切换和最后一点结算 |
 | `equipment_behaviors.gd` | 代表性商品与服务的库存转移、实际收费、消费和耗尽，以及就医与运输交叉、生理极限硬打断与恢复后的物资和付款安全 |
 | `interaction_behaviors.gd` | 选中目标、下单、取消、生产和科研控制、搬迁、存档操作、UI 拦截与远坐标输入 |
 | `diagnostics/map_preview.gd` | 按需地图总览，不执行内容验收 |

@@ -73,6 +73,12 @@ func choose_save_slot(menu: Window, list: ItemList, slot: int) -> void:
 	await settle()
 	await click(Vector2(menu.position) + list.global_position + list.get_item_rect(slot).get_center())
 
+func choose_option(button: OptionButton, id: int) -> void:
+	await click(button.get_global_rect().get_center())
+	var popup := button.get_popup()
+	var fraction: float = (button.get_item_index(id) + 0.5) / button.item_count
+	await click(Vector2(popup.position) + Vector2(popup.size.x * 0.5, popup.size.y * fraction))
+
 func drag_world(cells: Array[Vector2i], release_over_ui := false, right_click := false, offset := Vector2.ZERO) -> void:
 	await move_to(game.get_global_transform_with_canvas() * (game.tile_center(cells[0]) + offset))
 	var event := InputEventMouseButton.new()

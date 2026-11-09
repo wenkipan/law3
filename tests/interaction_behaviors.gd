@@ -63,6 +63,23 @@ func check_world_commands(t) -> void:
 	t.check(not g.interaction.simulation_paused, "The keyboard command resumes simulation")
 	await t.input.screenshot("/tmp/law3-input-world.png")
 
+	# Removing an earlier person must not redirect native picking to another identity.
+	t.fixtures.population_world("death")
+	var dying: Dictionary = g.world.workers[0]
+	var survivor: Dictionary = g.world.workers[1]
+	await t.input.settle()
+	await t.input.click_world(g.tile_center(dying.pos) + Vector2(0, -7))
+	t.check(ui.entity_title.text == dying.name, "The soon-to-die person can be selected normally")
+	g.simulate(3.0)
+	await t.input.settle()
+	t.check(not ui.entity_panel.visible, "Death dismisses the selected person's live inspector")
+	await t.input.click_world(g.tile_center(survivor.pos) + Vector2(0, -7))
+	t.check(ui.entity_title.text == survivor.name, "Native picking still opens the surviving person's details")
+	await t.input.screenshot("/tmp/law3-input-world.png")
+	await t.input.click_world(g.tile_center(P) + Vector2(0, 12))
+	await t.input.choose_option(ui.bed_assignment, survivor.id + 1)
+	t.check(g.world.beds[P].assigned == survivor.id, "The named-bed command still targets the survivor after the population shrinks (assigned %d, expected %d, selected %d, panel %s)" % [g.world.beds[P].assigned, survivor.id, ui.bed_assignment.get_selected_id(), ui.entity_title.text])
+
 	t.fixtures.scenario("Building eligibility, cancellation and a rapid mining click")
 	t.fixtures.materials(6, 2)
 	await t.input.settle()

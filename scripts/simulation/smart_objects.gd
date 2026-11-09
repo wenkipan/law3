@@ -14,6 +14,9 @@ static func key(kind: String, p: Vector2i) -> String:
 static func delivery_key(task: Dictionary) -> String:
 	return "delivery:%d" % task.id
 
+static func person_key(worker_id: int) -> String:
+	return "support:%d" % worker_id
+
 func clear() -> void:
 	for id in objects:
 		note(objects[id].owner, "invalidated", {"slot": id, "reason": "world_reset"})
@@ -23,6 +26,9 @@ func clear() -> void:
 func sync(game) -> void:
 	game.sync_delivery_tasks()
 	var present: Dictionary = {}
+	for child in game.world.workers:
+		if game.is_child(child) and not game.world.worker(child.producer).is_empty():
+			register(present, person_key(child.id), child, Vector2i(child.pos.round()))
 	for p in game.world.beds:
 		register(present, key("bed", p), game.world.beds[p], p)
 	for p in game.world.sites:
@@ -74,6 +80,7 @@ func delivery_requests() -> Array[Dictionary]:
 	for id in objects:
 		if id.begins_with("delivery:") and available(id):
 			var task: Dictionary = objects[id].source
+			if task.get("on_belt", false): continue
 			if not task.bound or task.owner == -1:
 				requests.append(task)
 	return requests

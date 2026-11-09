@@ -24,9 +24,10 @@ var stores: Dictionary = {}
 var delivery_tasks: Array[Dictionary] = []
 var next_delivery_task_id := 0
 var workers: Array[Dictionary] = []
+var next_worker_id := 0
 # Reservations affect future actions and must not be discarded with caches.
 var smart_objects := SmartObjects.new()
-var newborns: Array[Vector2i] = []
+var newborns: Array[Dictionary] = []
 var delivered := 0
 var mined := 0
 var day := 1
@@ -61,6 +62,7 @@ func reset(seed_value: int, base: Vector2i, starting_bread: float) -> void:
 	stores[base] = {"bread": starting_bread}
 	next_cargo_id = 0
 	next_delivery_task_id = 0
+	next_worker_id = 0
 	delivered = 0
 	mined = 0
 	day = 1
@@ -70,6 +72,17 @@ func reset(seed_value: int, base: Vector2i, starting_bread: float) -> void:
 	recovery_timer = 0.0
 	portal = Portal.new()
 	wander_rng.seed = 1020
+
+func worker(id: int) -> Dictionary:
+	var first := 0
+	var last := workers.size() - 1
+	while first <= last:
+		var middle := (first + last) / 2
+		var person: Dictionary = workers[middle]
+		if person.id == id: return person
+		if person.id < id: first = middle + 1
+		else: last = middle - 1
+	return {}
 
 func take_waste(p: Vector2i, amount: float, stock: float) -> float:
 	var load: float = wastewater.get(p, 0.0) * clampf(amount / stock, 0, 1) if stock > 0 else 0.0

@@ -307,13 +307,14 @@ func update_entity_panel() -> void:
 	if research_choice.visible: sync_research_choice(p)
 	bed_assignment.visible = game.interaction.selected_worker < 0 and game.world.beds.has(p)
 	if bed_assignment.visible:
-		if bed_assignment.item_count != game.world.workers.size() + 1:
+		if bed_assignment.item_count != game.world.workers.size() + 1 or game.world.workers.any(func(w): return bed_assignment.get_item_index(w.id + 1) < 0):
 			bed_assignment.clear()
 			bed_assignment.add_item("自动安排")
 			for worker in game.world.workers:
-				bed_assignment.add_item(worker.name)
-		bed_assignment.select(game.world.beds[p].assigned + 1)
-	worker_attributes.visible = game.interaction.selected_worker >= 0 and game.interaction.selected_worker < game.world.workers.size()
+				bed_assignment.add_item(worker.name, worker.id + 1)
+		if bed_assignment.get_selected_id() != game.world.beds[p].assigned + 1:
+			bed_assignment.select(bed_assignment.get_item_index(game.world.beds[p].assigned + 1))
+	worker_attributes.visible = not game.world.worker(game.interaction.selected_worker).is_empty()
 	entity_panel.offset_top = -370 if worker_attributes.visible else -350
 	if production_controls.visible:
 		entity_panel.offset_top = -480
@@ -331,7 +332,7 @@ func update_entity_panel() -> void:
 			entity_details.text += "\n污染  %.1f" % game.cache.pollution.at(game.interaction.selected_tile)
 		return
 	if worker_attributes.visible:
-		var w: Dictionary = game.worker_display(game.world.workers[game.interaction.selected_worker])
+		var w: Dictionary = game.worker_display(game.world.worker(game.interaction.selected_worker))
 		entity_panel.show()
 		entity_title.text = w.name
 		var state_name: String = game.action_for(w)
@@ -359,7 +360,8 @@ func update_entity_panel() -> void:
 			state_name = game.SERVICES[w.service].action + "中"
 		elif w.state == "to_meal":
 			state_name = "前往食堂"
-		entity_details.text = state_name
+		var stage := "儿童" if game.is_child(w) else "老年" if w.age_days >= game.OLD_DAYS else "青年"
+		entity_details.text = "存活 %.1f 天 · %s\n%s" % [w.age_days, stage, state_name]
 		entity_panel.offset_top = -minf(500, get_viewport().get_visible_rect().size.y - 300)
 		worker_bars["饥饿值"][0].text = "饥饿值  %.1f / %.0f" % [w.hunger, game.MAX_HUNGER]
 		worker_bars["饥饿值"][1].value = w.hunger / game.MAX_HUNGER * 100
@@ -445,7 +447,7 @@ func update_entity_panel() -> void:
 			entity_title.text = game.building_name(kind)
 			var status := "等待值班"
 			if not bench.task.is_empty() and game.slot_owner("work", p) >= 0:
-				status = game.world.workers[game.slot_owner("work", p)].name
+				status = game.world.worker(game.slot_owner("work", p)).name
 			if kind in ["grow_light", "fountain", "drill", "spotlight", "daylight"]:
 				status = "运行中" if game.cache.powered_devices.has(p) else "未供电"
 				if kind == "fountain" and bench.water_day != game.world.day:
@@ -477,7 +479,7 @@ func update_entity_panel() -> void:
 					missing.append(game.item_name(item))
 			status = "等待" + "、".join(missing)
 		if not bench.task.is_empty():
-			status = "等待工人" if game.slot_owner("work", p) < 0 else game.world.workers[game.slot_owner("work", p)].name
+			status = "等待工人" if game.slot_owner("work", p) < 0 else game.world.worker(game.slot_owner("work", p)).name
 			status += "  %.0f%%" % (bench.task.progress / bench.task.seconds * 100)
 		if kind == "farm":
 			if bench.growth > 0:
@@ -510,14 +512,14 @@ func update_entity_panel() -> void:
 	if game.world.sites.has(p):
 		var task: Dictionary = game.world.sites[p]
 		if not task.get("cancelled", false):
-			var worker: String = game.world.workers[game.slot_owner("build", p)].name if game.slot_owner("build", p) >= 0 else ("等待工人" if game.site_supplied(p) else "等待材料送达")
+			var worker: String = game.world.worker(game.slot_owner("build", p)).name if game.slot_owner("build", p) >= 0 else ("等待工人" if game.site_supplied(p) else "等待材料送达")
 			details = "%s\n工时  %s / %sh\n\n" % [
 				worker, String.num(task.progress / game.HOUR_SECONDS, 2), String.num(game.building_hours(kind), 2)]
 	else:
 		var bed: Dictionary = game.world.beds[p]
 		details = "状态  空闲\n\n"
 		if game.slot_owner("bed", p) >= 0:
-			var occupant: Dictionary = game.worker_display(game.world.workers[game.slot_owner("bed", p)])
+			var occupant: Dictionary = game.worker_display(game.world.worker(game.slot_owner("bed", p)))
 			details = "使用者  %s\n%s\n疲劳  %.1f / %.0f\n\n" % [
 				occupant.name,
 				"前往床位中" if occupant.state == "to_bed" else "剩余时间  %.1fh" % (bed.remaining / game.HOUR_SECONDS),
@@ -573,8 +575,8 @@ func update_entity_icons() -> void:
 	var effects: Array[Dictionary] = []
 	var p = game.interaction.selected_entity
 	if game.interaction.selected_tile == null:
-		if game.interaction.selected_worker >= 0 and game.interaction.selected_worker < game.world.workers.size():
-			var w: Dictionary = game.world.workers[game.interaction.selected_worker]
+		if not game.world.worker(game.interaction.selected_worker).is_empty():
+			var w: Dictionary = game.world.worker(game.interaction.selected_worker)
 			items = worker_inventory_entries(w)
 			for effect in w.buffs.display_effects(game, w):
 				var texture: Texture2D = Art.item_texture(effect.item) if effect.has("item") else Art.texture("res://assets/icons/%s.svg" % effect.icon)
@@ -586,7 +588,8 @@ func update_entity_icons() -> void:
 			var cargo_id: int = game.belt_cargo_at(p) if game.world.belts.has(p) and not game.world.sites.has(p) else -1
 			if cargo_id >= 0:
 				var cargo: Dictionary = game.world.belt_cargo[cargo_id]
-				add_held_item(contents, notes, cargo.delivery.item, cargo.delivery.amount, "搬运 · " + game.world.workers[cargo.worker].name)
+				var carrier: Dictionary = game.world.worker(cargo.worker)
+				add_held_item(contents, notes, cargo.delivery.item, cargo.delivery.amount, "搬运" + (" · " + carrier.name if not carrier.is_empty() else ""))
 			items = inventory_entries(contents, notes)
 			if game.world.benches.has(p) and game.building_kind(p) == "barn":
 				var sheep: int = game.world.benches[p].sheep
@@ -930,7 +933,7 @@ func build_ui(controller: Node) -> void:
 	bed_assignment.add_theme_font_override("font", font)
 	bed_assignment.add_item("自动安排", -1)
 	bed_assignment.tooltip_text = "指定床位；当前使用结束后生效"
-	bed_assignment.item_selected.connect(func(index: int): game.assign_bed(game.interaction.selected_entity, index - 1))
+	bed_assignment.item_selected.connect(func(index: int): game.assign_bed(game.interaction.selected_entity, bed_assignment.get_item_id(index) - 1))
 	inspector.add_child(bed_assignment)
 	bed_assignment.hide()
 	research_choice = OptionButton.new()

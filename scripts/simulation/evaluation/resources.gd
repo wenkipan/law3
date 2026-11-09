@@ -4,6 +4,7 @@ var _evaluation: WeakRef
 var evaluation:
 	get: return _evaluation.get_ref()
 var offers: Array[Dictionary] = []
+var children: Array[Dictionary] = []
 
 func _init(e) -> void:
 	_evaluation = weakref(e)
@@ -13,6 +14,8 @@ func prepare() -> void:
 	var g = e.context.game
 	var w: Dictionary = e.context.worker
 	var state: Dictionary = e.environment.initial()
+	for child in g.children_of(w):
+		if not e.context.path_to(Vector2i(child.pos.round())).is_empty(): children.append(child)
 	for p in g.world.smart_objects.query("shop"):
 		if e.context.path_to(p).is_empty(): continue
 		for item in g.shop_goods(p):
@@ -39,22 +42,42 @@ static func total(parts: Dictionary) -> float:
 	for part in parts.values(): value += part
 	return value
 
-func potential(cash: float, excluded: Array = []) -> float:
+func food_potential(cash: float, excluded_child := -1) -> float:
 	var e = evaluation
+	var g = e.context.game
 	var w: Dictionary = e.context.worker
+	var levels: Array[float] = [minf(g.MAX_HUNGER, w.hunger + w.items.get("meat", 0) * g.MEAT_HUNGER)]
+	for child in children:
+		if child.id == excluded_child: continue
+		levels.append(minf(g.MAX_HUNGER, child.hunger + (child.bread + child.meal_bread) * g.HUNGER_PER_BREAD + child.items.get("meat", 0) * g.MEAT_HUNGER))
+	levels.sort()
+	levels.append(g.MAX_HUNGER)
+	var food: float = maxf(0, cash) * g.HUNGER_PER_BREAD
+	var value := 0.0
+	var level: float = levels[0]
+	# Allocate the same finite food opportunity to the strongest marginal needs.
+	for i in range(1, levels.size()):
+		var next: float = minf(levels[i], level + food / i)
+		value += i * (e.needs.food_loss(level) - e.needs.food_loss(next))
+		food -= (next - level) * i
+		level = next
+		if food <= 0: break
+	return value
+
+func potential(cash: float, excluded: Array = [], excluded_child := -1) -> float:
+	var e = evaluation
 	var result := 0.0
 	if not excluded.has("food"):
-		var food: float = w.items.get("meat", 0) * e.context.game.MEAT_HUNGER
-		result = e.needs.food_gain(w.hunger + food, cash * e.context.game.HUNGER_PER_BREAD)
+		result = food_potential(cash, excluded_child)
 	# Alternative uses share the same cash. Never add every shop/service price or benefit.
 	for offer in offers:
 		if excluded.has(offer.group) or offer.price <= 0: continue
 		result = maxf(result, offer.value * clampf(cash / offer.price, 0, 1))
 	return result
 
-func cost(amount: float, excluded: Array = []) -> float:
+func cost(amount: float, excluded: Array = [], excluded_child := -1) -> float:
 	var cash: float = evaluation.context.worker.bread
-	return maxf(0, potential(cash, excluded) - potential(maxf(0, cash - amount), excluded))
+	return maxf(0, potential(cash, excluded, excluded_child) - potential(maxf(0, cash - amount), excluded, excluded_child))
 
 func income(amount: float) -> float:
 	var g = evaluation.context.game

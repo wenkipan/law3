@@ -36,6 +36,7 @@ func work_rate(g, w: Dictionary, activity: String, station: String) -> float:
 	# Duty cycles represent wall-clock operation, not accelerated manufacturing.
 	if station in g.GENERATOR_KINDS or station == "transformer": return 1.0
 	var rate: float = w.mood.work_rate(mood_bonus(w))
+	rate *= g.age_work_factor(w)
 	rate *= g.Pollution.work_factor(w)
 	if remaining("tipsy") > 0: rate *= ALE_RATE
 	if activity == "mine" and w.gun_uses > 0: rate *= g.GUN_MINING_RATE

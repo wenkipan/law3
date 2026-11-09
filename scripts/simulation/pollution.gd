@@ -51,7 +51,7 @@ func rebuild_world(world) -> void:
 		if not shipment.bound or shipment.get("on_belt", false): continue
 		var p: Vector2i = shipment.source
 		if shipment.picked and shipment.owner >= 0:
-			p = Vector2i(world.workers[shipment.owner].pos.round())
+			p = Vector2i(world.worker(shipment.owner).pos.round())
 		spread(p, shipment.get("pollution", 0.0), 2)
 	for cargo in world.belt_cargo.values():
 		var p := Vector2i(Vector2(cargo.from).lerp(Vector2(cargo.to), clampf(cargo.progress, 0, 1)).round())

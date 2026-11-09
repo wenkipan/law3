@@ -74,7 +74,7 @@ func limit_flags(g, w: Dictionary) -> int:
 
 func response_reason(g, w: Dictionary, kind: String, data: Dictionary) -> String:
 	if w.hunger <= Parameters.STARVATION_INTERRUPT:
-		if kind in ["eat", "borrow"] or (kind in ["use_item", "purchase"] and data.get("item") == "meat"):
+		if kind in ["eat", "borrow", "receive_bread"] or (kind in ["use_item", "purchase"] and data.get("item") == "meat"):
 			return "starvation"
 	if w.pollution >= Parameters.ILLNESS_INTERRUPT and kind == "service" and data.get("kind") == "hospital":
 		return "severe_illness"
@@ -106,6 +106,9 @@ func response_available(g, w: Dictionary) -> bool:
 	if w.fatigue >= g.MAX_FATIGUE:
 		return true
 	if w.hunger <= Parameters.STARVATION_INTERRUPT:
+		if g.is_child(w) and g.support_amount(g.world.worker(w.producer), w) > 0:
+			var producer: Dictionary = g.world.worker(w.producer)
+			if not g.route(Vector2i(w.pos.round()), Vector2i(producer.pos.round())).is_empty(): return true
 		if w.bread > 0 or w.items.get("meat", 0) > 0:
 			return true
 		if not g.has_debt(w) and w.loan_day != g.world.day:
@@ -151,7 +154,7 @@ func select(g, w: Dictionary) -> void:
 		match option.kind:
 			"mine", "build", "produce", "operate": activity = Work.new()
 			"eat", "sleep", "rest", "use_item", "service": activity = Life.new()
-			"purchase", "borrow", "payroll": activity = Economy.new()
+			"purchase", "borrow", "payroll", "give_bread", "receive_bread": activity = Economy.new()
 			"deliver": activity = Delivery.new()
 		if activity.enter(g, w, option):
 			active = activity

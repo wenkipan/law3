@@ -1,6 +1,74 @@
 extends RefCounted
 
+func check_population(t) -> void:
+	var g = t.game
+	# Age changes consumption, without prescribing either person's activity.
+	t.fixtures.population_world("metabolism")
+	g.simulate(g.HOUR_SECONDS)
+	t.near(g.MAX_HUNGER - g.world.workers[0].hunger, 2 * (g.MAX_HUNGER - g.world.workers[1].hunger), "Children consume half as much satiety over the same elapsed time")
+	# Sustained daily averages, including a saved partial day, must yield only one birth.
+	for setting in ["birth", "low_mood"]:
+		t.fixtures.population_world(setting)
+		g.simulate(g.DAY_SECONDS * 2.5)
+		t.check(g.world.workers.size() == 1, "Two completed qualifying days cannot produce an early child")
+		var saved: Dictionary = g.capture_snapshot()
+		var restored: Dictionary = g.restore_snapshot(saved.data) if saved.ok else saved
+		t.check(restored.ok, "Daily mood accumulation survives saving mid-day: " + restored.get("error", ""))
+		g.simulate(g.DAY_SECONDS * 0.5)
+		t.check(g.world.workers.size() == (2 if setting == "birth" else 1), "Three qualifying daily averages produce a child; a low third day does not")
+		if setting == "birth" and g.world.workers.size() == 2:
+			var child: Dictionary = g.world.workers.back()
+			t.near(child.age_days, 0, "Natural birth starts at zero elapsed days")
+			g.simulate(0.1)
+			t.check(g.world.workers.size() == 2, "The qualifying streak cannot replay on the next simulation step")
+			var checkpoint: Dictionary = g.capture_snapshot()
+			var resumed: Dictionary = g.restore_snapshot(checkpoint.data) if checkpoint.ok else checkpoint
+			t.check(resumed.ok, "The newborn and its individual relationship can be saved: " + resumed.get("error", ""))
+
+	# Support is chosen autonomously. Validate every actual exchange, not a schedule.
+	t.fixtures.population_world("support")
+	var producer_id: int = g.world.workers[0].id
+	var child_id: int = g.world.workers[1].id
+	var received := [0.0]
+	var observe := func(id, kind, item, amount):
+		if kind != "gain" or item != "bread": return
+		t.check(id == child_id, "Bread support cannot go to an unrelated child")
+		var producer: Dictionary = g.world.worker(producer_id)
+		var child: Dictionary = g.world.worker(child_id)
+		t.check(producer.pos.distance_to(child.pos) <= 1.0, "Bread changes hands only after the actual approach")
+		received[0] += amount
+	g.personal_item_event.connect(observe)
+	g.simulate(0.1)
+	t.near(received[0], 0, "Distant relatives cannot transfer bread immediately")
+	var support_save: Dictionary = g.capture_snapshot()
+	t.check(support_save.ok and g.restore_snapshot(support_save.data).ok, "Saving a support approach preserves the ordinary activity and reservation")
+	g.simulate(12.0)
+	g.personal_item_event.disconnect(observe)
+	var producer: Dictionary = g.world.worker(producer_id)
+	var child: Dictionary = g.world.worker(child_id)
+	t.near(producer.bread + producer.meal_bread + producer.eaten_today + received[0], 10.0, "Actual support and personal eating cannot overdraw or duplicate the producer's bread")
+	t.near(child.bread + child.meal_bread + child.eaten_today, received[0], "The child's actual food comes from the individual transfer")
+	print("DIAGNOSTIC: autonomous child support = ", received[0])
+
+	# Death must not shift a surviving person's selection, belongings or orders.
+	t.fixtures.population_world("death")
+	var survivor: Dictionary = g.world.workers[1]
+	var inventory: Dictionary = g.resource_inventory()
+	g.select_worker(g.world.workers[0].id)
+	g.designate(Vector2i(37, 13), Vector2i(37, 13))
+	g.simulate(3.0)
+	t.check(g.world.workers.size() == 1 and not g.hud.entity_panel.visible, "Reaching 45 days removes the person and closes their selected details")
+	var after_death: Dictionary = g.capture_snapshot()
+	t.check(after_death.ok and g.restore_snapshot(after_death.data).ok, "Death leaves a restorable world with surviving people and recovery goods")
+	g.select_worker(survivor.id)
+	t.check(g.hud.entity_title.text == survivor.name, "A surviving person remains selectable after earlier people die")
+	t.advance_until(func(): return g.world.terrain[Vector2i(37, 13)] == 0, 90, "Existing excavation remains usable after a worker dies")
+	t.near(g.resource_inventory().bread + g.resource_activity("bread", 1).consumed, inventory.bread, "Death and recovery preserve actual bread")
+	t.near(g.resource_inventory().ale, inventory.ale, "Unused personal goods remain recoverable after death")
+	t.check(g.world.beds[Vector2i(28, 11)].assigned == -1, "Death frees a named bed for the remaining population")
+
 func run(t) -> void:
+	check_population(t)
 	check_wage_contracts(t)
 	check_snapshots(t)
 	check_distant_excavation(t)

@@ -13,7 +13,8 @@ const Delivery = preload("res://scripts/simulation/evaluation/delivery.gd")
 static var ACTIONS = {"eat": Life.meal, "sleep": Life.sleep, "rest": Life.rest,
 	"use_item": Items.use, "purchase": Economy.purchase, "borrow": Economy.borrow,
 	"payroll": Economy.payroll, "mine": Labor.mining, "build": Labor.construction,
-	"produce": Labor.production, "operate": Labor.operation, "deliver": Delivery.evaluate}
+	"produce": Labor.production, "operate": Labor.operation, "deliver": Delivery.evaluate,
+	"give_bread": Economy.support, "receive_bread": Economy.support}
 static var SERVICES = {"hospital": Life.treatment, "bathhouse": Life.bath, "laundry": Life.laundry}
 static var SERVICE_EFFECTS = {"hospital": Life.treatment_effects, "bathhouse": Life.bath_effects, "laundry": Life.laundry_effects}
 static var ITEM_EFFECTS = {"meat": Items.food, "ale": Items.ale, "clothes": Items.clothing,
@@ -74,6 +75,7 @@ func work_facts() -> Array[Dictionary]:
 	_work_ready = true
 	var g = context.game
 	for p in g.world.smart_objects.query("mine"):
+		if not g.can_work(context.worker, "mine"): continue
 		if g.world.terrain[p] in [5, 6]: continue
 		for direction in g.DIRS:
 			if not context.path_to(p + direction).is_empty():
@@ -82,6 +84,7 @@ func work_facts() -> Array[Dictionary]:
 				break
 	for p in g.world.smart_objects.query("work"):
 		var kind: String = g.building_kind(p)
+		if not g.can_work(context.worker, "operate" if kind in g.OPERATED_KINDS else "produce", kind): continue
 		if context.path_to(p).is_empty(): continue
 		if kind in g.OPERATED_KINDS:
 			if g.operation_needed(p) and (kind != "drill" or g.cache.ready_drills.has(p)):
@@ -94,6 +97,7 @@ func work_facts() -> Array[Dictionary]:
 		var hours: float = maxf(0, task.seconds - task.progress) / g.HOUR_SECONDS if not task.is_empty() else (1.0 if kind in ["farm", "barn"] else g.PRODUCTS[kind].hours)
 		_work_facts.append({"kind": "produce", "target": p, "position": p, "station": kind, "contract": task, "hours": hours})
 	for p in g.world.smart_objects.query("build"):
+		if not g.can_work(context.worker, "build"): continue
 		if g.site_cleared(p) and g.site_supplied(p) and not context.path_to(p).is_empty():
 			_work_facts.append({"kind": "build", "target": p, "position": p, "station": "", "contract": g.world.sites[p], "hours": maxf(0, g.world.sites[p].seconds - g.world.sites[p].progress) / g.HOUR_SECONDS})
 	return _work_facts

@@ -46,7 +46,7 @@ func _ready() -> void:
 	filters.add_child(people)
 	people.add_item("全体")
 	for w in game.world.workers:
-		people.add_item(w.name)
+		people.add_item(w.name, w.id + 1)
 	days.item_selected.connect(func(_i): refresh())
 	people.item_selected.connect(func(_i): refresh())
 	summary.add_theme_font_override("font", game.hud.font)
@@ -85,13 +85,13 @@ func _process(delta: float) -> void:
 func refresh() -> void:
 	if is_instance_valid(resources):
 		resources.refresh()
-	if people.item_count != game.world.workers.size() + 1:
-		var selected_person := people.selected
+	if people.item_count != game.world.workers.size() + 1 or game.world.workers.any(func(w): return people.get_item_index(w.id + 1) < 0):
+		var selected_person := people.get_selected_id()
 		people.clear()
 		people.add_item("全体")
 		for w in game.world.workers:
-			people.add_item(w.name)
-		people.select(clampi(selected_person, 0, game.world.workers.size()))
+			people.add_item(w.name, w.id + 1)
+		people.select(maxi(0, people.get_item_index(selected_person)))
 	var selected_day: int = days.get_selected_id() if days.item_count else game.world.day
 	if days.item_count != game.world.day:
 		days.clear()
@@ -99,12 +99,12 @@ func refresh() -> void:
 			days.add_item("第 %d 天" % d, d)
 		days.select(clampi(selected_day - 1, 0, game.world.day - 1))
 	var d := days.get_selected_id()
-	var totals: Dictionary = game.report_totals(d, people.selected - 1)
+	var totals: Dictionary = game.report_totals(d, people.get_selected_id() - 1)
 	var total := 0.0
 	for value in totals.values():
 		total += value
 	summary.text = "%s · %s · %s" % ["进行中" if d == game.world.day else "已结算", "总人时" if people.selected == 0 else "已记录时间", format_time(total)]
-	summary.text += "\n挖掘方块  %d 块" % game.report_mined(d, people.selected - 1)
+	summary.text += "\n挖掘方块  %d 块" % game.report_mined(d, people.get_selected_id() - 1)
 	for action in game.ACTIONS:
 		var ratio: float = totals[action] / total * 100.0 if total > 0 else 0.0
 		rows[action][0].value = ratio

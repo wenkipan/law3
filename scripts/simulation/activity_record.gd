@@ -11,6 +11,8 @@ const PARAMETER_KEYS := {
 	"eat": ["amount", "canteen"],
 	"sleep": ["bed"],
 	"borrow": ["amount"],
+	"give_bread": ["producer", "child", "amount"],
+	"receive_bread": ["producer", "child", "amount"],
 	"deliver": ["mined"],
 }
 

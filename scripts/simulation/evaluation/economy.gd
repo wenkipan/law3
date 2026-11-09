@@ -28,3 +28,16 @@ static func borrow(e, op: Dictionary) -> Dictionary:
 	var f: Dictionary = e.environment.forecast(op, 0)
 	var amount: float = minf(op.data.amount, e.context.game.stock_at(op.target, "bread"))
 	return e.result(f, {"food_opportunity": e.resources.income(amount)})
+
+static func support(e, op: Dictionary) -> Dictionary:
+	var g = e.context.game
+	var producer: Dictionary = g.world.worker(op.data.producer)
+	var child: Dictionary = g.world.worker(op.data.child)
+	var amount: float = minf(op.data.amount, g.support_amount(producer, child))
+	var f: Dictionary = e.environment.forecast(op, 0)
+	if op.kind == "receive_bread":
+		var cash: float = child.bread
+		return e.result(f, {"food_opportunity": e.resources.potential(cash + amount) - e.resources.potential(cash)})
+	var food: float = (child.bread + child.meal_bread) * g.HUNGER_PER_BREAD + child.items.get("meat", 0) * g.MEAT_HUNGER
+	return e.result(f, {"child_food": e.needs.food_gain(child.hunger + food, amount * g.HUNGER_PER_BREAD),
+		"giving": -e.resources.cost(amount, [], child.id)})

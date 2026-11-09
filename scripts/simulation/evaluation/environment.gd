@@ -39,7 +39,7 @@ func advance(state: Dictionary, p: Vector2i, hours: float) -> void:
 	state.clothes_hours = maxf(0, state.clothes_hours - hours)
 	if state.clothes_hours <= 0: state.clothes_pollution = 0.0
 	state.pollution = minf(g.Pollution.BODY_CAPACITY, state.pollution + rate * (hours - covered))
-	state.hunger = maxf(0, state.hunger - g.HUNGER_DECAY_PER_DAY / 24.0 * hours)
+	state.hunger = maxf(0, state.hunger - g.hunger_decay(w) / 24.0 * hours)
 	if g.has_powered_effect(Vector2(p), "fountain"):
 		state.fatigue = maxf(0, state.fatigue - g.FOUNTAIN_RECOVERY_PER_HOUR * hours)
 	state.elapsed += hours

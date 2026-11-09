@@ -31,6 +31,7 @@ func scenario(label: String, population := 3, generated := false, seed_value := 
 		game.world.water_sources[source] = true
 		game.world.terrain[source] = 0
 	game.world.workers.resize(population)
+	game.world.next_worker_id = population
 	# Business contracts retain their hungry starting fixture; birth is tested separately.
 	for worker in game.world.workers:
 		worker.hunger = 0
@@ -41,6 +42,55 @@ func hungry_worker(p: Vector2i) -> Dictionary:
 	var person: Dictionary = game.create_worker(p)
 	person.hunger = 0
 	return person
+
+func population_world(setting: String) -> void:
+	scenario("Population lifecycle: " + setting, 3 if setting == "support" else 2 if setting in ["death", "metabolism"] else 1)
+	var person: Dictionary = game.world.workers[0]
+	match setting:
+		"metabolism":
+			person.hunger = game.MAX_HUNGER
+			game.world.workers[1].hunger = game.MAX_HUNGER
+			game.world.workers[1].age_days = 1.0
+		"clone":
+			person.age_days = 31.0
+			person.pollution = 12.0
+			station("printer", Vector2i(28, 11))
+			materials(20)
+		"birth", "low_mood":
+			person.hunger = game.MAX_HUNGER
+			person.mood.value = 100.0 if setting == "birth" else 80.0
+			person.bread = 40.0
+			game.add_stock(game.BASE, "bread", -person.bread)
+			if setting == "birth": person.equipment = {"clothes": game.ITEM_USES.clothes.uses}
+		"support":
+			person.pos = Vector2(28, 11)
+			person.hunger = 100.0
+			person.bread = 10.0
+			game.add_stock(game.BASE, "bread", -person.bread)
+			for i in [1, 2]:
+				var child: Dictionary = game.world.workers[i]
+				child.age_days = 1.0
+				child.pos = Vector2(36, 15)
+				child.hunger = 10.0
+			game.world.workers[1].producer = person.id
+		"death":
+			person.age_days = 45.0 - 2.0 / game.DAY_SECONDS
+			person.pos = Vector2(36, 13)
+			person.hunger = 100.0
+			person.bread = 3.5
+			person.carry = 2
+			person.items = {"ale": 1}
+			game.add_stock(game.BASE, "bread", -person.bread)
+			game.world.workers[1].hunger = 100.0
+			bed(Vector2i(28, 11))
+			game.assign_bed(Vector2i(28, 11), person.id)
+
+func age_labor(days: float, kind := "workbench") -> void:
+	scenario("Age-gated labor: %.1f / %s" % [days, kind], 1)
+	game.world.workers[0].age_days = days
+	station(kind, Vector2i(28, 11))
+	stock_recipe(Vector2i(28, 11), game.production_materials(kind))
+	stock_recipe(Vector2i(28, 11), {"bread": 20.0})
 
 func mined_backpack(person: Dictionary, p: Vector2i, second_item = 2) -> void:
 	person.pos = Vector2(p)
