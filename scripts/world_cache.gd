@@ -44,21 +44,23 @@ func sync_delivery(g) -> void:
 	belt_next.clear()
 	belt_destinations.clear()
 	receiver_belts.clear()
-	for collection in [g.world.sites, g.world.benches, g.world.banks, g.world.beds]:
-		for origin in collection:
-			var kind: String = g.building_kind(origin)
-			if is_same(collection, g.world.sites) and (collection[origin].get("cancelled", false) or kind in g.BELT_KINDS or kind in g.LINE_KINDS):
-				continue
-			for cell in g.building_cells(origin, kind):
-				if not delivery_receivers.has(cell): delivery_receivers[cell] = origin
-	for p in g.world.belts:
-		var direction: Vector2i = g.world.belts[p].direction
+	for id in g.world.buildings:
+		var building = g.world.buildings[id]
+		var origin: Vector2i = g.world.building_map.origin(id)
+		if building.in_group("site"):
+			if building.state.get("cancelled", false) or building.kind in g.BELT_KINDS or building.kind in g.LINE_KINDS: continue
+		elif building.kind in g.BARRIER_KINDS or building.kind in g.BELT_KINDS or building.kind in g.LINE_KINDS:
+			continue
+		for cell in g.world.building_map.placements[id].cells:
+			if not delivery_receivers.has(cell): delivery_receivers[cell] = origin
+	for p in g.world.building_positions("belt"):
+		var direction: Vector2i = g.world.building_state(p, "belt").direction
 		if direction == Vector2i.ZERO: continue
 		var next: Vector2i = p + direction
-		if delivery_receivers.has(next) or (g.world.belts.has(next) and -direction in g.world.belts[next].inputs):
+		if delivery_receivers.has(next) or (g.world.has_building(next, "belt") and -direction in g.world.building_state(next, "belt").inputs):
 			belt_next[p] = next
 	# Resolve each downstream chain once, including dead ends and cycles.
-	for start in g.world.belts:
+	for start in g.world.building_positions("belt"):
 		if belt_destinations.has(start): continue
 		var trail: Array[Vector2i] = []
 		var visited: Dictionary = {}
@@ -77,7 +79,7 @@ func sync_delivery(g) -> void:
 				break
 		for cell in trail: belt_destinations[cell] = receiver
 	# Preserve belt iteration order so equal-length loading choices keep their ties.
-	for p in g.world.belts:
+	for p in g.world.building_positions("belt"):
 		var receiver = belt_destinations[p]
 		if receiver == null: continue
 		if not receiver_belts.has(receiver): receiver_belts[receiver] = []
@@ -87,7 +89,7 @@ func sync_delivery(g) -> void:
 func rebuild(world, starting_area: Rect2i, sample: Dictionary) -> void:
 	reset(world.world_seed, starting_area)
 	for cell in world.terrain:
-		if world.terrain[cell] == 0 and not world.water_sources.has(cell):
+		if world.walkable(cell):
 			navigation.set_point_solid(cell, false)
 	visible_tiles = sample.visible_tiles
 	powered_devices = sample.powered_devices

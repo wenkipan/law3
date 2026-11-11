@@ -10,6 +10,7 @@ static func building_texture(kind: String, blueprint := false) -> Texture2D:
 	return texture("res://assets/%s/%s%s.svg" % [folder, kind, "-blueprint" if blueprint else ""])
 
 static func item_texture(item) -> Texture2D:
+	if item in ["money", "berries"]: return texture("res://assets/icons/%s.svg" % item)
 	var icons := {0: "blocks", "raw_water": "raw-water", "wheat": "wheat", 3: "coal",
 		"clean_water": "water", "bench": "mining-gun", "workbench": "backpack",
 		"wool": "wool", "cloth": "cloth", "clothes": "clothes", "ale": "ale",

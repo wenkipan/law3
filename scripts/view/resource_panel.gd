@@ -142,7 +142,7 @@ func select_item(item) -> void:
 
 func refresh() -> void:
 	update_day_axis()
-	var inventory: Dictionary = game.resource_inventory()
+	var inventory: Dictionary = game.player_inventory()
 	for item in rows:
 		rows[item][1].set_pressed_no_signal(is_same(selected_item, item))
 		rows[item][2].text = format_amount(inventory[item])

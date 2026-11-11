@@ -14,7 +14,7 @@ var building_end := Vector2i.ZERO
 var building_axis := Vector2i.ZERO
 var building_pick = null
 var speed := 1.0
-var simulation_paused := false
+var paused_by_player := false
 var tool := "dig"
 var brush_wage := 1.0
 var wage_filter := "all"
@@ -25,11 +25,12 @@ var dragging := false
 var panning := false
 var selection_start := Vector2i.ZERO
 var selection_end := Vector2i.ZERO
-var animation_time := 0.0
 var selected_entity = null
 var selected_tile = null
 var selected_worker := -1
 var demolition_pick: Dictionary = {}
+var action_press: Dictionary = {}
+var item_dragging := false
 
 func reset() -> void:
 	view_origin = Vector2i.ZERO
@@ -45,7 +46,7 @@ func reset() -> void:
 	building_axis = Vector2i.ZERO
 	building_pick = null
 	# Speed is a player preference, retained when starting a new world.
-	simulation_paused = false
+	paused_by_player = false
 	tool = "dig"
 	brush_wage = 1.0
 	wage_filter = "all"
@@ -56,8 +57,9 @@ func reset() -> void:
 	panning = false
 	selection_start = Vector2i.ZERO
 	selection_end = Vector2i.ZERO
-	animation_time = 0.0
 	selected_entity = null
 	selected_tile = null
 	selected_worker = -1
 	demolition_pick.clear()
+	action_press.clear()
+	item_dragging = false

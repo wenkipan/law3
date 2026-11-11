@@ -34,7 +34,7 @@ func _make_custom_tooltip(_for_text: String) -> Object:
 	requirements.custom_minimum_size.x = 240
 	requirements.add_theme_font_override("normal_font", game.hud.font)
 	requirements.add_theme_font_size_override("normal_font_size", 14)
-	requirements.text = "%s\n工时  %s 小时\n工资  %s 面包" % [
+	requirements.text = "%s\n工时  %s 小时\n工资  %s 货币" % [
 		game.material_requirements_text(game.building_materials(kind), true, true), String.num(game.building_hours(kind), 2),
 		String.num(game.building_hours(kind) * game.WAGE_PER_HOUR, 2)]
 	content.add_child(requirements)

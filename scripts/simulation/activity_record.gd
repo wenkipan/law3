@@ -3,16 +3,16 @@ extends RefCounted
 # Chosen intent only. Query paths, scores, slots and live object bindings belong
 # to the proposal or executor, never to this record.
 const PARAMETER_KEYS := {
+	"sell": ["item", "amount"],
+	"payroll": ["employer"],
 	"mine": ["job"],
 	"operate": ["job"],
 	"purchase": ["kind", "item", "amount"],
 	"use_item": ["item"],
 	"service": ["kind"],
-	"eat": ["amount", "canteen"],
+	"eat": ["amount", "item", "canteen"],
 	"sleep": ["bed"],
 	"borrow": ["amount"],
-	"give_bread": ["producer", "child", "amount"],
-	"receive_bread": ["producer", "child", "amount"],
 	"deliver": ["mined"],
 }
 

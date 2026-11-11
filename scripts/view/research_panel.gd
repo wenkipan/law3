@@ -186,7 +186,7 @@ func state_for(project: String) -> String:
 	if Technology.completed(game.world.research_progress, project): return "done"
 	if not Technology.available(game.world.research_progress, project): return "locked"
 	for p in game.research_stations():
-		if game.world.benches[p].research == project: return "active"
+		if game.world.building_state(p, "station").research == project: return "active"
 	return "available"
 
 func sync() -> void:

@@ -69,7 +69,7 @@ func alert_button(text: String) -> Button:
 	return null
 
 func track_shows_item(item) -> bool:
-	for p in game.world.belts:
+	for p in game.world.building_positions("belt"):
 		game.select_entity(p)
 		if inventory_description(item).contains("搬运"):
 			return true
@@ -80,7 +80,7 @@ func world_observations() -> Dictionary:
 	for project in game.Technology.PROJECTS: research[project] = game.research_value(project)
 	var people: Array = []
 	for w in game.world.workers:
-		people.append({"name": w.name, "pos": w.pos, "bread": w.bread,
+		people.append({"name": w.name, "pos": w.pos, "money": w.money,
 			"hunger": w.hunger, "fatigue": w.fatigue, "pollution": w.pollution,
 			"clothes_pollution": w.clothes_pollution, "inventory": game.hud.worker_inventory_entries(w),
 			"effects": w.buffs.display_effects(game, w)})

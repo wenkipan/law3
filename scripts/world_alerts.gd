@@ -8,7 +8,7 @@ var notices: Dictionary = {}
 var pending: Dictionary = {}
 var last_time := -INF
 var last_refresh := -1000
-var bread_low := false
+var money_low := false
 
 func reset() -> void:
 	entries.clear()
@@ -16,7 +16,7 @@ func reset() -> void:
 	pending.clear()
 	last_time = -INF
 	last_refresh = -1000
-	bread_low = false
+	money_low = false
 
 func research_completed(g: Node, project: String) -> void:
 	var id := "research:" + project
@@ -35,23 +35,26 @@ func refresh(g: Node, force := false) -> void:
 	last_refresh = ticks
 	var observed: Dictionary = {}
 	var groups: Dictionary = {}
-	var inventory: Dictionary = g.resource_inventory()
+	var inventory: Dictionary = g.player_inventory()
 	var reserve := 0.0
-	for w in g.world.workers: reserve += g.hunger_decay(w) / g.HUNGER_PER_BREAD
-	bread_low = reserve > 0 and inventory.bread < reserve * (1.25 if bread_low else 1.0)
-	if bread_low:
-		groups.bread = {"id": "bread", "text": "面包不足", "severity": 1, "targets": bread_targets(g)}
+	for w in g.world.workers:
+		if w.employer != null: reserve += g.hunger_decay(w) / 20.0
+	var food: float = inventory.berries + inventory.meat + inventory.wheat + inventory.bread
+	money_low = reserve > 0 and food < reserve * (1.25 if money_low else 1.0)
+	if money_low:
+		groups.money = {"id": "money", "text": "食物不足", "severity": 1, "targets": [{"entity": g.BASE}]}
 	var sick := false
 	for w in g.world.workers:
+		if not g.cache.visible_tiles.has(Vector2i(w.pos.round())): continue
 		var target := {"worker": w.id}
 		if w.pollution >= g.Pollution.DISEASE:
 			sick = true
 			add(groups, "illness", "名工人患病", 2, target)
-		if w.hunger < HUNGER_THRESHOLD and w.meal_bread <= 0 and mature("hunger:" + str(w.id), now, g.HOUR_SECONDS * 0.5, observed):
+		if w.hunger < HUNGER_THRESHOLD and w.meal_food <= 0 and mature("hunger:" + str(w.id), now, g.HOUR_SECONDS * 0.5, observed):
 			add(groups, "hunger", "名工人饥饿", 2, target)
-	for p in g.world.benches:
-		if not g.world.explored.has(p): continue
-		var b: Dictionary = g.world.benches[p]
+	for p in g.world.building_positions("station"):
+		if not g.cache.visible_tiles.has(p): continue
+		var b: Dictionary = g.world.building_state(p, "station")
 		for item in production_shortages(g, p):
 			var id := "input:%s:%s" % [b.kind, item]
 			if shortage_mature(g, id + str(p), p, item, now, observed):
@@ -59,16 +62,16 @@ func refresh(g: Node, force := false) -> void:
 		if b.kind == "hospital" and sick and missing(g, p, "medical", g.SERVICES.hospital.materials.medical):
 			if shortage_mature(g, "medical:" + str(p), p, "medical", now, observed):
 				add(groups, "medical", "个医院缺少医疗用品", 2, {"entity": p})
-	for p in g.world.benches.keys() + g.world.belts.keys():
-		if not g.world.explored.has(p): continue
+	for p in g.world.building_positions("station") + g.world.building_positions("belt"):
+		if not g.cache.visible_tiles.has(p): continue
 		if g.power_demand(p) > 0 and not g.cache.powered_devices.has(p):
 			if mature("power:" + str(p), now, g.HOUR_SECONDS, observed):
 				add(groups, "power", "个设备未供电", 1, {"entity": p})
-	for p in g.world.sites:
-		if g.world.sites[p].get("cancelled", false) or not g.world.explored.has(p) or not g.site_cleared(p): continue
+	for p in g.world.building_positions("site"):
+		if g.world.building_state(p, "site").get("cancelled", false) or not g.cache.visible_tiles.has(p) or not g.site_cleared(p): continue
 		var reachable := false
 		for w in g.world.workers:
-			if not g.route(Vector2i(w.pos.round()), p).is_empty():
+			if not g.construction_route(Vector2i(w.pos.round()), p).is_empty():
 				reachable = true
 				break
 		if not reachable and not g.world.workers.is_empty() and mature("access:" + str(p), now, g.HOUR_SECONDS, observed):
@@ -77,7 +80,7 @@ func refresh(g: Node, force := false) -> void:
 		if not observed.has(key): pending.erase(key)
 	entries.clear()
 	for entry in groups.values():
-		if entry.id != "bread": entry.text = "%d %s" % [entry.targets.size(), entry.text]
+		if entry.id != "money": entry.text = "%d %s" % [entry.targets.size(), entry.text]
 		entries.append(entry)
 	for entry in notices.values(): entries.append(entry)
 	entries.sort_custom(func(a, b): return a.id < b.id if a.severity == b.severity else a.severity > b.severity)
@@ -103,10 +106,21 @@ func missing(g: Node, p: Vector2i, item, amount: float) -> bool:
 		stock = g.stock_at(p, item)
 	return stock + 0.000001 < amount
 
+func blueprint_shortages(g: Node, p: Vector2i) -> Dictionary:
+	var missing_materials: Dictionary = {}
+	if not g.world.has_building(p, "site"): return missing_materials
+	var site: Dictionary = g.world.building_state(p, "site")
+	if site.get("cancelled", false): return missing_materials
+	for item in site.materials:
+		var amount := ceili(site.materials[item] - g.stock_at(p, item) - 0.000001)
+		if amount > 0: missing_materials[item] = amount
+	return missing_materials
+
 func production_shortages(g: Node, p: Vector2i) -> Array:
 	var items: Array = []
-	if not g.world.benches.has(p): return items
-	var b: Dictionary = g.world.benches[p]
+	if not g.world.has_building(p, "station"): return items
+	var b: Dictionary = g.world.building_state(p, "station")
+	if b.get("wage", g.WAGE_PER_HOUR) == 0: return items
 	if not (g.PRODUCTS.has(b.kind) or b.kind == "research_bench"): return items
 	if not g.has_production_order(p) or not b.task.is_empty() or b.growth > 0 or b.harvest: return items
 	if b.kind == "barn" and b.slaughter: return items
@@ -121,24 +135,24 @@ func incoming(g: Node, p: Vector2i, item) -> float:
 	for ore in range(1, g.ORES.size()): amount += g.incoming(p, ore)
 	return amount
 
-func bread_targets(g: Node) -> Array[Dictionary]:
+func money_targets(g: Node) -> Array[Dictionary]:
 	var targets: Array[Dictionary] = []
-	for p in g.stock_locations() + g.world.sites.keys():
-		if g.world.explored.has(p) and g.storage_contents(p).get("bread", 0.0) > 0:
+	for p in g.stock_locations() + g.world.building_positions("site"):
+		if g.cache.visible_tiles.has(p) and g.storage_contents(p).get("money", 0.0) > 0:
 			var target := {"entity": p}
 			if target not in targets: targets.append(target)
 	for w in g.world.workers:
 		var carrying := false
 		for shipment in g.world.delivery_tasks:
-			if shipment.picked and not shipment.get("on_belt", false) and shipment.owner == w.id and is_same(shipment.item, "bread"):
+			if shipment.picked and not shipment.get("on_belt", false) and shipment.owner == w.id and is_same(shipment.item, "money"):
 				carrying = true
-		if w.bread + w.payroll + w.meal_bread > 0 or carrying:
+		if w.money + w.payroll + w.meal_food > 0 or carrying:
 			targets.append({"worker": w.id})
 	for cargo in g.world.belt_cargo.values():
-		if not is_same(cargo.delivery.item, "bread"): continue
-		var p: Vector2i = cargo.to if g.world.belts.has(cargo.to) else cargo.from
+		if not is_same(cargo.delivery.item, "money"): continue
+		var p: Vector2i = cargo.to if g.world.has_building(cargo.to, "belt") else cargo.from
 		var target := {"entity": p}
-		if g.world.explored.has(p) and target not in targets: targets.append(target)
+		if g.cache.visible_tiles.has(p) and target not in targets: targets.append(target)
 	return targets
 
 func find(id: String) -> Dictionary:

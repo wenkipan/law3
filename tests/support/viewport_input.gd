@@ -5,19 +5,22 @@ var game: Node
 var root: Window
 var native: bool
 var native_window_size := Vector2i.ZERO
+var pointer := Vector2.ZERO
+var os_mouse := false
 
 func _init(scene_tree: SceneTree, world: Node, native_input: bool) -> void:
 	tree = scene_tree
 	game = world
 	root = tree.root
 	native = native_input
+	os_mouse = native and DisplayServer.get_name() == "X11" and FileAccess.file_exists("/usr/bin/xdotool")
 
 func settle() -> void:
 	if native and root.size != native_window_size:
 		native_window_size = root.size
 		root.grab_focus()
 		# Let the window manager apply the resize before warping the real pointer.
-		await tree.create_timer(0.15).timeout
+		await tree.create_timer(0.15, true, false, true).timeout
 	game.update_ui()
 	game.world_view.sync_dynamic()
 	game.world_view.camera.force_update_scroll()
@@ -25,21 +28,36 @@ func settle() -> void:
 	await tree.physics_frame
 	await tree.process_frame
 	game.world_view.sync_dynamic()
+	if native:
+		await RenderingServer.frame_post_draw
 
 func move_to(point: Vector2) -> void:
+	pointer = point
 	if native:
+		if not root.has_focus():
+			root.grab_focus()
+			await tree.create_timer(0.1, true, false, true).timeout
 		root.warp_mouse(point)
 		# A warp updates the cached position before the OS finishes delivering motion.
-		# Give native events a bounded settling interval before synthetic button presses.
-		await tree.create_timer(0.05).timeout
+		# Give native events a bounded settling interval before button presses.
+		await tree.create_timer(0.05, true, false, true).timeout
 		for i in 6:
 			await tree.physics_frame
 			if i >= 1 and root.get_mouse_position().distance_to(point) < 1.0:
 				break
+		if os_mouse:
+			await settle()
+			return
 	var event := InputEventMouseMotion.new()
 	event.position = point
 	root.push_input(event, true)
 	await settle()
+
+func send_button(event: InputEventMouseButton) -> void:
+	if os_mouse:
+		OS.execute("/usr/bin/xdotool", ["mousedown" if event.pressed else "mouseup", str(event.button_index)])
+	else:
+		root.push_input(event, true)
 
 func click(point: Vector2, button := MOUSE_BUTTON_LEFT) -> void:
 	await move_to(point)
@@ -47,15 +65,51 @@ func click(point: Vector2, button := MOUSE_BUTTON_LEFT) -> void:
 	event.position = point
 	event.button_index = button
 	event.pressed = true
-	root.push_input(event, true)
+	send_button(event)
 	await settle()
 	event = event.duplicate()
 	event.pressed = false
-	root.push_input(event, true)
+	send_button(event)
 	await settle()
 
 func click_world(point: Vector2) -> void:
+	await settle()
 	await click(game.get_global_transform_with_canvas() * point)
+
+func press_world(point: Vector2) -> void:
+	await settle()
+	await press(game.get_global_transform_with_canvas() * point)
+
+func press(point: Vector2) -> void:
+	await move_to(point)
+	var event := InputEventMouseButton.new()
+	event.position = point
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = true
+	send_button(event)
+	await settle()
+
+func release() -> void:
+	var event := InputEventMouseButton.new()
+	event.position = pointer
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = false
+	send_button(event)
+	await settle()
+
+func hold_world(point: Vector2, seconds: float) -> void:
+	await begin_hold_world(point)
+	game.simulate(seconds)
+	await release()
+
+func begin_hold_world(point: Vector2) -> void:
+	await press_world(point)
+	var ready_at := Time.get_ticks_usec() + int(game.HOLD_DELAY * 1000000) + 1000
+	await tree.create_timer(game.HOLD_DELAY, true, false, true).timeout
+	# A timer may expire on the frame containing its deadline, before the OS clock
+	# crosses it. The actual gesture threshold uses that clock, not scaled delta.
+	while Time.get_ticks_usec() < ready_at:
+		await tree.process_frame
 
 func press_key(code: Key) -> void:
 	var event := InputEventKey.new()
@@ -80,12 +134,13 @@ func choose_option(button: OptionButton, id: int) -> void:
 	await click(Vector2(popup.position) + Vector2(popup.size.x * 0.5, popup.size.y * fraction))
 
 func drag_world(cells: Array[Vector2i], release_over_ui := false, right_click := false, offset := Vector2.ZERO) -> void:
+	await settle()
 	await move_to(game.get_global_transform_with_canvas() * (game.tile_center(cells[0]) + offset))
 	var event := InputEventMouseButton.new()
 	event.position = game.get_global_transform_with_canvas() * (game.tile_center(cells[0]) + offset)
 	event.button_index = MOUSE_BUTTON_LEFT
 	event.pressed = true
-	root.push_input(event, true)
+	send_button(event)
 	await settle()
 	for cell in cells.slice(1):
 		await move_to(game.get_global_transform_with_canvas() * (game.tile_center(cell) + offset))
@@ -96,15 +151,15 @@ func drag_world(cells: Array[Vector2i], release_over_ui := false, right_click :=
 		cancel.position = endpoint
 		cancel.button_index = MOUSE_BUTTON_RIGHT
 		cancel.pressed = true
-		root.push_input(cancel, true)
+		send_button(cancel)
 		cancel = cancel.duplicate()
 		cancel.pressed = false
-		root.push_input(cancel, true)
+		send_button(cancel)
 		await settle()
 	event = event.duplicate()
 	event.position = endpoint
 	event.pressed = false
-	root.push_input(event, true)
+	send_button(event)
 	await settle()
 
 func choose_building(kind: String) -> void:

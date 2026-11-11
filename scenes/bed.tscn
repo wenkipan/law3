@@ -1,9 +1,11 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=4 format=3]
 [ext_resource type="Script" path="res://scripts/view/bed_view.gd" id="1"]
+[ext_resource type="AnimationLibrary" path="res://assets/world/building-motion.tres" id="2"]
 [sub_resource type="RectangleShape2D" id="PickShape"]
 resource_local_to_scene = true
 size = Vector2(80, 40)
 [node name="Bed" type="Area2D"]
+process_mode = 3
 z_index = 20
 z_as_relative = false
 collision_layer = 1
@@ -18,3 +20,7 @@ shape = SubResource("PickShape")
 centered = false
 [node name="Solid" type="Sprite2D" parent="."]
 centered = false
+
+[node name="Machinery" type="AnimationPlayer" parent="."]
+process_mode = 1
+libraries = {&"": ExtResource("2")}

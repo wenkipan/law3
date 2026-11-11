@@ -44,8 +44,9 @@ func rebuild_world(world) -> void:
 	for p in world.pollution_operations:
 		var source: Dictionary = world.pollution_operations[p]
 		spread(p, source.strength, source.radius)
-	for p in world.wastewater:
-		spread(p, world.wastewater[p], 2)
+	for p in world.storage_locations():
+		var load: float = world.waste_at(p)
+		if load > 0: spread(p, load, 2)
 	# Reserved goods remain at the source until picked; carried loads move with their holder.
 	for shipment in world.delivery_tasks:
 		if not shipment.bound or shipment.get("on_belt", false): continue

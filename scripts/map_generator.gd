@@ -1,23 +1,28 @@
 extends RefCounted
 
-const VERSION := 8
+const VERSION := 11
 const CHUNK_SIZE := 32
 const WATER_BLOCK := 9
 const WATER := 10
+const BERRIES := 11
+const WILD_GRAIN := 12
+const ANIMAL := 13
+const WILD_ITEMS := {BERRIES: "berries", WILD_GRAIN: "wheat", ANIMAL: "meat"}
+const FIELDS := [2, 3, 4, 1, BERRIES, WILD_GRAIN, ANIMAL]
 const REGION_SIZE := 128
 const SPOT_GRID := 6
-const MIN_RADIUS := 3.0
+const MIN_RADIUS := 4.0
 const MAX_RADIUS := 7.0
 const SPOT_RATE := 1.5
-const SPOT_SEPARATION := 0.3
-const SPOT_GAP := 0.2
+const SPOT_SEPARATION := 0.5
+const SPOT_GAP := 0.3
 const SPOT_THRESHOLD := 0.025
 const SPECIAL_GRID := 12
 const SPECIAL_GAP := 7.0
 const DIRS := [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
-# Copper, coal, granite, cave density. Sandstone fills the remaining solid ground.
-const PROFILES := [Vector4(0.85, 0.18, 0.25, 0.25), Vector4(0.18, 0.85, 0.2, 0.4),
-	Vector4(0.2, 0.15, 0.9, 0.15), Vector4(0.25, 0.25, 0.2, 0.85)]
+# Copper, coal, granite, sandstone, berries, grain, wildlife share one spot field.
+const PROFILES := [[0.85, 0.18, 0.25, 0.25, 0.3, 0.3, 0.3], [0.18, 0.85, 0.2, 0.4, 0.3, 0.3, 0.3],
+	[0.2, 0.15, 0.9, 0.15, 0.3, 0.3, 0.3], [0.25, 0.25, 0.2, 0.85, 0.3, 0.3, 0.3]]
 const SPECIALS := {
 	5: {"chance": 0.16, "size": Vector2i(1, 1), "outside_start": true},
 	6: {"chance": 0.16, "size": Vector2i(1, 1), "outside_start": true},
@@ -51,7 +56,7 @@ func select_starting_water_spot() -> void:
 		for y in range(index.y - reach, index.y + reach + 1):
 			for x in range(index.x - reach, index.x + reach + 1):
 				for spot in spots_at(Vector2i(x, y)):
-					if spot.field == 3 or camp.has_point(Vector2i(spot.center.floor())):
+					if camp.has_point(Vector2i(spot.center.floor())):
 						continue
 					var distance: float = center.distance_squared_to(spot.center)
 					if distance < nearest:
@@ -94,7 +99,7 @@ func region_index_at(point: Vector2) -> Vector2i:
 				result = candidate
 	return result
 
-func profile_at(point: Vector2) -> Vector4:
+func profile_at(point: Vector2) -> Array[float]:
 	var index := Vector2i((point / REGION_SIZE).floor())
 	var neighbors: Array[Dictionary] = []
 	var nearest := INF
@@ -106,28 +111,34 @@ func profile_at(point: Vector2) -> Vector4:
 			var distance := point.distance_to(region.center)
 			nearest = minf(nearest, distance)
 			neighbors.append({"distance": distance, "profile": region.profile})
-	var result := Vector4.ZERO
+	var result: Array[float] = []
+	result.resize(FIELDS.size())
+	result.fill(0.0)
 	var total := 0.0
 	for region in neighbors:
 		var weight := pow(maxf(0.0, 1.0 - (region.distance - nearest) / 24.0), 2)
-		result += region.profile * weight
+		for field in FIELDS.size():
+			result[field] += region.profile[field] * weight
 		total += weight
-	return result / total
+	for field in FIELDS.size(): result[field] /= total
+	return result
 
 func spot_candidates_at(index: Vector2i) -> Array:
 	if not candidate_cache.has(index):
 		var result: Array = []
-		for field in 4:
+		for field in FIELDS.size():
 			var channel := 20 + field * 10
 			var center := (Vector2(index) + Vector2(random_at(index, channel), random_at(index, channel + 1))) * SPOT_GRID
 			var profile := profile_at(center)
-			# Region weights change composition, not the total amount of sandstone.
-			var probability := profile[field] * SPOT_RATE / (profile.x + profile.y + profile.z + profile.w)
+			# Region weights change composition, not the total spot density.
+			var total := 0.0
+			for weight in profile: total += weight
+			var probability := profile[field] * SPOT_RATE / total
 			if random_at(index, channel + 2) > probability:
 				continue
 			# Most deposits are small, with a tail of larger, more elongated deposits.
 			var radius := lerpf(MIN_RADIUS, MAX_RADIUS, pow(random_at(index, channel + 3), 2.0))
-			var material := field + 2
+			var material: int = FIELDS[field]
 			if field < 2 and random_at(index, channel + 8) < 0.35:
 				material = 7 if field == 0 else 8
 			elif field == 2 and random_at(index, channel + 8) < 0.25:
@@ -174,7 +185,8 @@ func base_material(cell: Vector2i) -> int:
 		return base_cache[cell]
 	var point := Vector2(cell) + Vector2.ONE * 0.5
 	var index := Vector2i((point / SPOT_GRID).floor())
-	var strengths := {0: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 7: 0.0, 8: 0.0, WATER_BLOCK: 0.0}
+	var strengths := {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 7: 0.0, 8: 0.0, WATER_BLOCK: 0.0,
+		BERRIES: 0.0, WILD_GRAIN: 0.0, ANIMAL: 0.0}
 	var reach := ceili(MAX_RADIUS / SPOT_GRID)
 	for y in range(index.y - reach, index.y + reach + 1):
 		for x in range(index.x - reach, index.x + reach + 1):
@@ -187,19 +199,16 @@ func base_material(cell: Vector2i) -> int:
 				var angle := delta.angle()
 				var edge := 0.84 + 0.1 * sin(angle * 3.0 + spot.phase) + 0.06 * sin(angle * 5.0 - spot.phase * 2.0)
 				var falloff := maxf(0.0, 1.0 - delta.length() / (spot.radius * edge))
-				var material: int = 0 if spot.field == 3 else spot.material
+				var material: int = spot.material
 				if not starting_water_spot.is_empty() and spot.index == starting_water_spot.index and spot.field == starting_water_spot.field:
 					material = WATER_BLOCK
 				strengths[material] = maxf(strengths[material], falloff * falloff)
-	var material := 1
-	if strengths[0] > SPOT_THRESHOLD:
-		material = 0
-	else:
-		var strongest := SPOT_THRESHOLD
-		for ore in [2, 3, 4, 7, 8, WATER_BLOCK]:
-			if strengths[ore] > strongest:
-				strongest = strengths[ore]
-				material = ore
+	var material := 0
+	var strongest := SPOT_THRESHOLD
+	for ore in [1, 2, 3, 4, 7, 8, WATER_BLOCK, BERRIES, WILD_GRAIN, ANIMAL]:
+		if strengths[ore] > strongest:
+			strongest = strengths[ore]
+			material = ore
 	remember(base_cache, cell, material, 16384)
 	return material
 
@@ -209,7 +218,7 @@ func special_at(index: Vector2i) -> Dictionary:
 	var center := index * SPECIAL_GRID + Vector2i(int(random_at(index, 80) * SPECIAL_GRID), int(random_at(index, 81) * SPECIAL_GRID))
 	var profile := profile_at(Vector2(center))
 	var choice := random_at(index, 82)
-	var kind := WATER if choice < 0.4 else (5 if choice < 0.4 + 0.6 * profile.x / (profile.x + profile.y) else 6)
+	var kind := WATER if choice < 0.4 else (5 if choice < 0.4 + 0.6 * profile[0] / (profile[0] + profile[1]) else 6)
 	var definition: Dictionary = SPECIALS[kind]
 	var cells: Array[Vector2i] = []
 	if random_at(index, 83) < definition.chance:
@@ -298,7 +307,8 @@ func generate_chunk(index: Vector2i) -> PackedByteArray:
 	var origin := index * CHUNK_SIZE
 	for y in CHUNK_SIZE:
 		for x in CHUNK_SIZE:
-			result[y * CHUNK_SIZE + x] = base_material(origin + Vector2i(x, y))
+			var cell := origin + Vector2i(x, y)
+			result[y * CHUNK_SIZE + x] = base_material(cell)
 	var area := Rect2i(origin, Vector2i.ONE * CHUNK_SIZE)
 	var margin := max_special_size()
 	var first := Vector2i((Vector2(origin - Vector2i.ONE * margin) / SPECIAL_GRID).floor())

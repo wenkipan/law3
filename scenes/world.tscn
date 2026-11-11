@@ -4,6 +4,7 @@
 [sub_resource type="RectangleShape2D" id="GroundShape"]
 size = Vector2(2880, 1760)
 [node name="World" type="Node2D"]
+process_mode = 3
 script = ExtResource("1")
 [node name="GroundInput" type="Area2D" parent="."]
 z_index = -1

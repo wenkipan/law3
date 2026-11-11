@@ -6,6 +6,7 @@ const Work = preload("res://scripts/simulation/activities/work.gd")
 const Life = preload("res://scripts/simulation/activities/life.gd")
 const Economy = preload("res://scripts/simulation/activities/economy.gd")
 const Delivery = preload("res://scripts/simulation/activities/delivery.gd")
+const Slots = preload("res://scripts/simulation/smart_objects.gd")
 
 const STARVATION := 1
 const EXHAUSTION := 2
@@ -59,8 +60,8 @@ func tick(g, w: Dictionary, delta: float) -> Dictionary:
 	if result != "running":
 		# A completed duty segment is a choice point, not a mandatory power outage.
 		if result == "success" and active.record.kind == "operate":
-			var choices: Array = Selection.options(g, w, "period_completed")
-			if not choices.is_empty() and active.matches_option(choices[0]) and g.begin_work(active.record, w, active.segment, active.source_identity):
+			var choice = Selection.new(g, w, "period_completed").next_option()
+			if choice != null and active.matches_option(choice) and g.begin_work(active.record, w, active.segment, active.source_identity):
 				active.fatigue_factor = active.segment.fatigue_factor
 				active.age = 0.0
 				return experience
@@ -74,7 +75,7 @@ func limit_flags(g, w: Dictionary) -> int:
 
 func response_reason(g, w: Dictionary, kind: String, data: Dictionary) -> String:
 	if w.hunger <= Parameters.STARVATION_INTERRUPT:
-		if kind in ["eat", "borrow", "receive_bread"] or (kind in ["use_item", "purchase"] and data.get("item") == "meat"):
+		if kind in ["eat", "borrow"] or (kind in ["use_item", "purchase"] and g.eats(w, data.get("item"))):
 			return "starvation"
 	if w.pollution >= Parameters.ILLNESS_INTERRUPT and kind == "service" and data.get("kind") == "hospital":
 		return "severe_illness"
@@ -90,7 +91,7 @@ func check_hard_interrupt(g, w: Dictionary) -> void:
 		return
 	var record = active.record
 	# Finish a started bite/treatment; simultaneous crises must not cancel each other.
-	if active.phase == "use" and (record.kind == "eat" or (record.kind == "use_item" and record.data.item == "meat") or (record.kind == "service" and record.data.kind == "hospital")):
+	if active.phase == "use" and (record.kind == "eat" or (record.kind == "use_item" and g.eats(w, record.data.item)) or (record.kind == "service" and record.data.kind == "hospital")):
 		return
 	if response_reason(g, w, record.kind, record.data) != "":
 		return
@@ -98,26 +99,26 @@ func check_hard_interrupt(g, w: Dictionary) -> void:
 		# Crossing settles real earned wages, which may make the remedy affordable.
 		exit(g, w, "starvation" if entered & STARVATION else "exhaustion" if entered & EXHAUSTION else "severe_illness")
 	elif response_available(g, w):
-		var choices: Array = Selection.options(g, w, "hard_limit_response", true)
-		if not choices.is_empty():
-			exit(g, w, response_reason(g, w, choices[0].kind, choices[0].data))
+		var choice = Selection.new(g, w, "hard_limit_response", true).next_option()
+		if choice != null:
+			exit(g, w, response_reason(g, w, choice.kind, choice.data))
 
 func response_available(g, w: Dictionary) -> bool:
 	if w.fatigue >= g.MAX_FATIGUE:
 		return true
 	if w.hunger <= Parameters.STARVATION_INTERRUPT:
-		if g.is_child(w) and g.support_amount(g.world.worker(w.producer), w) > 0:
-			var producer: Dictionary = g.world.worker(w.producer)
-			if not g.route(Vector2i(w.pos.round()), Vector2i(producer.pos.round())).is_empty(): return true
-		if w.bread > 0 or w.items.get("meat", 0) > 0:
+		if g.personal_food(w) > 0:
 			return true
+		for item in g.DIETS[w.diet]:
+			for p in g.world.smart_objects.positions(Slots.Action.SHOP, {"item": item}):
+				if g.stock_at(p, item) > 0 and w.money >= g.sale_price(p, item) and not g.route(Vector2i(w.pos.round()), p).is_empty(): return true
 		if not g.has_debt(w) and w.loan_day != g.world.day:
-			for p in g.world.smart_objects.query("bank"):
-				if g.stock_at(p, "bread") > 0 and not g.route(Vector2i(w.pos.round()), p).is_empty():
+			for p in g.world.smart_objects.positions(Slots.Action.BANK):
+				if g.building_open(p) and g.stock_at(p, "money") > 0 and not g.route(Vector2i(w.pos.round()), p).is_empty():
 					return true
 	if w.pollution >= Parameters.ILLNESS_INTERRUPT:
 		var slot: String = g.SERVICES.hospital.slot
-		for p in g.world.smart_objects.query(slot):
+		for p in g.world.smart_objects.positions(Slots.Action.SERVICE, {"type": "hospital", "available_to": w.id}):
 			if g.can_use_service(w, p) and g.world.smart_objects.available(g.SmartObjects.key(slot, p), w.id) and not g.route(Vector2i(w.pos.round()), p).is_empty():
 				return true
 	return false
@@ -149,12 +150,14 @@ func remember_choice(option) -> void:
 		inertia_hours = 0.0
 
 func select(g, w: Dictionary) -> void:
-	for option in Selection.options(g, w):
+	var selection = Selection.new(g, w)
+	var option = selection.next_option()
+	while option != null:
 		var activity
 		match option.kind:
-			"mine", "build", "produce", "operate": activity = Work.new()
+			"mine", "build", "produce", "operate", "harvest": activity = Work.new()
 			"eat", "sleep", "rest", "use_item", "service": activity = Life.new()
-			"purchase", "borrow", "payroll", "give_bread", "receive_bread": activity = Economy.new()
+			"purchase", "sell", "borrow", "payroll": activity = Economy.new()
 			"deliver": activity = Delivery.new()
 		if activity.enter(g, w, option):
 			active = activity
@@ -163,6 +166,7 @@ func select(g, w: Dictionary) -> void:
 			return
 		activity.exit(g, w, "rejected")
 		g.ai_trace.record(g, w, "state_tree", "entry_rejected", g.WorkerTrace.proposal(option))
+		option = selection.next_option()
 	decision_wait = 0.2
 
 func exit(g, w: Dictionary, reason: String) -> void:
@@ -182,6 +186,7 @@ func report_action(g) -> String:
 	if drink_elapsed >= 0:
 		return "吃饭"
 	match active.record.kind:
+		"harvest": return "通勤" if active.phase == "approach" else "工作"
 		"use_item": return "吃饭" if active.record.data.item in ["ale", "meat"] else "空闲"
 		"service": return "通勤" if active.phase == "approach" else "空闲"
 		"mine": return "通勤" if active.phase == "approach" else "挖掘"
@@ -207,6 +212,15 @@ func presentation(g) -> Dictionary:
 	result.path = a.path
 	result.progress = a.elapsed
 	match a.record.kind:
+		"harvest":
+			result.item = a.source_identity.get("item", "")
+			result.state = "walk" if a.phase == "approach" else ("hunt" if result.item == "meat" else "gather")
+			result.job = p
+			result.progress = a.source_identity.get("task", {}).get("progress", 0.0)
+		"sell":
+			result.state = "to_shop"
+			result.station = p
+			result.item = a.record.data.item
 		"use_item":
 			result.state = "use_item"
 			result.item = a.record.data.item
@@ -224,6 +238,7 @@ func presentation(g) -> Dictionary:
 		"produce", "operate":
 			result.state = "to_work" if a.phase == "approach" else "work"
 			result.station = p
+			result.work_kind = g.building_kind(p)
 		"purchase":
 			result.state = "to_shop"
 			result.station = p
@@ -232,6 +247,7 @@ func presentation(g) -> Dictionary:
 		"borrow": result.state = "to_bank"
 		"eat":
 			result.state = "to_meal" if a.phase == "approach" else "eat"
+			result.item = a.record.data.item
 			result.canteen = a.record.data.get("canteen")
 			result.meal_seat = p if result.canteen != null else null
 		"sleep":

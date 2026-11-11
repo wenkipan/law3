@@ -57,7 +57,7 @@ func reset(g) -> void:
 	next_sample.clear()
 	evaluations.clear()
 	record(g, {}, "world", "reset", {"seed": g.world.world_seed, "max_hunger": g.MAX_HUNGER,
-		"hunger_per_bread": g.HUNGER_PER_BREAD, "filter": worker_id})
+		"food_recovery": g.FOOD_RECOVERY, "filter": worker_id})
 
 func begin_decision(id: int) -> void:
 	if watches(id):
@@ -123,7 +123,7 @@ func record(g, w: Dictionary, system: String, event: String, data: Dictionary = 
 		row.worker_name = w.name
 		row.decision = decisions.get(w.id, 0)
 		row.components = components(w)
-	# Preserve double precision: a displayed 1.0 may actually floor to zero bread.
+	# Preserve double precision: a displayed 1.0 may actually floor to zero money.
 	var line := JSON.stringify(row, "", false, true)
 	if file == null:
 		print("AI_JSON ", line)
@@ -155,9 +155,9 @@ func components(w: Dictionary) -> Dictionary:
 	return {"position": [w.pos.x, w.pos.y],
 		"needs": {"hunger": w.hunger, "fatigue": w.fatigue,
 			"pollution": w.pollution, "clothes_pollution": w.clothes_pollution},
-		"economy": {"bread": w.bread, "bread_raw": String.num(w.bread, 17),
-			"bread_display": "%.1f" % w.bread, "whole_bread": floori(w.bread),
-			"meal_bread": w.meal_bread, "payroll": w.payroll,
+		"economy": {"money": w.money, "money_raw": String.num(w.money, 17),
+			"money_display": "%.1f" % w.money, "whole_money": floori(w.money),
+			"meal_food": w.meal_food, "payroll": w.payroll,
 			"earned_today": w.earned_today, "eaten_today": w.eaten_today,
 			"loan_principal": w.loan_principal, "loan_interest": w.loan_interest},
 		"cargo": {"ore": w.carry, "extra_ore": w.extra_cargo.duplicate(),

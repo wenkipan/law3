@@ -154,7 +154,7 @@ func refresh_text(row: FeedbackRow) -> void:
 		if row.kind == "borrow": row.label.modulate = Color("#dbcfab")
 	else:
 		var verb := "使用"
-		if row.item in ["bread", "meat"]: verb = "食用"
+		if game.FOOD_RECOVERY.has(row.item): verb = "食用"
 		elif row.item in ["clean_water", "ale"]: verb = "饮用"
 		elif row.item == "clothes": verb = "穿上"
 		elif game.ITEM_USES.has(row.item): verb = "装备"
@@ -162,6 +162,7 @@ func refresh_text(row: FeedbackRow) -> void:
 		if row.effect == "": row.label.modulate = Color("#f4dbad")
 
 func _process(delta: float) -> void:
+	delta /= Engine.time_scale
 	if not is_instance_valid(game): return
 	var active: Array[FeedbackRow] = []
 	for row in rows:

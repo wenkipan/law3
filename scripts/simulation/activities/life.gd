@@ -4,10 +4,11 @@ func enter(g, w: Dictionary, proposal) -> bool:
 	if not super.enter(g, w, proposal):
 		return false
 	if record.kind == "eat":
-		if w.bread < record.data.amount:
+		if not g.eats(w, record.data.item) or w.items.get(record.data.item, 0) < record.data.amount:
 			return false
-		w.meal_bread = record.data.amount
-		w.bread -= w.meal_bread
+		w.meal_food = record.data.amount
+		w.meal_item = record.data.item
+		w.items[record.data.item] -= w.meal_food
 	if record.kind in ["rest", "use_item"] or (record.kind == "sleep" and not record.data.bed):
 		phase = "use"
 		path.clear()
@@ -47,7 +48,7 @@ func tick(g, w: Dictionary, delta: float) -> String:
 		"sleep":
 			var bed = record.target if record.data.bed and not handles.is_empty() else null
 			experience = g.sleep_seconds(w, bed, delta)
-			if bed != null and g.world.beds[bed].remaining <= 0:
+			if bed != null and g.world.building_state(bed, "bed").remaining <= 0:
 				g.world.smart_objects.release(handles)
 				handles.clear()
 			return "success" if w.fatigue <= 0.000001 else "running"
@@ -58,7 +59,7 @@ func tick(g, w: Dictionary, delta: float) -> String:
 				var origin := Vector2i(w.pos.round())
 				for attempt in 8:
 					var p: Vector2i = origin + Vector2i(g.world.wander_rng.randi_range(-4, 4), g.world.wander_rng.randi_range(-3, 3))
-					if g.world.explored.has(p) and route_to(g, w, p) and path.size() <= 9:
+					if route_to(g, w, p) and path.size() <= 9:
 						break
 					path.clear()
 			return "success" if age >= 1.0 else "running"
@@ -66,8 +67,9 @@ func tick(g, w: Dictionary, delta: float) -> String:
 
 func exit(g, w: Dictionary, reason: String) -> void:
 	if record.kind == "eat":
-		w.bread += w.meal_bread
-		w.meal_bread = 0.0
-	if record.kind == "sleep" and record.data.bed and g.world.beds.has(record.target) and not handles.is_empty() and g.world.smart_objects.valid(handles[0]):
-		g.world.beds[record.target].remaining = 0.0
+		w.items[record.data.item] = w.items.get(record.data.item, 0) + w.meal_food
+		w.meal_food = 0.0
+		w.meal_item = ""
+	if record.kind == "sleep" and record.data.bed and g.world.has_building(record.target, "bed") and not handles.is_empty() and g.world.smart_objects.valid(handles[0]):
+		g.world.building_state(record.target, "bed").remaining = 0.0
 	super.exit(g, w, reason)

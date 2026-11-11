@@ -6,11 +6,10 @@ read file README.md,扩大系统设计.md, they are how game iterated
 - Simulation changes do not authorize new UI fields. Keep internal budgets,
   payment forecasts, and decision diagnostics out of player-facing panels and
   tooltips unless explicitly requested. Do not display daily budget or amount due.
-- Do not show intrusive error dialogs. Building availability is physical inventory
-  minus the full material recipes of unfinished, non-cancelled blueprints. Shortages
-  gray out and disable building choices and block placement; drags stop when their
-  affordable prefix ends. Blueprints commit quantities without charging physical
-  stock or binding sources; workers deliver actual materials through
+- Do not show intrusive error dialogs. Unlocked buildings allow blueprint placement
+  and full drag rows even with insufficient or no materials; preserve footprint,
+  deposit, water-source and other physical placement checks. Blueprints do not
+  reserve quantities, charge physical stock or bind sources; workers deliver actual materials through
   the same StateTree, Utility Selection and Smart Objects flow as production.
   Construction requires a clear footprint and all materials on site, consumes
   them once on completion, and never charges remote stock during construction.
@@ -94,3 +93,7 @@ read file README.md,扩大系统设计.md, they are how game iterated
   OS-window hover or rendered appearance; run the same interaction suite with
   `--native` for input/rendering changes, and inspect its screenshots.
 - Architectural constraints above remain code-review requirements.
+
+# coding
+read godot manual docs.godotengine.org first before do any coding, do the right
+realize using godot instead of Custom plan

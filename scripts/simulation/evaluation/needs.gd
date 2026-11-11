@@ -34,9 +34,3 @@ func mood_gain(value: float, amount: float, hours: float) -> float:
 
 func pollution_gain(value: float, amount: float) -> float:
 	return pollution_loss(value) - pollution_loss(maxf(0, value - amount))
-
-func difference(before: Dictionary, after: Dictionary) -> float:
-	return food_loss(before.hunger) - food_loss(after.hunger) \
-		+ fatigue_loss(before.fatigue) - fatigue_loss(after.fatigue) \
-		+ mood_loss(before.mood) - mood_loss(after.mood) \
-		+ pollution_loss(before.pollution) - pollution_loss(after.pollution)

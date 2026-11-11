@@ -1,6 +1,7 @@
 extends RefCounted
 
 const P = preload("res://scripts/simulation/activity_parameters.gd")
+const Slots = preload("res://scripts/simulation/smart_objects.gd")
 
 static func food(e, state: Dictionary, amount := 1) -> Dictionary:
 	return {"food": e.needs.food_gain(state.hunger, e.context.game.MEAT_HUNGER * amount)}
@@ -8,7 +9,7 @@ static func food(e, state: Dictionary, amount := 1) -> Dictionary:
 static func ale(e, state: Dictionary, _amount := 1) -> Dictionary:
 	var g = e.context.game
 	var w: Dictionary = e.context.worker
-	if w.buffs.remaining("tipsy") / g.HOUR_SECONDS > state.elapsed: return {}
+	if w.buffs.remaining("tipsy") > 0: return {}
 	var labor := 0.0
 	for work in e.work_facts():
 		if work.station not in g.GENERATOR_KINDS and work.station != "transformer": labor += work.hours
@@ -63,7 +64,7 @@ static func cargo_equipment(e, _state: Dictionary, _amount := 1) -> Dictionary:
 		trips += 1
 		if (trips + g.cargo_count(e.context.worker)) % 2 != 0: continue
 		var best: Array = []
-		for p in g.world.smart_objects.query("store"):
+		for p in g.world.smart_objects.positions(Slots.Action.STORE):
 			var path: Array = g.route(work.position, p)
 			if not path.is_empty() and (best.is_empty() or path.size() < best.size()): best = path
 		saved += 2.0 * e.environment.walk_hours(best)
@@ -74,7 +75,7 @@ static func hydration(e, state: Dictionary, amount := 1) -> Dictionary:
 	var g = e.context.game
 	var w: Dictionary = e.context.worker
 	var labor: float = e.work_hours()
-	var available: float = maxf(0, w.buffs.remaining("hydrated") / g.HOUR_SECONDS - state.elapsed) + w.water * g.WATER_EFFECT_HOURS
+	var available: float = w.buffs.remaining("hydrated") / g.HOUR_SECONDS + w.water * g.WATER_EFFECT_HOURS
 	var covered: float = minf(labor, available + amount * g.WATER_EFFECT_HOURS) - minf(labor, available)
 	var before: float = state.fatigue + minf(P.FORECAST_HOURS, labor) * g.FATIGUE_PER_HOUR
 	return {"avoided_fatigue": e.needs.fatigue_gain(before, covered * g.FATIGUE_PER_HOUR * g.WATER_FATIGUE_REDUCTION)}
@@ -85,11 +86,11 @@ static func saved_labor(e, state: Dictionary, before: float, after: float) -> Di
 		"avoided_fatigue": e.needs.fatigue_gain(state.fatigue + before * g.FATIGUE_PER_HOUR, (before - after) * g.FATIGUE_PER_HOUR)}
 
 static func use(e, op: Dictionary) -> Dictionary:
-	var f: Dictionary = e.environment.forecast(op, e.context.game.item_use_hours(op.data.item))
-	var parts: Dictionary = e.item_effects(op.data.item, f.after)
+	var f: Dictionary = e.environment.estimate(op, e.context.game.item_use_hours(op.data.item))
+	var parts: Dictionary = {"food": e.needs.food_gain(e.state.hunger, e.context.game.FOOD_RECOVERY[op.data.item])} if e.context.game.FOOD_RECOVERY.has(op.data.item) else e.item_effects(op.data.item, e.state)
 	# A preparation competes with starting the same funded work, not just with its savings.
 	if e.Resources.total(parts) > 0:
-		parts.work_opportunity = prepared_work(e, op.data.item, f.after)
+		parts.work_opportunity = prepared_work(e, op.data.item, e.state)
 	return e.result(f, parts)
 
 static func prepared_work(e, item: String, state: Dictionary) -> float:

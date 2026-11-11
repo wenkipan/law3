@@ -39,7 +39,7 @@ func work_rate(g, w: Dictionary, activity: String, station: String) -> float:
 	rate *= g.age_work_factor(w)
 	rate *= g.Pollution.work_factor(w)
 	if remaining("tipsy") > 0: rate *= ALE_RATE
-	if activity == "mine" and w.gun_uses > 0: rate *= g.GUN_MINING_RATE
+	if (activity == "mine" or station == "mine") and w.gun_uses > 0: rate *= g.GUN_MINING_RATE
 	if activity == "produce" and g.tool_work(station) and w.equipment.get("tools", 0) > 0: rate *= TOOL_RATE
 	return rate
 

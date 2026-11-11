@@ -36,6 +36,7 @@ func run() -> void:
 	var game: Node = load("res://main.tscn").instantiate()
 	root.add_child(game)
 	game.set_process(false)
+	game.get_node("SimulationTick").set_physics_process(false)
 	var context := preload("res://tests/support/context.gd").new(self, game, native)
 	if native:
 		root.grab_focus()

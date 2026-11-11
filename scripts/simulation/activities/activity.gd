@@ -42,7 +42,7 @@ func tick(_g, _w: Dictionary, _delta: float) -> String:
 	return "success"
 
 func navigate(g, w: Dictionary, delta: float, pace := 3.0) -> int:
-	if path.any(func(cell): return g.world.terrain.get(cell, 1) != 0 or g.world.water_sources.has(cell)):
+	if path.any(func(cell): return not g.world.walkable(cell)):
 		path = g.route(Vector2i(w.pos.round()), destination)
 		g.ai_trace.record(g, w, "navigation", "replanned", {"destination": g.WorkerTrace.cell(destination), "steps": path.size()})
 	if path.is_empty():

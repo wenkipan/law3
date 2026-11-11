@@ -3,49 +3,84 @@ extends RefCounted
 const Context = preload("res://scripts/simulation/worker_context.gd")
 const Evaluation = preload("res://scripts/simulation/activity_evaluation.gd")
 const Parameters = preload("res://scripts/simulation/activity_parameters.gd")
-const Option = preload("res://scripts/simulation/activity_option.gd")
 const Slots = preload("res://scripts/simulation/smart_objects.gd")
+const Intent = preload("res://scripts/simulation/activity_intent.gd")
 
-static func options(g, w: Dictionary, reason := "select", responses_only := false) -> Array:
+var evaluation
+var intents: Dictionary = {}
+var reason: String
+
+func _init(g, w: Dictionary, trigger := "select", responses_only := false) -> void:
+	reason = trigger
 	g.ai_trace.begin_decision(w.id)
 	var c = Context.new(g, w)
 	var e = Evaluation.new(c)
+	evaluation = e
 	var choices: Array = []
 	if not responses_only: add(c, e, choices, "rest", c.origin)
 	life_options(c, e, choices)
 	shopping_options(c, e, choices)
-	var work: Array = []
-	if not responses_only: work_options(c, e, work)
-	if w.payroll > 0.000001:
-		choices.append_array(work)
-	elif not work.is_empty():
-		for p in g.world.smart_objects.query("store"):
-			if g.stock_at(p, "bread") > 0:
-				add(c, e, choices, "payroll", p, {}, [], {"work_options": work})
-			else:
-				e.reject("payroll", p, "no_employer_cash")
-	if not responses_only: delivery_options(c, e, choices)
-	if e.tracing:
-		for entry in e.proposals:
-			if not choices.has(entry.option): entry.excluded_reason = "needs_employer_cash"
 	var responses: Array = []
 	for option in choices:
 		if w.activity.response_reason(g, w, option.kind, option.data) != "": responses.append(option)
-	if responses_only or not responses.is_empty():
-		if e.tracing:
-			for entry in e.proposals:
-				if choices.has(entry.option) and not responses.has(entry.option): entry.excluded_reason = "hard_limit_response_required"
-		choices = responses
-	var order: Dictionary = {}
-	for i in choices.size():
-		order[choices[i]] = i
-	# Stable sort keeps deterministic ties without giving prolific categories more weight.
-	choices.sort_custom(func(a, b): return order[a] < order[b] if is_equal_approx(a.score, b.score) else a.score > b.score)
-	e.trace_selection(choices, reason)
-	return choices
+	var responding: bool = responses_only or not responses.is_empty()
+	if responding: choices = responses
+	if not responding:
+		if w.employer == null and w.skill in ["gathering", "hunting"] and not g.is_child(w):
+			for endpoint in g.world.smart_objects.query(Slots.Action.HARVEST, {"skill": w.skill, "available_to": w.id}):
+				var p: Vector2i = endpoint.position
+				if g.can_harvest(w, p): add(c, e, choices, "harvest", p, {"identity": endpoint.instance.source}, [endpoint.id])
+		for endpoint in g.world.smart_objects.query(Slots.Action.MARKET, {"items": w.items.keys()}):
+			var p: Vector2i = endpoint.position
+			for item in w.items:
+				if item not in g.MARKET_GOODS: continue
+				if g.market_price(p, item, true) <= 0: continue
+				var keep := ceili(maxf(0, g.MAX_HUNGER - w.hunger) / g.FOOD_RECOVERY[item]) if g.eats(w, item) else 0
+				var amount := mini(w.items[item] - keep, floori(g.stock_at(p, "money") / g.market_price(p, item, true)))
+				if amount > 0: add(c, e, choices, "sell", p, {"item": item, "amount": amount, "identity": endpoint.instance.source})
+	var work: Array = []
+	if not responding: work_options(c, e, work)
+	if w.payroll > 0.000001:
+		choices.append_array(work)
+	elif not work.is_empty():
+		for p in g.world.smart_objects.positions(Slots.Action.STORE, {"item": "money"}):
+			if g.stock_at(p, "money") > 0:
+				add(c, e, choices, "payroll", p, {}, [], {"work_options": work})
+			else:
+				e.reject("payroll", p, "no_employer_cash")
+	if not responding: delivery_options(c, e, choices)
+	for op in choices:
+		var id := intent_key(op)
+		if not intents.has(id): intents[id] = Intent.new()
+		intents[id].pending.append(op)
+
+static func intent_key(op: Dictionary) -> String:
+	match op.kind:
+		"harvest": return "harvest:" + op.data.identity.item
+		"purchase", "sell", "eat", "use_item": return op.kind + ":" + str(op.data.item)
+		"service": return "service:" + op.data.kind
+		"build", "produce", "operate", "mine", "payroll": return "labor"
+	return op.kind
+
+func next_option():
+	var best: Dictionary = {}
+	var selected = null
+	var representatives: Array = []
+	for intent in intents.values():
+		var entry: Dictionary = intent.resolve(evaluation, best)
+		if entry.is_empty(): continue
+		representatives.append(entry)
+		if best.is_empty() or Intent.better(entry.option.score, entry.order, best.option.score, best.order):
+			best = entry
+			selected = intent
+	if best.is_empty(): return null
+	representatives.sort_custom(func(a, b): return Intent.better(a.option.score, a.order, b.option.score, b.order))
+	evaluation.trace_selection(representatives.map(func(entry): return entry.option), reason)
+	selected.consume(best.option)
+	return best.option
 
 static func add(c, e, choices: Array, kind: String, p: Vector2i, data: Dictionary = {}, slots: Array[String] = [], scoring: Dictionary = {}):
-	if kind in ["mine", "build", "produce", "operate"] and not c.game.can_work(c.worker, kind, c.game.building_kind(p)):
+	if kind in ["mine", "build", "produce", "operate"] and not c.game.can_take_job(c.worker, scoring.get("target", p)):
 		return null
 	for id in slots:
 		if not c.game.world.smart_objects.available(id, c.worker.id):
@@ -57,92 +92,72 @@ static func add(c, e, choices: Array, kind: String, p: Vector2i, data: Dictionar
 		return null
 	var opportunity := {"kind": kind, "target": scoring.get("target", p), "position": p, "path": path, "data": data}
 	opportunity.merge(scoring)
-	var result: Dictionary = e.evaluate(opportunity)
-	if not is_finite(result.score):
-		e.reject(kind, p, "no_finite_estimate")
-		return null
-	var option = Option.new(kind, opportunity.target, p, path, slots, result.score, data)
-	var bonus: float = c.worker.activity.inertia_bonus(option)
-	if bonus > 0:
-		option = Option.new(kind, opportunity.target, p, path, slots, result.score + bonus, data)
-	choices.append(option)
-	if e.tracing:
-		e.proposals.append({"option": option, "result": result, "inertia_bonus": bonus})
-	return option
+	opportunity.slots = slots
+	opportunity.order = c.proposal_order
+	c.proposal_order += 1
+	choices.append(opportunity)
+	return opportunity
 
 static func life_options(c, e, choices: Array) -> void:
 	var g = c.game
 	var w: Dictionary = c.worker
-	for child in g.children_of(w):
-		var amount: float = g.support_amount(w, child)
-		for portion in range(1, ceili(amount) + 1):
-			add(c, e, choices, "give_bread", Vector2i(child.pos.round()),
-				{"producer": w.id, "child": child.id, "amount": minf(portion, amount)}, [Slots.person_key(child.id)])
-	if g.is_child(w):
-		var producer: Dictionary = g.world.worker(w.producer)
-		var amount: float = g.support_amount(producer, w)
-		if amount > 0:
-			add(c, e, choices, "receive_bread", Vector2i(producer.pos.round()),
-				{"producer": producer.id, "child": w.id, "amount": amount}, [Slots.person_key(w.id)])
 	for item in w.items:
 		if w.items[item] <= 0: continue
+		if not item is String: continue
 		if g.ITEM_USES.has(item) and g.equipped_amount(w, item) <= 0:
 			add(c, e, choices, "use_item", c.origin, {"item": item})
 		elif item == "ale" and w.buffs.remaining("tipsy") <= 0 and w.fatigue >= g.WorkerBuffs.ALE_RECOVERY:
 			add(c, e, choices, "use_item", c.origin, {"item": item})
-		elif item == "meat" and w.hunger < Parameters.MEAL_HUNGER:
-			add(c, e, choices, "use_item", c.origin, {"item": item})
-	for kind in g.SERVICES:
-		var service: Dictionary = g.SERVICES[kind]
-		for p in g.world.smart_objects.query(service.slot):
-			if g.can_use_service(w, p):
-				add(c, e, choices, "service", p, {"kind": kind}, [Slots.key(service.slot, p)])
-	var meal: float = e.meal_amount()
-	if meal <= 0 or w.hunger >= Parameters.MEAL_HUNGER:
-		e.reject("eat", c.origin, "no_food" if meal <= 0 else "above_meal_threshold",
-			{"bread_raw": String.num(w.bread, 17), "whole_bread": floori(w.bread), "meal": meal})
-	if meal > 0 and w.hunger < Parameters.MEAL_HUNGER:
-		add(c, e, choices, "eat", c.origin, {"amount": meal})
-		for p in g.world.benches:
-			if g.building_kind(p) != "canteen":
-				continue
-			for seat in g.canteen_seats(p):
+		elif g.eats(w, item) and w.hunger < Parameters.MEAL_HUNGER:
+			var amount: float = minf(w.items[item], minf(1.0, (g.MAX_HUNGER - w.hunger) / g.FOOD_RECOVERY[item]))
+			add(c, e, choices, "eat", c.origin, {"item": item, "amount": amount})
+			var radius: int = g.CANTEEN_WALK_LIMIT
+			var area := Rect2i(c.origin - Vector2i.ONE * radius, Vector2i.ONE * (radius * 2 + 1))
+			for endpoint in g.world.smart_objects.query(Slots.Action.SEAT, {"area": area, "available_to": w.id}):
+				var seat: Vector2i = endpoint.position
+				if absi(seat.x - c.origin.x) + absi(seat.y - c.origin.y) > radius: continue
 				var path: Array[Vector2i] = c.path_to(seat)
-				if path.is_empty() or path.size() - 1 > g.CANTEEN_WALK_LIMIT:
-					continue
-				add(c, e, choices, "eat", seat, {"amount": meal, "canteen": p}, [Slots.key("seat", seat)])
+				if path.is_empty() or path.size() - 1 > radius: continue
+				add(c, e, choices, "eat", seat, {"item": item, "amount": amount, "canteen": endpoint.instance.position}, [endpoint.id])
+	for kind in g.SERVICES:
+		for endpoint in g.world.smart_objects.query(Slots.Action.SERVICE, {"type": kind, "available_to": w.id}):
+			var p: Vector2i = endpoint.position
+			if g.can_use_service(w, p):
+				add(c, e, choices, "service", p, {"kind": kind}, [endpoint.id])
 	if w.fatigue >= g.MAX_FATIGUE * Parameters.SLEEP_START:
 		add(c, e, choices, "sleep", c.origin, {"bed": false})
 		var preferred = null
-		for p in g.world.smart_objects.query("bed"):
-			if g.world.beds[p].assigned == w.id:
+		for p in g.world.smart_objects.positions(Slots.Action.BED):
+			if g.world.building_state(p, "bed").assigned == w.id:
 				preferred = p
-		for p in g.world.smart_objects.query("bed"):
-			if w.bread < g.base_fee(p) or g.world.beds[p].assigned not in [-1, w.id] or (preferred != null and p != preferred):
+		for endpoint in g.world.smart_objects.query(Slots.Action.BED, {"available_to": w.id}):
+			var p: Vector2i = endpoint.position
+			if w.money < g.base_fee(p) or g.world.building_state(p, "bed").assigned not in [-1, w.id] or (preferred != null and p != preferred):
 				continue
-			add(c, e, choices, "sleep", p, {"bed": true}, [Slots.key("bed", p)])
+			add(c, e, choices, "sleep", p, {"bed": true}, [endpoint.id])
 	# Loans fund an immediate food shortage, never optional shopping or a work quota.
 	var shortfall: float = e.food_shortfall()
 	if shortfall > 0.001 and e.food_need >= Parameters.BORROW_FOOD_NEED and not g.has_debt(w) and w.loan_day != g.world.day:
-		for p in g.world.smart_objects.query("bank"):
-			if g.stock_at(p, "bread") > 0:
+		for p in g.world.smart_objects.positions(Slots.Action.BANK):
+			if g.building_open(p) and g.stock_at(p, "money") > 0:
 				add(c, e, choices, "borrow", p, {"amount": minf(g.LOAN_LIMIT, shortfall)})
 
 static func shopping_options(c, e, choices: Array) -> void:
 	var g = c.game
 	var w: Dictionary = c.worker
-	for p in g.world.smart_objects.query("shop"):
-		var kind: String = g.building_kind(p)
+	for endpoint in g.world.smart_objects.query(Slots.Action.SHOP, {"items": c.shopping_items()}):
+		var p: Vector2i = endpoint.position
+		var kind: String = endpoint.instance.definition.kind
 		for item in g.shop_goods(p):
 			if g.stock_at(p, item) <= 0 or not g.wants_item(w, item): continue
 			var price: float = g.sale_price(p, item)
-			if w.bread < price:
-				e.reject("purchase", p, "insufficient_balance", {"price": price, "balance": w.bread})
+			if w.money < price:
+				e.reject("purchase", p, "insufficient_balance", {"price": price, "balance": w.money})
 				continue
-			var limit: int = mini(g.purchase_capacity(w, item), mini(g.stock_at(p, item), floori(w.bread / price)))
+			var limit: int = mini(g.purchase_capacity(w, item), mini(g.stock_at(p, item), floori(w.money / price)))
 			if item == "clean_water": limit = mini(limit, w.mood.water_limit(g.WATER_CAPACITY))
-			for amount in range(1, limit + 1):
-				add(c, e, choices, "purchase", p, {"kind": kind, "item": item, "amount": amount, "identity": g.world.benches[p]})
+			if limit > 0:
+				add(c, e, choices, "purchase", p, {"kind": kind, "item": item, "limit": limit, "identity": endpoint.instance.source})
 
 static func work_options(c, e, choices: Array) -> void:
 	var g = c.game
@@ -151,19 +166,30 @@ static func work_options(c, e, choices: Array) -> void:
 		e.reject("work", null, "cargo_commitment_or_capacity")
 		return
 	if is_same(w.carry, 0):
-		for p in g.world.smart_objects.query("build"):
-			if g.world.sites[p].get("cancelled", false) or not g.site_cleared(p) or not g.site_supplied(p):
-				e.reject("build", p, "cancelled" if g.world.sites[p].get("cancelled", false) else "footprint_blocked" if not g.site_cleared(p) else "missing_materials")
+		for endpoint in c.job_slots(Slots.Action.BUILD):
+			var p: Vector2i = endpoint.instance.position
+			if not g.can_take_job(w, p): continue
+			if g.world.building_state(p, "site").get("cancelled", false) or not g.site_cleared(p) or not g.site_supplied(p):
+				e.reject("build", p, "cancelled" if g.world.building_state(p, "site").get("cancelled", false) else "footprint_blocked" if not g.site_cleared(p) else "missing_materials")
 				continue
-			add(c, e, choices, "build", p, {"identity": g.world.sites[p]}, [Slots.key("build", p)])
-		for p in g.world.smart_objects.query("work"):
-			var b: Dictionary = g.world.benches[p]
-			var kind: String = g.building_kind(p)
-			if kind in g.OPERATED_KINDS:
+			var position: Vector2i = p
+			if g.world.building_state(p, "site").kind in g.WorldState.BLOCKING_KINDS:
+				var approach: Array[Vector2i] = g.construction_route(c.origin, p)
+				if approach.is_empty():
+					e.reject("build", p, "no_reachable_neighbor")
+					continue
+				position = approach.back()
+			add(c, e, choices, "build", position, {"identity": endpoint.instance.source}, [endpoint.id], {"target": p})
+		for endpoint in c.job_slots(Slots.Action.WORK):
+			var p: Vector2i = endpoint.instance.position
+			if not g.can_take_job(w, p): continue
+			var b: Dictionary = endpoint.instance.source
+			var kind: String = endpoint.instance.definition.kind
+			if endpoint.instance.definition.work_activity == &"operate":
 				if not g.operation_needed(p):
 					e.reject("operate", p, "operation_not_needed_or_disconnected")
 					continue
-				var slots: Array[String] = [Slots.key("work", p)]
+				var slots: Array[String] = [endpoint.id]
 				var data := {"identity": b, "job": null}
 				if kind == "drill":
 					# Waiting at an unpowered drill must not consume the generation crew.
@@ -180,22 +206,9 @@ static func work_options(c, e, choices: Array) -> void:
 				if b.task.is_empty() and not (kind == "barn" and b.slaughter) and not g.recipe_ready(p, g.station_materials(p)):
 					e.reject("produce", p, "missing_materials")
 					continue
-				add(c, e, choices, "produce", p, {"identity": b}, [Slots.key("work", p)])
+				add(c, e, choices, "produce", p, {"identity": b}, [endpoint.id])
 			else:
 				e.reject("produce", p, "growing" if b.growth > 0 else "no_production_order")
-	for p in g.world.smart_objects.query("mine"):
-		if g.world.terrain[p] in [5, 6]:
-			e.reject("mine", p, "requires_drill")
-			continue
-		var best: Array[Vector2i] = []
-		for direction in g.DIRS:
-			var path: Array[Vector2i] = c.path_to(p + direction)
-			if not path.is_empty() and (best.is_empty() or path.size() < best.size()):
-				best = path
-		if not best.is_empty():
-			add(c, e, choices, "mine", best.back(), {"job": p, "identity": g.world.mining_contracts[p]}, [Slots.key("mine", p)], {"target": p})
-		else:
-			e.reject("mine", p, "no_reachable_neighbor")
 
 static func delivery_options(c, e, choices: Array) -> void:
 	var g = c.game
@@ -204,7 +217,7 @@ static func delivery_options(c, e, choices: Array) -> void:
 		add_delivery(c, e, choices, w.delivery_tasks[0].source, w.delivery_tasks,
 			w.delivery_tasks.map(func(task): return task.item), w.delivery_tasks[0].get("mined", false))
 		return
-	var requests: Array = g.world.smart_objects.delivery_requests()
+	var requests: Array = g.world.smart_objects.delivery_requests({"skill": w.skill} if w.employer == null else {})
 	if not is_same(w.carry, 0):
 		var count: int = choices.size()
 		held_deliveries(c, e, choices, requests)
@@ -212,27 +225,26 @@ static func delivery_options(c, e, choices: Array) -> void:
 			var held: Array = [w.carry] + w.extra_cargo
 			var receiver = null
 			var distance := 0
-			for target in g.stock_locations():
-				if g.world.sites.has(target) or g.delivery_building_at(target) != target: continue
+			for target in g.world.smart_objects.positions(Slots.Action.STORE):
+				if g.world.has_building(target, "site") or g.delivery_building_at(target) != target: continue
 				var leg: Dictionary = g.delivery_route(c.origin, target)
 				if not leg.path.is_empty() and (receiver == null or leg.path.size() < distance):
 					receiver = target
 					distance = leg.path.size()
 			if receiver != null:
 				var tasks: Array = []
-				for item in held: tasks.append(g.delivery_request(receiver, item, g.delivery_receiver_identity(receiver)))
+				for item in held: tasks.append(g.delivery_request(receiver, item, g.delivery_receiver_id(receiver)))
 				add_delivery(c, e, choices, c.origin, tasks, held, true)
 		return
-	var grouped: Array = []
+	var grouped: Dictionary = {}
 	for request in requests:
-		if grouped.has(request): continue
-		var batch: Array = []
-		for other in requests:
-			if other.target == request.target and other.bound == request.bound and is_same(other.requested_item, request.requested_item):
-				if not other.bound or other.source == request.source:
-					batch.append(other)
-					grouped.append(other)
+		var key := [request.target, request.bound, request.requested_item, request.source if request.bound else null]
+		if not grouped.has(key): grouped[key] = []
+		grouped[key].append(request)
+	for batch in grouped.values():
+		var request: Dictionary = batch[0]
 		if request.bound:
+			if not g.can_deliver(w, request.source, request.target): continue
 			var tasks: Array = []
 			var amount := 0.0
 			for part in batch:
@@ -243,8 +255,8 @@ static func delivery_options(c, e, choices: Array) -> void:
 			continue
 		var items: Array = [1, 4, 3, 2, 7, 8] if is_same(request.requested_item, 0) else [request.requested_item]
 		for item in items:
-			for source in g.stock_locations():
-				if source == request.target: continue
+			for source in g.world.smart_objects.positions(Slots.Action.STORE, {"item": item}):
+				if source == request.target or not g.can_deliver(w, source, request.target): continue
 				var limit := mini(batch.size(), mini(int(g.FREIGHT_CAPACITY), floori(g.available_at(source, item) + 0.000001)))
 				if limit > 0:
 					var bindings: Array = []
@@ -271,6 +283,7 @@ static func held_deliveries(c, e, choices: Array, requests: Array) -> void:
 		if not tasks.is_empty(): add_delivery(c, e, choices, c.origin, tasks, items, true)
 
 static func add_delivery(c, e, choices: Array, source: Vector2i, tasks: Array, items: Array, mined: bool) -> void:
+	if not c.game.can_deliver(c.worker, source, tasks[0].target): return
 	var picked: bool = mined or tasks[0].picked
 	var leg: Dictionary = c.game.delivery_route(c.origin if picked else source, tasks[0].target)
 	if not leg.path.is_empty():

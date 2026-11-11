@@ -4,32 +4,32 @@ const P = preload("res://scripts/simulation/activity_parameters.gd")
 
 static func meal(e, op: Dictionary) -> Dictionary:
 	var g = e.context.game
-	var f: Dictionary = e.environment.forecast(op, g.MEAL_SECONDS / g.HOUR_SECONDS)
-	var parts := {"food": e.needs.food_gain(f.after.hunger, op.data.amount * g.HUNGER_PER_BREAD)}
+	var f: Dictionary = e.environment.estimate(op, g.MEAL_SECONDS / g.HOUR_SECONDS)
+	var parts := {"food": e.needs.food_gain(e.state.hunger, op.data.amount * g.FOOD_RECOVERY[op.data.item])}
 	if op.data.has("canteen"):
-		parts.fatigue = e.needs.fatigue_gain(f.after.fatigue, g.CANTEEN_RECOVERY)
+		parts.fatigue = e.needs.fatigue_gain(e.state.fatigue, g.CANTEEN_RECOVERY)
 	if g.has_powered_effect(Vector2(op.position), "fountain"):
-		parts.mood = e.needs.mood_gain(f.after.mood, e.context.worker.mood.COMFORTABLE_MEAL_GAIN, P.FORECAST_HOURS)
-	return e.result(f, parts, op.data.amount, ["food"])
+		parts.mood = e.needs.mood_gain(e.state.mood, e.context.worker.mood.COMFORTABLE_MEAL_GAIN, P.FORECAST_HOURS)
+	return e.result(f, parts)
 
 static func sleep(e, op: Dictionary) -> Dictionary:
 	var g = e.context.game
-	var arrival: Dictionary = e.environment.forecast(op, 0).arrival
+	var state: Dictionary = e.state
 	var passive: float = g.FOUNTAIN_RECOVERY_PER_HOUR if g.has_powered_effect(Vector2(op.position), "fountain") else 0.0
 	var bed_hours := 0.0
 	if op.data.bed:
-		bed_hours = minf(g.BED_LEASE_HOURS, arrival.fatigue / (g.BED_RECOVERY_PER_HOUR + passive))
-	var ground_hours: float = maxf(0, arrival.fatigue - bed_hours * (g.BED_RECOVERY_PER_HOUR + passive)) / (g.SLEEP_RECOVERY_PER_HOUR + passive)
-	var f: Dictionary = e.environment.forecast(op, bed_hours + ground_hours)
-	var parts := {"fatigue": e.needs.fatigue_gain(f.after.fatigue, arrival.fatigue)}
+		bed_hours = minf(g.BED_LEASE_HOURS, state.fatigue / (g.BED_RECOVERY_PER_HOUR + passive))
+	var ground_hours: float = maxf(0, state.fatigue - bed_hours * (g.BED_RECOVERY_PER_HOUR + passive)) / (g.SLEEP_RECOVERY_PER_HOUR + passive)
+	var f: Dictionary = e.environment.estimate(op, bed_hours + ground_hours)
+	var parts := {"fatigue": e.needs.fatigue_gain(state.fatigue, state.fatigue)}
 	if bed_hours > 0:
-		parts.mood = e.needs.mood_gain(f.after.mood, e.context.worker.mood.BED_GAIN_PER_HOUR * bed_hours, P.FORECAST_HOURS)
+		parts.mood = e.needs.mood_gain(state.mood, e.context.worker.mood.BED_GAIN_PER_HOUR * bed_hours, P.FORECAST_HOURS)
 	return e.result(f, parts, g.base_fee(op.target) if op.data.bed else 0, ["fatigue"])
 
 static func treatment(e, op: Dictionary) -> Dictionary:
 	var rule: Dictionary = e.context.game.SERVICES[op.data.kind]
-	var f: Dictionary = e.environment.forecast(op, rule.hours)
-	return e.result(f, treatment_effects(e, f.after, rule), e.context.game.base_fee(op.target), ["pollution"])
+	var f: Dictionary = e.environment.estimate(op, rule.hours)
+	return e.result(f, treatment_effects(e, e.state, rule), e.context.game.base_fee(op.target), ["pollution"])
 
 static func treatment_effects(e, state: Dictionary, rule: Dictionary) -> Dictionary:
 	return {"pollution": e.needs.pollution_gain(state.pollution, rule.recovery)}
@@ -37,12 +37,12 @@ static func treatment_effects(e, state: Dictionary, rule: Dictionary) -> Diction
 static func bath(e, op: Dictionary) -> Dictionary:
 	var g = e.context.game
 	var rule: Dictionary = g.SERVICES[op.data.kind]
-	var f: Dictionary = e.environment.forecast(op, rule.hours)
-	return e.result(f, bath_effects(e, f.after, rule), g.base_fee(op.target), ["pollution", "mood"])
+	var f: Dictionary = e.environment.estimate(op, rule.hours)
+	return e.result(f, bath_effects(e, e.state, rule), g.base_fee(op.target), ["pollution", "mood"])
 
 static func bath_effects(e, state: Dictionary, rule: Dictionary) -> Dictionary:
 	var g = e.context.game
-	var remaining: float = maxf(0, e.context.worker.buffs.remaining("bathed") / g.HOUR_SECONDS - state.elapsed)
+	var remaining: float = e.context.worker.buffs.remaining("bathed") / g.HOUR_SECONDS
 	var added_hours: float = maxf(0, minf(P.FORECAST_HOURS, g.WorkerBuffs.BATH_EFFECT_HOURS) - minf(P.FORECAST_HOURS, remaining))
 	return {"pollution": e.needs.pollution_gain(state.pollution, rule.recovery),
 		"mood": e.needs.mood_gain(state.mood - (g.WorkerBuffs.BATH_MOOD if remaining > 0 else 0), g.WorkerBuffs.BATH_MOOD, added_hours)}
@@ -50,8 +50,8 @@ static func bath_effects(e, state: Dictionary, rule: Dictionary) -> Dictionary:
 static func laundry(e, op: Dictionary) -> Dictionary:
 	var g = e.context.game
 	var rule: Dictionary = g.SERVICES[op.data.kind]
-	var f: Dictionary = e.environment.forecast(op, rule.hours)
-	return e.result(f, laundry_effects(e, f.after, rule), g.base_fee(op.target), ["clothing", "mood"])
+	var f: Dictionary = e.environment.estimate(op, rule.hours)
+	return e.result(f, laundry_effects(e, e.state, rule), g.base_fee(op.target), ["clothing", "mood"])
 
 static func laundry_effects(e, state: Dictionary, rule: Dictionary) -> Dictionary:
 	var g = e.context.game
@@ -63,4 +63,4 @@ static func laundry_effects(e, state: Dictionary, rule: Dictionary) -> Dictionar
 
 static func rest(e, op: Dictionary) -> Dictionary:
 	# The random wander destination is not known at selection time; it has no promised recovery.
-	return e.result(e.environment.forecast(op, 1.0 / e.context.game.HOUR_SECONDS), {})
+	return e.result(e.environment.estimate(op, 1.0 / e.context.game.HOUR_SECONDS), {})

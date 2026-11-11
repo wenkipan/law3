@@ -45,7 +45,7 @@ func _ready() -> void:
 	filters.add_child(days)
 	filters.add_child(people)
 	people.add_item("全体")
-	for w in game.world.workers:
+	for w in game.known_workers():
 		people.add_item(w.name, w.id + 1)
 	days.item_selected.connect(func(_i): refresh())
 	people.item_selected.connect(func(_i): refresh())
@@ -75,6 +75,7 @@ func _ready() -> void:
 	refresh()
 
 func _process(delta: float) -> void:
+	delta /= Engine.time_scale
 	if not visible:
 		return
 	refresh_timer += delta
@@ -85,11 +86,11 @@ func _process(delta: float) -> void:
 func refresh() -> void:
 	if is_instance_valid(resources):
 		resources.refresh()
-	if people.item_count != game.world.workers.size() + 1 or game.world.workers.any(func(w): return people.get_item_index(w.id + 1) < 0):
+	if people.item_count != game.known_workers().size() + 1 or game.known_workers().any(func(w): return people.get_item_index(w.id + 1) < 0):
 		var selected_person := people.get_selected_id()
 		people.clear()
 		people.add_item("全体")
-		for w in game.world.workers:
+		for w in game.known_workers():
 			people.add_item(w.name, w.id + 1)
 		people.select(maxi(0, people.get_item_index(selected_person)))
 	var selected_day: int = days.get_selected_id() if days.item_count else game.world.day

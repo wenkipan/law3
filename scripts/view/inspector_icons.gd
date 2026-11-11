@@ -10,6 +10,12 @@ class IconEntry extends Control:
 	var description := ""
 	var tooltip_label: Label
 	var display_font: Font
+	var take_action := Callable()
+
+	func _gui_input(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed and take_action.is_valid():
+			take_action.call()
+			accept_event()
 
 	func configure(font: Font, with_quantity: bool) -> void:
 		display_font = font
@@ -35,6 +41,8 @@ class IconEntry extends Control:
 		add_child(quantity)
 
 	func sync(data: Dictionary) -> void:
+		take_action = data.get("take", Callable())
+		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if take_action.is_valid() else Control.CURSOR_ARROW
 		image.texture = data.texture
 		quantity.text = data.get("quantity", "")
 		tooltip_text = data.name

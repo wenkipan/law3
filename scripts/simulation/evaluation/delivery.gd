@@ -23,7 +23,7 @@ static func evaluate(e, op: Dictionary) -> Dictionary:
 	var travel := op.duplicate()
 	travel.path = route
 	travel.position = route.back() if not route.is_empty() else op.position
-	var f: Dictionary = e.environment.forecast(travel, 0.6 * items.size() / g.HOUR_SECONDS if mined else 0.0)
+	var f: Dictionary = e.environment.estimate(travel, 0.6 * items.size() / g.HOUR_SECONDS if mined else 0.0)
 	var required: Dictionary = g.delivery_requirements(target)
 	var coverage := 0.0
 	var generic_amount := 0.0
@@ -44,5 +44,5 @@ static func evaluate(e, op: Dictionary) -> Dictionary:
 		var remaining: float = float(maxi(0, g.cargo_count(w) - items.size())) / g.carry_capacity(w)
 		parts.capacity = P.CAPACITY_VALUE * (fullness * fullness - remaining * remaining)
 		if op.position != target:
-			parts.freight_fee = -e.resources.cost(minf(w.bread, g.BELT_FEE * items.size()))
+			parts.freight_fee = -e.resources.cost(minf(w.money, g.BELT_FEE * items.size()))
 	return e.result(f, parts)

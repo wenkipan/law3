@@ -7,14 +7,14 @@ func run(t) -> void:
 func preview_seed(t, seed_value: int) -> void:
 	var g = t.game
 	# This opt-in overview is for manual inspection, not content or picking assertions.
-	t.fixtures.scenario("Generated map overview: %d" % seed_value, 0, true, seed_value)
+	g.reset_world(seed_value)
+	t.fixtures.scenario_name = "Generated map overview: %d" % seed_value
 	var overview := Rect2i(-64, -64, 256, 192)
 	g.ensure_region(overview)
 	g.world_view.rebuild(g)
 	for cell in g.world.terrain:
 		if not overview.has_point(cell):
 			continue
-		g.world.explored[cell] = true
 		g.cache.visible_tiles[cell] = true
 	g.world_view.sync_fog()
 	if t.native:
