@@ -18,7 +18,10 @@ class FeedbackRow extends Control:
 	var item := ""
 	var effect := ""
 	var amount := 0.0
-	var age := 0.0
+	var motion: Tween
+	var rise := 0.0
+	var age: float:
+		get: return motion.get_total_elapsed_time() if motion != null else 0.0
 	var last_event := 0.0
 
 	func configure(font: Font) -> void:
@@ -41,6 +44,22 @@ class FeedbackRow extends Control:
 		add_child(label)
 		hide()
 
+	func dismiss() -> void:
+		if motion != null:
+			motion.kill()
+			motion = null
+		hide()
+
+	func start() -> void:
+		dismiss()
+		rise = 0.0
+		modulate = Color.WHITE
+		show()
+		motion = create_tween().set_ignore_time_scale(true).set_parallel(true)
+		motion.tween_property(self, "rise", 12.0, 1.0)
+		motion.tween_property(self, "modulate:a", 0.0, 0.45).set_delay(LIFETIME - 0.45)
+		motion.chain().tween_callback(hide)
+
 func rebuild(controller: Node) -> void:
 	game = controller
 	if not game.personal_item_event.is_connected(on_item_event):
@@ -52,7 +71,7 @@ func rebuild(controller: Node) -> void:
 			add_child(row)
 			rows.append(row)
 	for row in rows:
-		row.hide()
+		row.dismiss()
 	known_effects.clear()
 	# Existing possessions/effects are not new events on reset or load.
 	for w in game.world.workers:
@@ -140,11 +159,9 @@ func claim_row(worker_id: int) -> FeedbackRow:
 	available.item = ""
 	available.effect = ""
 	available.amount = 0
-	available.age = 0
 	available.last_event = 0
-	available.modulate = Color.WHITE
 	available.label.modulate = Color("#bde8b4")
-	available.show()
+	available.start()
 	return available
 
 func refresh_text(row: FeedbackRow) -> void:
@@ -161,15 +178,13 @@ func refresh_text(row: FeedbackRow) -> void:
 		row.label.text = verb + " " + title + (" · " + row.effect if row.effect != "" else "")
 		if row.effect == "": row.label.modulate = Color("#f4dbad")
 
-func _process(delta: float) -> void:
-	delta /= Engine.time_scale
+func _process(_delta: float) -> void:
 	if not is_instance_valid(game): return
 	var active: Array[FeedbackRow] = []
 	for row in rows:
 		if not row.visible: continue
-		row.age += delta
-		if row.age >= LIFETIME or not can_show(row.worker):
-			row.hide()
+		if not can_show(row.worker):
+			row.dismiss()
 		else:
 			active.append(row)
 	active.sort_custom(func(a: FeedbackRow, b: FeedbackRow): return a.age < b.age)
@@ -182,8 +197,7 @@ func _process(delta: float) -> void:
 		var width: float = 28 + row.label.get_minimum_size().x
 		row.scale = Vector2.ONE / zoom
 		var height := maxf(40.0, 36.0 * zoom) + 30.0
-		row.position = game.tile_center(game.world.worker(row.worker).pos) + Vector2(-width / 2, -height - lane * 30 - minf(row.age, 1.0) * 12) / zoom
-		row.modulate.a = minf(1.0, (LIFETIME - row.age) / 0.45)
+		row.position = game.tile_center(game.world.worker(row.worker).pos) + Vector2(-width / 2, -height - lane * 30 - row.rise) / zoom
 		# Nearby workers share screen space; discard excess rather than stack unreadable text.
 		for attempt in 5:
 			var screen_rect := Rect2(get_global_transform_with_canvas() * row.position, Vector2(width, 28))
@@ -196,6 +210,6 @@ func _process(delta: float) -> void:
 				occupied.append(screen_rect)
 				break
 			if attempt == 4 or not get_viewport_rect().encloses(screen_rect):
-				row.hide()
+				row.dismiss()
 				break
 			row.position.y -= 30.0 / zoom

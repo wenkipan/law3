@@ -5,6 +5,7 @@ signal traced(worker_id: int, event: String, data: Dictionary)
 const Definitions = preload("res://scripts/simulation/smart_object_definitions.gd")
 const ObjectInstance = preload("res://scripts/simulation/smart_object_instance.gd")
 const MapGenerator = preload("res://scripts/map_generator.gd")
+const Technology = preload("res://scripts/technology.gd")
 const Action = Definitions.Action
 
 var tracing := false
@@ -50,98 +51,87 @@ func clear_derived() -> void:
 	for collection in [instances, endpoints, _actions, _types, _skills, _items, _materials, _locations, _instances, _orders]: collection.clear()
 	_next_order = 0
 
-func rebuild(game, world) -> void:
-	configure(game)
+func begin_rebuild() -> void:
 	clear_derived()
 	for id in slots:
 		_orders[id] = _next_order
 		_next_order += 1
-	refresh(game, world, false)
 
-func sync(game) -> void:
-	configure(game)
-	game.sync_mining_contracts()
-	game.sync_delivery_tasks()
-	refresh(game, game.world, true)
+func finish_rebuild() -> void:
+	# Older snapshots may include slots left over from the last simulation step.
+	for id in slots.keys():
+		if not endpoints.has(id): invalidate(id)
 
-func refresh(game, world, create_claims: bool) -> void:
+func register_building(entity, p: Vector2i, primary: bool) -> void:
+	var id := building_id(entity.id)
+	if entity.in_group("site") and entity.state.get("cancelled", false):
+		unregister(id)
+		return
+	var blueprint: bool = entity.in_group("site")
+	var definition = definitions.blueprints[entity.kind] if blueprint else definitions.buildings[entity.kind]
+	var object = bind_instance(id, definition, entity.state, p)
 	var present: Dictionary = {}
-	var physical: Dictionary = {}
-	for entity in world.buildings.values():
-		var p: Vector2i = world.building_map.origin(entity.id)
-		var source: Dictionary = entity.state
-		var blueprint: bool = entity.in_group("site")
-		var definition = definitions.blueprints[entity.kind] if blueprint else definitions.buildings[entity.kind]
-		var object = bind_instance(physical, building_id(entity.id), definition, source, p, create_claims)
-		if blueprint and source.get("cancelled", false): continue
-		for interaction in definition.interactions:
-			if interaction.action == Action.STORE and not is_same(world.building_at(p), entity): continue
-			var materials: Array = []
-			if interaction.action in [Action.WORK, Action.BUILD, Action.SERVICE]:
-				materials = source.materials.keys() if blueprint else definition.materials.keys()
-				if entity.kind == "research_bench" and not blueprint:
-					materials = game.Technology.PROJECTS.get(source.get("research", ""), {}).get("materials", {}).keys()
-			for offset in interaction.offsets:
-				publish(present, key(interaction.name, p + offset), object, interaction, source, p + offset, interaction.items, create_claims, materials)
-	for p in world.ground_items:
-		if world.has_building(p): continue
-		var object = bind_instance(physical, StringName(key("ground", p)), definitions.stock, world.ground_items[p].items, p, create_claims)
-		var interaction = definitions.stock.interactions[0]
-		publish(present, key(interaction.name, p), object, interaction, object.source, p, interaction.items, create_claims)
-	for p in world.wild_resources:
-		var source: Dictionary = world.wild_resources[p]
-		if source.stock <= 0: continue
-		var definition = definitions.resources[source.item]
-		var object = bind_instance(physical, StringName(key("resource", p)), definition, source, p, create_claims)
-		var interaction = definition.interactions[0]
-		publish(present, key(interaction.name, p), object, interaction, source, p, interaction.items, create_claims)
-	for p in world.mining_contracts:
-		var source: Dictionary = world.mining_contracts[p]
-		var object = bind_instance(physical, StringName(key("deposit", p)), definitions.deposit, source, p, create_claims)
-		var interaction = definitions.deposit.interactions[0]
-		var ore: int = world.terrain.get(p, 0)
-		var item = game.ORES[ore].get("item", ore)
-		publish(present, key(interaction.name, p), object, interaction, source, p, [item], create_claims)
-	for task in world.delivery_tasks: publish_delivery(world, task, present, physical, create_claims)
-	if create_claims:
-		for id in slots.keys():
-			if not present.has(id): invalidate(id)
-	for id in endpoints.keys():
-		if not present.has(id): remove_endpoint(id)
-	for id in instances.keys():
-		if not physical.has(id): instances.erase(id)
+	for interaction in definition.interactions:
+		if interaction.action == Action.STORE and not primary: continue
+		var materials: Array = []
+		if interaction.action in [Action.WORK, Action.BUILD, Action.SERVICE]:
+			materials = entity.state.materials.keys() if blueprint else definition.materials.keys()
+			if entity.kind == "research_bench" and not blueprint:
+				materials = Technology.PROJECTS.get(entity.state.get("research", ""), {}).get("materials", {}).keys()
+		for offset in interaction.offsets:
+			var slot_id := key(interaction.name, p + offset)
+			present[slot_id] = true
+			publish(slot_id, object, interaction, p + offset, interaction.items, materials)
+	for slot_id in object.slot_ids.keys():
+		if not present.has(slot_id): invalidate(slot_id)
 
-func add_delivery(game, task: Dictionary) -> void:
-	configure(game)
-	publish_delivery(game.world, task, {}, {}, true)
+func register_ground(p: Vector2i, source: Dictionary) -> void:
+	register_point("ground", p, source, definitions.stock, definitions.stock.interactions[0].items)
 
-func publish_delivery(world, task: Dictionary, present: Dictionary, physical: Dictionary, create_claims: bool) -> void:
-	var skill: String = "construction" if world.has_building(task.target, "site") else Definitions.JOB_SKILLS.get(world.building_state(task.target, "station", {}).get("kind", "bank" if world.has_building(task.target, "bank") else ""), "")
-	var definition = definitions.requests[skill]
-	var object = bind_instance(physical, StringName(delivery_key(task)), definition, task, task.target, create_claims)
+func register_resource(p: Vector2i, source: Dictionary) -> void:
+	var definition = definitions.resources[source.item]
+	register_point("resource", p, source, definition, definition.interactions[0].items)
+
+func register_deposit(p: Vector2i, source: Dictionary, item) -> void:
+	register_point("deposit", p, source, definitions.deposit, [item])
+
+func register_point(kind: String, p: Vector2i, source: Dictionary, definition, items: Array) -> void:
+	var object = bind_instance(StringName(key(kind, p)), definition, source, p)
 	var interaction = definition.interactions[0]
+	publish(key(interaction.name, p), object, interaction, p, items)
+
+func register_delivery(task: Dictionary, skill: String) -> void:
+	var id := delivery_key(task)
+	var definition = definitions.requests[skill]
+	var previous = instances.get(StringName(id))
+	# Redirecting actual freight changes its searchable location, not its claim.
+	if previous != null and is_same(previous.source, task) and previous.definition != definition:
+		remove_endpoint(id)
+		previous.definition = definition
+	var object = bind_instance(StringName(id), definition, task, task.target)
 	var item = task.item if task.bound else task.requested_item
 	var items: Array = Definitions.MINERALS if is_same(item, 0) else [item]
-	publish(present, delivery_key(task), object, interaction, task, task.target, items, create_claims)
+	publish(id, object, definition.interactions[0], task.target, items)
 
-func bind_instance(present: Dictionary, id: StringName, definition: Definitions.ObjectDefinition, source: Dictionary, p: Vector2i, create_claims: bool):
-	present[id] = true
+func unregister(id: StringName) -> void:
+	if not instances.has(id): return
+	for slot_id in instances[id].slot_ids.keys(): invalidate(slot_id)
+	instances.erase(id)
+
+func bind_instance(id: StringName, definition: Definitions.ObjectDefinition, source: Dictionary, p: Vector2i):
 	if instances.has(id):
 		var object = instances[id]
 		if object.definition == definition and is_same(object.source, source):
 			object.position = p
 			return object
-		for slot_id in object.slot_ids.keys():
-			if create_claims: invalidate(slot_id)
-			else: remove_endpoint(slot_id)
+		unregister(id)
 	var object := ObjectInstance.new(id, definition, source, p)
 	instances[id] = object
 	return object
 
-func publish(present: Dictionary, id: String, object, interaction: Definitions.SlotDefinition, source: Dictionary, p: Vector2i, items: Array, create_claims: bool, materials: Array = []) -> void:
-	present[id] = true
+func publish(id: String, object, interaction: Definitions.SlotDefinition, p: Vector2i, items: Array, materials: Array = []) -> void:
+	var source: Dictionary = object.source
 	if not slots.has(id) or not is_same(slots[id].source, source):
-		if not create_claims: return
 		invalidate(id)
 		slots[id] = {"identity": next_identity, "source": source, "position": p, "shared": interaction.shared,
 			"owner": -1, "claim": 0, "occupied": false}
@@ -226,15 +216,6 @@ func positions(action: int, filters: Dictionary = {}) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
 	for endpoint in query(action, filters): result.append(endpoint.position)
 	return result
-
-func delivery_requests(filters: Dictionary = {}) -> Array[Dictionary]:
-	var requests: Array[Dictionary] = []
-	for endpoint in query(Action.DELIVERY, filters):
-		if not endpoint.available_to(-1): continue
-		var task: Dictionary = endpoint.state.source
-		if task.get("on_belt", false): continue
-		if not task.bound or task.owner == -1: requests.append(task)
-	return requests
 
 func available(id: String, worker_id := -1) -> bool:
 	return slots.has(id) and (slots[id].owner == -1 or slots[id].owner == worker_id)

@@ -1,7 +1,7 @@
 extends RefCounted
 
 const VERSION := 12
-const RULES_VERSION := 19
+const RULES_VERSION := 20
 const MAX_NODES := 200000
 const MAX_BYTES := 64 * 1024 * 1024
 const MAGIC := "LAW3SNAP"
@@ -332,7 +332,9 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 		if not numeric_fields(bench, ["queue", "daily_output", "produced_today", "growth", "water_day"]) or not bench.get("harvest") is bool:
 			return invalid("Incomplete production facility.")
 		if bench.kind == "barn" and (not numeric_fields(bench, ["sheep"]) or not bench.get("slaughter") is bool): return invalid("Invalid livestock.")
-		if bench.kind == "recruitment_board" and (not numeric_fields(bench, ["recruitment_elapsed"]) or bench.recruitment_elapsed < 0 or bench.recruitment_elapsed > day_seconds / 4.0 or bench.employee != -1): return invalid("Invalid recruitment board.")
+		if bench.kind == "recruitment_board":
+			if not valid_wage(bench.get("recruitment_cost")) or not numeric_fields(bench, ["recruitment_elapsed"]) or bench.recruitment_elapsed < 0 or bench.recruitment_elapsed > day_seconds / 4.0 or bench.employee != -1:
+				return invalid("Invalid recruitment board.")
 		if bench.kind == "market":
 			for field in ["buy_prices", "sell_prices"]:
 				if not bench.get(field) is Dictionary: return invalid("Missing market quotes.")

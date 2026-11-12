@@ -27,12 +27,7 @@ func sync(entries: Array[Dictionary]) -> void:
 			button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			button.clip_text = true
 			button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-			button.add_theme_font_override("font", game.hud.font)
-			button.add_theme_font_size_override("font_size", 15)
-			button.add_theme_color_override("font_outline_color", Color("#111719"))
-			button.add_theme_constant_override("outline_size", 4)
-			for state in ["normal", "hover", "pressed", "focus"]:
-				button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+			button.theme_type_variation = "AlertButton"
 			button.pressed.connect(game.activate_alert.bind(entry.id))
 			button.gui_input.connect(scroll_text)
 			list.add_child(button)

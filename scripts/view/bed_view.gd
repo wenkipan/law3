@@ -4,8 +4,6 @@ const Art = preload("res://scripts/view/art.gd")
 const Reveal = preload("res://assets/world/construction.gdshader")
 const BeltArt = preload("res://scripts/view/belt_art.gd")
 const BarrierArt = preload("res://scripts/view/barrier_art.gd")
-const SHORTAGE_INTERVAL := 3.0
-const SHORTAGE_FLIP_SECONDS := 0.24
 var progress := -1.0
 var belt_art: Node2D
 var barrier_art: Node2D
@@ -15,16 +13,9 @@ var visual_size := Vector2.ZERO
 var sheep: Sprite2D
 var sheep_anchor: Node2D
 var operating := false
-var shortage_bubble: TextureRect
-var shortage_icon: TextureRect
-var shortage_quantity: Label
-var shortage_items: Array = []
-var shortage_amounts: Dictionary = {}
-var shortage_item = null
-var shortage_age := 0.0
+@onready var shortage_bubble: Node2D = $ShortageBubble
 
 func _ready() -> void:
-	set_process(false)
 	$Solid.texture = Art.texture("res://assets/icons/bed.svg")
 	$Blueprint.texture = Art.texture("res://assets/icons/bed-blueprint.svg")
 	for sprite in [$Solid, $Blueprint]:
@@ -135,75 +126,8 @@ func set_line_connections(connections: Dictionary) -> void:
 		line_art[offset].configure(connections[offset], Vector2i.ZERO, progress)
 
 func set_shortages(items: Array, amounts: Dictionary = {}) -> void:
-	if items == shortage_items and amounts == shortage_amounts: return
-	var changed_items := items != shortage_items
-	shortage_items = items.duplicate()
-	shortage_amounts = amounts.duplicate()
-	if changed_items: shortage_age = 0.0
-	set_process(not items.is_empty())
-	if items.is_empty():
-		shortage_item = null
-		if shortage_bubble != null: shortage_bubble.hide()
-		return
-	if shortage_bubble == null:
-		shortage_bubble = TextureRect.new()
-		shortage_bubble.texture = Art.texture("res://assets/world/material-shortage.svg")
-		shortage_bubble.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		shortage_bubble.size = Vector2(32, 34)
-		shortage_bubble.pivot_offset = Vector2(16, 34)
-		shortage_bubble.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		add_child(shortage_bubble)
-		shortage_icon = TextureRect.new()
-		shortage_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		shortage_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		shortage_icon.size = Vector2(20, 20)
-		shortage_icon.pivot_offset = shortage_icon.size / 2
-		shortage_icon.position = Vector2(6, 4)
-		shortage_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		shortage_bubble.add_child(shortage_icon)
-		shortage_quantity = Label.new()
-		shortage_quantity.position = Vector2(22, 0)
-		shortage_quantity.size = Vector2(22, 20)
-		shortage_quantity.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		shortage_quantity.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		shortage_quantity.add_theme_font_size_override("font_size", 14)
-		shortage_quantity.add_theme_color_override("font_color", Color("#263337"))
-		shortage_quantity.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		shortage_icon.add_child(shortage_quantity)
-	var with_quantity := not amounts.is_empty()
-	shortage_quantity.visible = with_quantity
-	shortage_bubble.size = Vector2(56 if with_quantity else 32, 34)
-	shortage_bubble.pivot_offset.x = shortage_bubble.size.x / 2
-	shortage_icon.pivot_offset.x = 22 if with_quantity else 10
-	if changed_items: shortage_icon.scale = Vector2.ONE
-	show_shortage_item(items[0] if changed_items else shortage_item)
-	shortage_bubble.show()
-	position_shortage(get_viewport().get_camera_2d().zoom.x)
-
-func show_shortage_item(item) -> void:
-	if not is_same(shortage_item, item):
-		shortage_item = item
-		shortage_icon.texture = Art.item_texture(item)
-	shortage_quantity.text = str(shortage_amounts[item]) if shortage_amounts.has(item) else ""
-
-func _process(delta: float) -> void:
-	delta /= Engine.time_scale
-	shortage_age += delta
-	var cycle := int(shortage_age / SHORTAGE_INTERVAL)
-	var index := cycle % shortage_items.size()
-	var phase := fmod(shortage_age, SHORTAGE_INTERVAL)
-	shortage_icon.scale.x = 1.0
-	if shortage_items.size() > 1 and cycle > 0 and phase < SHORTAGE_FLIP_SECONDS:
-		# Swap textures edge-on; only the centered icon turns, never the bubble shell.
-		var turn := phase / SHORTAGE_FLIP_SECONDS
-		shortage_icon.scale.x = absf(cos(turn * PI))
-		if turn < 0.5: index = (cycle - 1) % shortage_items.size()
-	show_shortage_item(shortage_items[index])
-	position_shortage(get_viewport().get_camera_2d().zoom.x)
+	shortage_bubble.sync(items, amounts)
 
 func position_shortage(zoom: float) -> void:
-	if shortage_bubble == null or not shortage_bubble.visible: return
-	var breath := (1.0 - cos(shortage_age * TAU / SHORTAGE_INTERVAL)) * 0.5
-	shortage_bubble.scale = Vector2.ONE * (1.0 + 0.045 * breath) / maxf(zoom, 0.1)
-	shortage_bubble.modulate.a = 0.92 + 0.08 * breath
-	shortage_bubble.position = Vector2(visual_size.x / 2 - shortage_bubble.pivot_offset.x, -36)
+	shortage_bubble.position = Vector2(visual_size.x / 2, -2)
+	shortage_bubble.sync_zoom(zoom)

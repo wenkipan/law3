@@ -20,6 +20,9 @@ var delivery_receivers: Dictionary = {}
 var belt_next: Dictionary = {}
 var belt_destinations: Dictionary = {}
 var receiver_belts: Dictionary = {}
+var supply_receivers: Dictionary = {}
+var market_supply_changed := false
+var mining_drills: Dictionary = {}
 
 func reset(seed_value: int, starting_area: Rect2i) -> void:
 	generator = MapGenerator.new(seed_value, starting_area)
@@ -34,6 +37,9 @@ func reset(seed_value: int, starting_area: Rect2i) -> void:
 	belt_next.clear()
 	belt_destinations.clear()
 	receiver_belts.clear()
+	supply_receivers.clear()
+	market_supply_changed = false
+	mining_drills.clear()
 
 func invalidate_delivery() -> void:
 	delivery_dirty = true

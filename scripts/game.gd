@@ -25,6 +25,7 @@ const FATIGUE_PER_HOUR := 10.0
 const SLEEP_RECOVERY_PER_HOUR := 15.0
 const HOUR_SECONDS := DAY_SECONDS / 24.0
 const RECRUITMENT_HOURS := 6.0
+const DEFAULT_RECRUITMENT_COST := 1
 const BED_BLOCKS := 3
 const BED_BUILD_HOURS := 4.0
 const WAGE_PER_HOUR := 1.0
@@ -266,8 +267,8 @@ func reset_world(new_seed: int = -1) -> void:
 	alerts.reset()
 	alert_targets.clear()
 	world_view.initialized = false
-	world.reset(randi() if new_seed == -1 else new_seed, BASE, STARTING_MONEY)
 	world.smart_objects.configure(self)
+	world.reset(randi() if new_seed == -1 else new_seed, BASE, STARTING_MONEY)
 	cache.reset(world.world_seed, Rect2i(BASE - Vector2i(4, 2), Vector2i(9, 5)))
 	interaction.reset()
 	ai_trace.reset(self)
@@ -297,10 +298,14 @@ func restore_snapshot(data: PackedByteArray) -> Dictionary:
 	# exploration or power simulation may run while reconstructing it.
 	var next_cache := WorldCache.new()
 	next_cache.rebuild(restored.world, Rect2i(BASE - Vector2i(4, 2), Vector2i(9, 5)), restored.sample)
-	restored.world.smart_objects.rebuild(self, restored.world)
+	restored.world.rebuild_interactions(self)
 	world_view.initialized = false
 	world = restored.world
 	cache = next_cache
+	for building in world.buildings.values():
+		var p := world.building_map.origin(building.id)
+		supply_changed(p, false)
+		if building.kind == "drill" and building.in_group("station"): cache.mining_drills[p] = true
 	alerts.reset()
 	alert_targets.clear()
 	world.smart_objects.tracing = ai_trace.enabled
@@ -350,6 +355,7 @@ func ensure_region(area: Rect2i) -> void:
 				continue
 			var data: PackedByteArray = cache.generator.generate_chunk(index)
 			world.generated_chunks[index] = true
+			var has_dense_ore := false
 			for dy in MapGenerator.CHUNK_SIZE:
 				for dx in MapGenerator.CHUNK_SIZE:
 					var cell := index * MapGenerator.CHUNK_SIZE + Vector2i(dx, dy)
@@ -361,11 +367,16 @@ func ensure_region(area: Rect2i) -> void:
 					if material == MapGenerator.WATER:
 						world.water_sources[cell] = true
 					if MapGenerator.WILD_ITEMS.has(material):
-						world.wild_resources[cell] = wild_resource(MapGenerator.WILD_ITEMS[material])
+						world.add_wild_resource(cell, wild_resource(MapGenerator.WILD_ITEMS[material]))
 					elif material > 0 and material != MapGenerator.WATER:
 						world.deposits[cell] = maxi(1, floori(MINING_DAYS * MINING_HOURS_PER_DAY / ORES[material].hours))
+						if material in [5, 6]: has_dense_ore = true
 					if material != MapGenerator.WATER:
 						cache.navigation.set_point_solid(cell, false)
+			if has_dense_ore:
+				var chunk := Rect2i(index * MapGenerator.CHUNK_SIZE, Vector2i.ONE * MapGenerator.CHUNK_SIZE)
+				for p in world.building_positions("station"):
+					if building_kind(p) == "drill" and chunk.grow(DRILL_RADIUS).has_point(p): cache.mining_drills[p] = true
 			world_view.refresh_chunk(index)
 
 func wild_resource(item: String) -> Dictionary:
@@ -660,6 +671,8 @@ func remove_belt(p: Vector2i) -> bool:
 	var recovery := contract(BELT_BUILD_HOURS)
 	recovery.merge({"kind": building.kind, "materials": previous.materials, "direction": previous.direction, "inputs": previous.inputs})
 	building.recover(recovery)
+	world.refresh_interactions_at(p)
+	supply_changed(p)
 	cache.invalidate_delivery()
 	recover_cancelled_sites()
 	return true
@@ -1076,7 +1089,10 @@ func site_cleared(p: Vector2i) -> bool:
 
 # 蓝图不检查或预扣建材；实物到齐、占地清空后才施工。
 func create_building(p: Vector2i, kind: String, settings: Dictionary, blueprint := false):
-	return world.create_building(kind, p, building_cells(p, kind, settings.get("axis", Vector2i.RIGHT)), settings, blueprint)
+	var building = world.create_building(kind, p, building_cells(p, kind, settings.get("axis", Vector2i.RIGHT)), settings, blueprint)
+	supply_changed(p)
+	if kind == "drill" and not blueprint: cache.mining_drills[p] = true
+	return building
 
 func place_building(p: Vector2i, kind: String, planned_axis := Vector2i.RIGHT) -> bool:
 	if not building_space_valid(p, kind, planned_axis) or not can_plan_building(kind):
@@ -1189,9 +1205,11 @@ func move_drill_to(target: Vector2i) -> bool:
 	var owner := slot_owner("work", origin)
 	if owner >= 0:
 		world.worker(owner).activity.exit(self, world.worker(owner), "moved")
-	world.smart_objects.invalidate(SmartObjects.key("work", origin))
 	var building = world.building_at(origin, "station")
-	world.building_map.place(building.id, target, building_cells(target, building.kind))
+	world.move_building(building, target, building_cells(target, building.kind))
+	supply_changed(origin)
+	supply_changed(target)
+	cache.mining_drills[target] = true
 	cache.invalidate_delivery()
 	cache.powered_devices.erase(origin)
 	cache.ready_drills.erase(origin)
@@ -1205,6 +1223,7 @@ func remove_power_line(p: Vector2i) -> bool:
 		return false
 	return_materials(world.building_state(p, "line").materials)
 	world.remove_building(world.building_at(p, "line"))
+	supply_changed(p)
 	cache.powered_devices.clear()
 	cache.ready_drills.clear()
 	update_ui()
@@ -1234,12 +1253,14 @@ func demolish_building(p: Vector2i, line := false) -> bool:
 		var recovery := contract(building_hours(kind))
 		recovery.merge({"kind": kind, "materials": {}})
 		building.recover(recovery)
+		world.refresh_interactions_at(origin)
+		supply_changed(origin)
+		if kind == "research_bench": research_supply_changed()
 		if kind in WorldState.BLOCKING_KINDS:
 			cache.navigation.set_point_solid(origin, not world.walkable(origin))
 		cache.invalidate_delivery()
 		redirect_site_deliveries(origin)
 		recover_cancelled_sites()
-		world.smart_objects.sync(self)
 		cache.powered_devices.clear()
 		cache.ready_drills.clear()
 		cache.power_output.clear()
@@ -1277,9 +1298,10 @@ func cancel_site(p: Vector2i) -> bool:
 	var owner := slot_owner("build", origin)
 	if owner >= 0:
 		world.worker(owner).activity.exit(self, world.worker(owner), "cancelled")
-	world.smart_objects.invalidate(SmartObjects.key("build", origin))
 	task.cancelled = true
 	world.building_at(origin, "site").phase = WorldState.Building.Phase.RECOVERING
+	world.refresh_interactions_at(origin)
+	supply_changed(origin)
 	cache.invalidate_delivery()
 	world_view.sync_orders()
 	redirect_site_deliveries(origin)
@@ -1294,8 +1316,11 @@ func redirect_site_deliveries(origin: Vector2i) -> void:
 		if not shipment.bound:
 			remove_delivery_task(shipment)
 		elif shipment.picked:
+			supply_changed(origin, false)
 			shipment.target = BASE if shipment.source == origin or delivery_building_at(shipment.source) != shipment.source else shipment.source
 			shipment.receiver_id = delivery_receiver_id(shipment.target)
+			world.register_delivery(shipment)
+			supply_changed(shipment.target, false)
 			# Carriers and belts replan against the shipment's current receiver.
 		else:
 			if shipment.owner >= 0:
@@ -1310,7 +1335,8 @@ func uses_daily_output(kind: String) -> bool:
 
 func production_station(kind: String) -> Dictionary:
 	var result := {"kind": kind, "owner": "player", "employee": -1, "wage": WAGE_PER_HOUR, "queue": 0, "daily_output": 0, "produced_today": 0, "task": {}, "growth": 0.0, "harvest": false, "water_day": 0}
-	if kind == "recruitment_board": result.recruitment_elapsed = 0.0
+	if kind == "recruitment_board":
+		result.merge({"recruitment_elapsed": 0.0, "recruitment_cost": DEFAULT_RECRUITMENT_COST})
 	if kind == "market": result.merge({"buy_prices": {}, "sell_prices": {}})
 	if kind == "barn":
 		result.merge({"sheep": 1, "slaughter": false})
@@ -1359,6 +1385,8 @@ func assign_research(p: Vector2i, project: String) -> bool:
 	# Suspended batches keep their consumed materials, labor and paid shares.
 	bench.research = project
 	bench.task = bench.research_tasks.get(project, {})
+	world.refresh_interactions_at(p)
+	supply_changed(p, false)
 	update_ui()
 	return true
 
@@ -1384,6 +1412,7 @@ func research_recipe_text(project: String, _p = null) -> String:
 func request_slaughter(p: Vector2i) -> void:
 	if building_kind(p) == "barn" and world.has_building(p, "station") and world.building_state(p, "station").sheep > 0:
 		world.building_state(p, "station").slaughter = true
+		supply_changed(p)
 
 # 日产量跨天保留，完成量按完成当天计入；缺产不累积，销售库存不增加配额。
 # 已开工或正在生长的批次完成后才检查新配额；打印仓使用有限待制数量。
@@ -1413,6 +1442,7 @@ func adjust_production(p: Vector2i, change: int) -> void:
 		bench.daily_output = maxi(0, bench.daily_output + change * amount)
 	else:
 		bench.queue = maxi(0 if bench.task.is_empty() else 1, bench.queue + change)
+	supply_changed(p)
 
 func product_item(kind: String):
 	return PRODUCTS.get(kind, {}).get("item", {"pump": "raw_water", "purifier": "clean_water"}.get(kind, kind))
@@ -1502,6 +1532,7 @@ func set_wage(p, value: float, mining := false) -> bool:
 	var settings := wage_settings(p, mining)
 	if settings.is_empty() or not is_finite(value): return false
 	settings.wage = snappedf(clampf(value, MIN_WAGE, MAX_WAGE), WAGE_STEP)
+	supply_changed(p)
 	if settings.wage == 0:
 		release_employee(p)
 		update_fog()
@@ -1511,10 +1542,21 @@ func selected_wage_settings() -> Dictionary:
 	if interaction.selected_worker >= 0: return {}
 	return wage_settings(interaction.selected_tile, true) if interaction.selected_tile != null else wage_settings(interaction.selected_entity)
 
-func set_selected_wage(value: float) -> void:
+func recruitment_settings(p) -> Dictionary:
+	var settings := world.building_state(p, "station")
+	return settings if settings.get("kind") == "recruitment_board" else {}
+
+func set_recruitment_cost(p, value: float) -> bool:
+	var settings := recruitment_settings(p)
+	if settings.is_empty() or not is_finite(value): return false
+	settings.recruitment_cost = int(snappedf(clampf(value, MIN_WAGE, MAX_WAGE), WAGE_STEP))
+	return true
+
+func set_selected_rate(value: float) -> void:
 	if interaction.selected_worker >= 0: return
 	if interaction.selected_tile != null: set_wage(interaction.selected_tile, value, true)
-	else: set_wage(interaction.selected_entity, value)
+	elif not set_recruitment_cost(interaction.selected_entity, value):
+		set_wage(interaction.selected_entity, value)
 	update_entity_panel()
 
 func set_brush_wage(value: float) -> void:
@@ -1607,7 +1649,8 @@ func simulate(delta: float) -> void:
 		if world.recovery_timer >= 0.2:
 			recover_cancelled_sites()
 			world.recovery_timer = 0.0
-		world.smart_objects.sync(self)
+		sync_mining_contracts()
+		sync_delivery_tasks()
 		world.pollution_operations.clear()
 		prepare_player_work()
 		simulate_power(step)
@@ -1627,8 +1670,12 @@ func simulate(delta: float) -> void:
 			world.day += 1
 			world.resource_flows.erase(world.day - 2)
 			for p in world.building_positions("station"):
-				if uses_daily_output(building_kind(p)):
+				var kind := building_kind(p)
+				if uses_daily_output(kind):
 					world.building_state(p, "station").produced_today = 0
+					supply_changed(p)
+				elif kind == "fountain":
+					supply_changed(p, false)
 			for w in world.workers:
 				w.earned_today = 0
 				w.eaten_today = 0
@@ -1682,14 +1729,19 @@ func simulate_recruitment(delta: float) -> void:
 	for p in world.building_positions("station"):
 		var board: Dictionary = world.building_state(p, "station")
 		if board.kind != "recruitment_board": continue
-		# A blocked entrance holds one arrival, never a backlog of residents.
+		var cost: int = board.recruitment_cost
+		if cost == 0: continue
+		# A blocked or unfunded board holds one arrival, never a backlog.
 		board.recruitment_elapsed = minf(interval, board.recruitment_elapsed + delta)
 		if board.recruitment_elapsed + 0.000001 < interval: continue
+		if stock_at(p, "money") < cost: continue
 		if occupied.is_empty():
 			for w in world.workers: occupied[Vector2i(w.pos.round())] = true
 		for direction in DIRS:
 			var arrival: Vector2i = p + direction
 			if not world.walkable(arrival) or occupied.has(arrival): continue
+			add_stock(p, "money", -cost)
+			record_resource_use("money", cost)
 			world.newborns.append({"position": arrival, "age_days": CHILD_DAYS, "producer": -1})
 			occupied[arrival] = true
 			board.recruitment_elapsed = 0.0
@@ -1867,11 +1919,9 @@ func activate_alert(id: String) -> void:
 		hud.report_window.resources.select_item("money")
 
 func _process(delta: float) -> void:
-	var movement := Vector2(
-		float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A)),
-		float(Input.is_physical_key_pressed(KEY_S)) - float(Input.is_physical_key_pressed(KEY_W)))
+	var movement := Input.get_vector(&"camera_left", &"camera_right", &"camera_up", &"camera_down")
 	if not hud.blocks_simulation():
-		world_view.camera.position += movement.normalized() * (delta / Engine.time_scale) * 550.0 / world_view.camera.zoom.x
+		world_view.camera.position += movement * (delta / Engine.time_scale) * 550.0 / world_view.camera.zoom.x
 	rebase_view()
 	update_ui()
 	world_view.sync_dynamic()
@@ -2092,14 +2142,13 @@ func start_player_work(p: Vector2i, on_ground: bool) -> bool:
 		keys.append(SmartObjects.key("harvest", p))
 	elif on_ground and world.deposits.get(p, 0) > 0 and world.terrain.get(p, 0) in SmartObjectDefinitions.MINERALS:
 		kind = "mine"
-		if not world.mining_contracts.has(p): world.mining_contracts[p] = contract(ORES[world.terrain[p]].hours)
+		ensure_mining_contract(p)
 		source = world.mining_contracts[p]
 		keys.append(SmartObjects.key("mine", p))
 	else:
 		return false
 	var record := ActivityRecord.new(kind, p, data)
 	if not work_target_available(record, source, true): return false
-	world.smart_objects.sync(self)
 	var handles := world.smart_objects.acquire(keys, PLAYER_OPERATOR)
 	if handles.size() != keys.size(): return false
 	var task := prepare_work(record)
@@ -2208,6 +2257,7 @@ func load_player_cargo(p: Vector2i) -> float:
 	task.merge({"source": world.player_cargo.origin, "item": world.player_cargo.item,
 		"amount": amount, "bound": true, "picked": true,
 		"pollution": world.player_cargo.pollution * amount / world.player_cargo.amount}, true)
+	supply_changed(target, false)
 	if load_belt({}, task, p): return amount
 	remove_delivery_task(task)
 	return 0.0
@@ -2225,36 +2275,28 @@ func _unhandled_input(event: InputEvent) -> void:
 	if hud.blocks_simulation(): return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if interaction.tool in ["wage", "fee"]:
-			if interaction.tool == "wage" and event.physical_keycode in [KEY_0, KEY_KP_0]:
-				set_brush_wage(0)
-				get_viewport().set_input_as_handled()
-				return
-			var digit: int = event.physical_keycode - KEY_1 + 1
-			if event.physical_keycode >= KEY_KP_1 and event.physical_keycode <= KEY_KP_9:
-				digit = event.physical_keycode - KEY_KP_1 + 1
-			if digit >= 1 and digit <= 9:
-				if interaction.tool == "fee": set_brush_fee(digit)
-				else: set_brush_wage(digit)
-				get_viewport().set_input_as_handled()
-				return
-		match event.physical_keycode:
-			KEY_F5: hud.save_current()
-			KEY_F9: hud.load_current()
-			KEY_SPACE: toggle_pause()
-			KEY_G: set_tool("dig")
-			KEY_C: set_tool("cancel")
-			KEY_X: set_tool("demolish")
-			KEY_P: set_tool("wage")
-			KEY_F: set_tool("fee")
-			KEY_HOME: world_view.camera.position = tile_center(BASE)
-			KEY_ESCAPE:
-				if hud.research_panel.visible:
-					hud.research_panel.hide()
+			for digit in range(0 if interaction.tool == "wage" else 1, 10):
+				if event.is_action_pressed("brush_%d" % digit):
+					if interaction.tool == "fee": set_brush_fee(digit)
+					else: set_brush_wage(digit)
+					get_viewport().set_input_as_handled()
 					return
-				interaction.dragging = false
-				cancel_placement()
-				if interaction.tool in ["wage", "fee"]: set_tool("dig")
-				clear_entity_selection()
+		if event.is_action_pressed(&"quick_save"): hud.save_current()
+		elif event.is_action_pressed(&"quick_load"): hud.load_current()
+		elif event.is_action_pressed(&"tool_dig"): set_tool("dig")
+		elif event.is_action_pressed(&"tool_cancel"): set_tool("cancel")
+		elif event.is_action_pressed(&"tool_demolish"): set_tool("demolish")
+		elif event.is_action_pressed(&"tool_wage"): set_tool("wage")
+		elif event.is_action_pressed(&"tool_fee"): set_tool("fee")
+		elif event.is_action_pressed(&"camera_home"): world_view.camera.position = tile_center(BASE)
+		elif event.is_action_pressed(&"game_cancel"):
+			if hud.research_panel.visible:
+				hud.research_panel.hide()
+				return
+			interaction.dragging = false
+			cancel_placement()
+			if interaction.tool in ["wage", "fee"]: set_tool("dig")
+			clear_entity_selection()
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			world_view.camera.zoom = Vector2.ONE * minf(2.2, world_view.camera.zoom.x * 1.12)
@@ -2378,9 +2420,9 @@ func handle_world_input(event: InputEvent, worker_id: int, entity, line := false
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		update_player_pointer(event.position)
-	if (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT) or (event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE):
+	if (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT) or event.is_action_pressed(&"game_cancel", true):
 		cancel_player_gesture()
-	if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE and not hud.blocks_simulation() and hud.market_controls.visible:
+	if event.is_action_pressed(&"game_cancel", true) and not hud.blocks_simulation() and hud.market_controls.visible:
 		var focused := get_viewport().gui_get_focus_owner()
 		if focused != null: focused.release_focus()
 		clear_entity_selection()
@@ -2401,8 +2443,8 @@ func _input(event: InputEvent) -> void:
 			finish_ground_drag(event.position)
 		if event.button_index == MOUSE_BUTTON_MIDDLE:
 			interaction.panning = false
-	if event is InputEventKey and event.pressed and event.physical_keycode == KEY_SPACE:
-		if event.echo:
+	if event.is_action_pressed(&"game_pause", true):
+		if event.is_echo():
 			return
 		if not hud.blocks_simulation():
 			toggle_pause()
@@ -2462,7 +2504,9 @@ func stock_at(p: Vector2i, item) -> float:
 	return storage.quantity(item) if storage != null else 0.0
 
 func add_stock(p: Vector2i, item, amount: float) -> void:
+	if amount == 0.0: return
 	world.storage_at(p, true).add(item, amount)
+	supply_changed(p, item in MARKET_GOODS)
 
 func stock_locations() -> Array:
 	var locations: Array = [BASE]
@@ -2481,10 +2525,13 @@ func total_stock(item) -> float:
 func take_goods(p: Vector2i, item, amount: float) -> Dictionary:
 	amount = minf(amount, available_at(p, item))
 	if amount <= 0: return {}
-	return world.storage_at(p).take(item, amount)
+	var goods: Dictionary = world.storage_at(p).take(item, amount)
+	supply_changed(p, item in MARKET_GOODS)
+	return goods
 
 func put_goods(p: Vector2i, goods: Dictionary) -> void:
 	world.storage_at(p, true).put(goods)
+	supply_changed(p, goods.item in MARKET_GOODS)
 
 func available_at(p: Vector2i, item) -> float:
 	if world.has_building(p, "station"):
@@ -2531,13 +2578,14 @@ func new_delivery_task(target: Vector2i, item, receiver := -1) -> Dictionary:
 	task.id = world.next_delivery_task_id
 	world.next_delivery_task_id += 1
 	world.delivery_tasks.append(task)
-	world.smart_objects.add_delivery(self, task)
+	world.register_delivery(task)
 	return task
 
 func remove_delivery_task(task: Dictionary) -> void:
 	if task.owner >= 0: world.worker(task.owner).delivery_tasks.erase(task)
-	world.smart_objects.invalidate(SmartObjects.delivery_key(task))
+	world.smart_objects.unregister(StringName(SmartObjects.delivery_key(task)))
 	world.delivery_tasks.erase(task)
+	if task.bound: supply_changed(task.target, false)
 
 func reserve_recovery_tasks(source: Vector2i, target: Vector2i, item, amount: float) -> void:
 	# Recovery may include a fractional remainder of money or water; supply requests are always one.
@@ -2546,6 +2594,7 @@ func reserve_recovery_tasks(source: Vector2i, target: Vector2i, item, amount: fl
 		task.source = source
 		task.amount = minf(1.0, amount)
 		task.bound = true
+		supply_changed(target, false)
 		task.pollution = world.take_waste(source, task.amount, stock_at(source, item)) if is_same(item, "wastewater") else 0.0
 		add_stock(source, item, -task.amount)
 		amount -= task.amount
@@ -2560,28 +2609,47 @@ func release_delivery_task(task: Dictionary) -> void:
 	var claims: Array[Dictionary] = []
 	if not task.handle.is_empty(): claims.append(task.handle)
 	world.smart_objects.release(claims)
+	if task.bound: supply_changed(task.target, false)
 	if task.receiver_id < 0:
 		remove_delivery_task(task)
 		return
 	task.merge({"source": null, "item": task.requested_item, "owner": -1,
 		"bound": false, "picked": false, "pollution": 0.0, "handle": {}}, true)
+	world.register_delivery(task)
 
 func delivery_receiver_id(p: Vector2i) -> int:
 	var building = world.building_at(p)
 	return building.id if building != null else -1
 
+func supply_changed(p: Vector2i, affects_market := true) -> void:
+	cache.supply_receivers[p] = true
+	if affects_market: cache.market_supply_changed = true
+
+func research_supply_changed() -> void:
+	for p in research_stations(): supply_changed(p, false)
+
 func sync_delivery_tasks() -> void:
+	if cache.supply_receivers.is_empty() and not cache.market_supply_changed: return
+	var dirty: Dictionary = cache.supply_receivers
+	cache.supply_receivers = {}
+	if cache.market_supply_changed:
+		for building in world.buildings.values():
+			if building.kind == "market" and building.in_group("station"):
+				dirty[world.building_map.origin(building.id)] = true
+	cache.market_supply_changed = false
+	var positions := dirty.keys()
+	positions.sort_custom(func(a, b): return delivery_receiver_id(a) < delivery_receiver_id(b))
 	var missing: Dictionary = {}
-	for building in world.buildings.values():
-		var p: Vector2i = world.building_map.origin(building.id)
+	for p in positions:
 		var counts: Dictionary = {}
-		for item in delivery_requirements(p):
-			counts[item] = ceili(delivery_need(p, item) - 0.000001)
+		var recipe := delivery_requirements(p)
+		for item in recipe:
+			counts[item] = ceili(delivery_shortfall(p, item, recipe) - 0.000001)
 		missing[p] = counts
 	# Keep the same concrete requests until fulfilled; unbound requests contain no goods.
 	for task in world.delivery_tasks.duplicate():
-		if task.bound: continue
-		var counts: Dictionary = missing.get(task.target, {})
+		if task.bound or not missing.has(task.target): continue
+		var counts: Dictionary = missing[task.target]
 		if task.receiver_id != delivery_receiver_id(task.target) or counts.get(task.requested_item, 0) <= 0:
 			remove_delivery_task(task)
 		else:
@@ -2602,11 +2670,17 @@ func delivery_requirements(p: Vector2i, manual := false) -> Dictionary:
 	var b: Dictionary = world.building_state(p, "station")
 	if b.get("wage", WAGE_PER_HOUR) == 0: return {}
 	if b.kind == "market":
+		var supply: Dictionary = {}
+		for source in stock_locations():
+			if source == p: continue
+			var storage = world.storage_at(source)
+			if storage == null: continue
+			for item in storage.items:
+				if storage.items[item] > 0 and item in MARKET_GOODS:
+					supply[item] = supply.get(item, 0.0) + available_at(source, item)
 		var requested: Dictionary = {}
 		for item in MARKET_GOODS:
-			var available := 0.0
-			for source in stock_locations():
-				if source != p: available += available_at(source, item)
+			var available: float = supply.get(item, 0.0)
 			if available > 0:
 				requested[item] = mini(8, floori(stock_at(p, item) + incoming(p, item) + available))
 		return requested
@@ -2626,7 +2700,9 @@ func delivery_requirements(p: Vector2i, manual := false) -> Dictionary:
 	return {}
 
 func delivery_need(p: Vector2i, item, manual := false) -> float:
-	var recipe := delivery_requirements(p, manual)
+	return delivery_shortfall(p, item, delivery_requirements(p, manual))
+
+func delivery_shortfall(p: Vector2i, item, recipe: Dictionary) -> float:
 	var amount := float(recipe.get(item, 0))
 	if item is int and recipe.has(0):
 		amount = recipe[0]
@@ -2707,12 +2783,14 @@ func claim_delivery_tasks(w: Dictionary, plan: Dictionary) -> bool:
 			task.source = plan.source
 			task.item = items[i]
 			task.bound = true
+			supply_changed(task.target, false)
 			task.picked = mined_cargo
 			task.mined = mined_cargo
 			task.carried_ore = mined_cargo
 			if not mined_cargo:
 				var goods := take_goods(task.source, task.item, task.amount)
 				task.pollution = goods.pollution
+			world.register_delivery(task)
 	w.delivery_tasks = tasks.duplicate()
 	if w.employer == null: employ(w, target)
 	return true
@@ -2762,6 +2840,7 @@ func recover_cancelled_sites() -> void:
 				break
 		if not recovering:
 			world.remove_building(world.building_at(p, "site"))
+			supply_changed(p)
 			cache.invalidate_delivery()
 
 func simulate_growth(delta: float) -> void:
@@ -2792,13 +2871,26 @@ func drill_target(p: Vector2i, worker_id := -1):
 	return null
 
 func sync_mining_contracts() -> void:
-	for p in world.building_positions("station"):
-		if building_kind(p) != "drill": continue
+	if cache.mining_drills.is_empty(): return
+	for p in cache.mining_drills:
+		if building_kind(p) != "drill" or not world.has_building(p, "station"): continue
 		for y in range(-DRILL_RADIUS, DRILL_RADIUS + 1):
 			for x in range(-DRILL_RADIUS, DRILL_RADIUS + 1):
 				var cell: Vector2i = p + Vector2i(x, y)
-				if world.terrain.get(cell, 0) in [5, 6] and world.deposits.get(cell, 0) > 0 and not world.mining_contracts.has(cell):
-					world.mining_contracts[cell] = contract(ORES[world.terrain[cell]].hours)
+				if world.terrain.get(cell, 0) in [5, 6] and world.deposits.get(cell, 0) > 0:
+					ensure_mining_contract(cell)
+	cache.mining_drills.clear()
+
+func ensure_mining_contract(p: Vector2i) -> void:
+	if world.mining_contracts.has(p): return
+	var ore: int = world.terrain[p]
+	var task := contract(ORES[ore].hours)
+	world.mining_contracts[p] = task
+	world.smart_objects.register_deposit(p, task, ORES[ore].get("item", ore))
+
+func remove_mining_contract(p: Vector2i) -> void:
+	world.mining_contracts.erase(p)
+	world.smart_objects.unregister(StringName(SmartObjects.key("deposit", p)))
 
 func station_staffed(p: Vector2i) -> bool:
 	var owner := slot_owner("work", p)
@@ -3116,7 +3208,9 @@ func prepare_work(record: ActivityRecord) -> Dictionary:
 			if bench.kind == "research_bench":
 				bench.task.research = bench.research
 				bench.research_tasks[bench.research] = bench.task
+				research_supply_changed()
 			if slaughter: bench.task.slaughter = true
+			supply_changed(p)
 	if record.kind == "build": return world.building_state(record.target, "site")
 	if record.kind == "mine": return world.mining_contracts[record.target]
 	if building_kind(record.target) == "drill": return world.mining_contracts[record.data.job]
@@ -3173,9 +3267,7 @@ func complete_work(record: ActivityRecord, w: Dictionary) -> void:
 	match record.kind:
 		"harvest":
 			var resource: Dictionary = world.wild_resources[p]
-			var amount := mini(1, resource.stock)
-			resource.stock -= amount
-			resource.task = {}
+			var amount := world.harvest_wild_resource(p)
 			if w.is_empty(): add_stock(p, resource.item, amount)
 			else: w.items[resource.item] = w.items.get(resource.item, 0) + amount
 			record_resource_output(resource.item, amount)
@@ -3183,8 +3275,7 @@ func complete_work(record: ActivityRecord, w: Dictionary) -> void:
 			world_view.block_changed(p)
 		"mine":
 			complete_extraction(p, p, w)
-			world.mining_contracts.erase(p)
-			world.smart_objects.invalidate(SmartObjects.key("mine", p))
+			remove_mining_contract(p)
 		"build": complete_building(p)
 		"produce":
 			if not w.is_empty() and tool_work(building_kind(p)) and w.equipment.get("tools", 0) > 0:
@@ -3202,8 +3293,7 @@ func complete_work(record: ActivityRecord, w: Dictionary) -> void:
 				var task: Dictionary = world.mining_contracts[mineral]
 				complete_extraction(mineral, p, w)
 				if world.deposits[mineral] == 0:
-					world.mining_contracts.erase(mineral)
-					world.smart_objects.invalidate(SmartObjects.key("mine", mineral))
+					remove_mining_contract(mineral)
 				else:
 					task.clear()
 					task.merge(contract(ORES[world.terrain[mineral]].hours))
@@ -3232,6 +3322,7 @@ func complete_product(p: Vector2i, operator: Dictionary) -> void:
 		var project: String = bench.task.research
 		world.research_progress[project] = world.research_progress.get(project, 0) + 1
 		bench.research_tasks.erase(project)
+		research_supply_changed()
 		if Technology.completed(world.research_progress, project):
 			alerts.research_completed(self, project)
 	elif bench.kind == "printer":
@@ -3252,6 +3343,7 @@ func complete_product(p: Vector2i, operator: Dictionary) -> void:
 		record_resource_output(product_item(bench.kind), amount)
 		bench.harvest = false
 	bench.task = {}
+	supply_changed(p)
 
 func complete_building(p: Vector2i) -> void:
 	var building = world.building_at(p, "site")
@@ -3275,10 +3367,12 @@ func complete_building(p: Vector2i) -> void:
 		building.inventory.add(item, -task.materials[item])
 		record_resource_use(item, task.materials[item])
 	building.complete(settings)
+	world.refresh_interactions_at(p)
+	supply_changed(p)
+	if building.kind == "drill": cache.mining_drills[p] = true
 	if task.kind in WorldState.BLOCKING_KINDS:
 		cache.navigation.set_point_solid(p, true)
 	cache.invalidate_delivery()
-	world.smart_objects.invalidate(SmartObjects.key("build", p))
 
 func purchase(w: Dictionary, p: Vector2i, limit: int, item = null) -> void:
 	if not world.has_building(p, "station") or w.pos.distance_to(Vector2(p)) > 0.01:

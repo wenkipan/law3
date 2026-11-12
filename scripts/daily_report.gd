@@ -9,7 +9,7 @@ var days := OptionButton.new()
 var people := OptionButton.new()
 var summary := Label.new()
 var rows: Dictionary = {}
-var refresh_timer := 0.0
+var refresh_timer := Timer.new()
 
 func _ready() -> void:
 	title = "每日报告"
@@ -72,16 +72,19 @@ func _ready() -> void:
 		percent.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		row.add_child(percent)
 		rows[action] = [bar, duration, percent]
+	refresh_timer.wait_time = 0.25
+	refresh_timer.ignore_time_scale = true
+	refresh_timer.timeout.connect(refresh)
+	add_child(refresh_timer)
+	visibility_changed.connect(sync_refresh_timer)
+	sync_refresh_timer()
 	refresh()
 
-func _process(delta: float) -> void:
-	delta /= Engine.time_scale
-	if not visible:
-		return
-	refresh_timer += delta
-	if refresh_timer >= 0.25:
-		refresh_timer = 0.0
-		refresh()
+func sync_refresh_timer() -> void:
+	if visible:
+		refresh_timer.start()
+	else:
+		refresh_timer.stop()
 
 func refresh() -> void:
 	if is_instance_valid(resources):

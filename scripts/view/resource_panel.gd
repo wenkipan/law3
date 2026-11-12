@@ -13,10 +13,12 @@ var yesterday: Label
 var charts: Dictionary = {}
 var series: Dictionary = {}
 var selected_item = null
+var selection_group := ButtonGroup.new()
 var day_axis: Control
 var day_labels: Array[Label] = []
 
 func _ready() -> void:
+	selection_group.allow_unpress = true
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_theme_constant_override("separation", 8)
 	var header_margin := MarginContainer.new()
@@ -66,6 +68,7 @@ func _ready() -> void:
 		var button: Button = game.hud.make_button("", "", select_item.bind(item))
 		button.custom_minimum_size.y = 44
 		button.toggle_mode = true
+		button.button_group = selection_group
 		button.flat = true
 		list.add_child(button)
 		var row := HBoxContainer.new()
@@ -143,8 +146,11 @@ func select_item(item) -> void:
 func refresh() -> void:
 	update_day_axis()
 	var inventory: Dictionary = game.player_inventory()
+	if selected_item != null:
+		rows[selected_item][1].button_pressed = true
+	elif selection_group.get_pressed_button() != null:
+		selection_group.get_pressed_button().button_pressed = false
 	for item in rows:
-		rows[item][1].set_pressed_no_signal(is_same(selected_item, item))
 		rows[item][2].text = format_amount(inventory[item])
 		var points: Array[Vector2] = []
 		for sample in game.world.inventory_history:

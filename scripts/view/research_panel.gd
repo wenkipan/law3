@@ -30,13 +30,7 @@ func build(controller: Node, layout: CanvasLayer) -> void:
 	offset_top = 108
 	offset_right = -20
 	offset_bottom = -20
-	var frame := StyleBoxFlat.new()
-	frame.bg_color = Color("#202a2e")
-	frame.border_color = Color("#71887b")
-	frame.set_border_width_all(1)
-	frame.set_content_margin_all(16)
-	frame.set_corner_radius_all(3)
-	add_theme_stylebox_override("panel", frame)
+	theme_type_variation = "ResearchFrame"
 	for state in ["locked", "available", "active", "done"]:
 		for chosen in [false, true]:
 			var style := StyleBoxFlat.new()

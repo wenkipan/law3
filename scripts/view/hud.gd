@@ -1,14 +1,10 @@
 extends CanvasLayer
 
-const DayClock = preload("res://scripts/day_clock.gd")
 const DailyReport = preload("res://scripts/daily_report.gd")
 const BuildButton = preload("res://scripts/build_button.gd")
 const Art = preload("res://scripts/view/art.gd")
 const InspectorIcons = preload("res://scripts/view/inspector_icons.gd")
 const SaveStore = preload("res://scripts/persistence/save_store.gd")
-const AlertRail = preload("res://scripts/view/alert_rail.gd")
-const ResearchPanel = preload("res://scripts/view/research_panel.gd")
-const RateSelector = preload("res://scripts/view/rate_selector.gd")
 const BUILD_CATEGORIES := {
 	"food": {"name": "农业与食品", "icon": "wheat", "kinds": ["farm", "barn", "mill", "brewery", "grow_light"]},
 	"industry": {"name": "工业与装备", "icon": "tools", "kinds": ["mine", "drill", "smelter", "sawmill", "smithy", "weaver", "tailor", "bench", "workbench", "chemical_plant", "soapworks", "pharmacy"]},
@@ -20,66 +16,70 @@ const BUILD_CATEGORIES := {
 }
 
 var game: Node
-var market_controls: VBoxContainer
+@onready var market_controls: VBoxContainer = %MarketControls
 var market_inputs: Dictionary = {}
 var market_target = null
 var report_window: Window
-var day_clock: Control
-var pause_button: Button
+@onready var day_clock: Control = %DayClock
+@onready var pause_button: Button = %PauseButton
 var tool_buttons: Dictionary = {}
-var build_tray: PanelContainer
+var tool_group := ButtonGroup.new()
+@onready var build_tray: PanelContainer = %BuildTray
 var speed_buttons: Dictionary = {}
-var reset_dialog: ConfirmationDialog
+var speed_group := ButtonGroup.new()
+@onready var reset_dialog: ConfirmationDialog = %ResetDialog
 var font: Font
-var worker_attributes: VBoxContainer
+@onready var worker_attributes: VBoxContainer = %WorkerAttributes
 var worker_bars: Dictionary = {}
-var entity_panel: PanelContainer
-var entity_title: Label
-var entity_details: Label
+@onready var entity_panel: PanelContainer = %EntityPanel
+@onready var entity_title: Label = %EntityTitle
+@onready var entity_details: Label = %EntityDetails
 var category_buttons: Dictionary = {}
+var category_group := ButtonGroup.new()
 var selected_build_category := ""
-var inventory_icons: InspectorIcons
-var effect_icons: InspectorIcons
-var effect_separator: HSeparator
-var bed_assignment: OptionButton
-var production_controls: HBoxContainer
-var queue_count: Label
-var remove_order: Button
-var add_order: Button
-var move_drill: Button
-var slaughter: Button
-var pollution_button: Button
-var save_button: Button
-var load_button: Button
-var save_menu: Window
-var save_slots: ItemList
-var save_action: Button
-var backup_action: Button
-var save_hint: Label
-var save_status: Label
+@onready var inventory_icons: InspectorIcons = %InventoryIcons
+@onready var effect_icons: InspectorIcons = %EffectIcons
+@onready var effect_separator: HSeparator = %EffectSeparator
+@onready var bed_assignment: OptionButton = %BedAssignment
+@onready var production_controls: HBoxContainer = %ProductionControls
+@onready var queue_count: Label = %QueueCount
+@onready var remove_order: Button = %RemoveOrder
+@onready var add_order: Button = %AddOrder
+@onready var move_drill: Button = %MoveDrill
+@onready var slaughter: Button = %Slaughter
+@onready var pollution_button: Button = %PollutionButton
+@onready var save_button: Button = %SaveButton
+@onready var load_button: Button = %LoadButton
+@onready var save_menu: Window = %SaveMenu
+@onready var save_slots: ItemList = %SaveSlots
+@onready var save_action: Button = %SaveAction
+@onready var backup_action: Button = %BackupAction
+@onready var save_hint: Label = %SaveHint
+@onready var save_status: Label = %SaveStatus
 var save_directory := SaveStore.DIRECTORY
 var last_save_slot := -1
 var menu_saving := true
 var overwrite_pending := false
-var status_seconds := 0.0
-var alert_rail: ScrollContainer
-var alert_timer := 0.0
-var research_button: Button
-var research_panel: PanelContainer
-var research_choice: OptionButton
-var wage_controls: VBoxContainer
-var wage_caption: Label
-var fee_details: Label
-var fee_controls: VBoxContainer
-var fee_selector: HBoxContainer
-var fee_brush_controls: VBoxContainer
-var fee_brush_selector: HBoxContainer
+@onready var status_timer: Timer = $SaveStatusTimeout
+@onready var alert_rail: ScrollContainer = %AlertRail
+@onready var research_button: Button = %ResearchButton
+@onready var research_panel: PanelContainer = %ResearchPanel
+@onready var research_choice: OptionButton = %ResearchChoice
+@onready var wage_controls: VBoxContainer = %WageControls
+@onready var wage_caption: Label = %WageCaption
+@onready var fee_details: Label = %FeeDetails
+@onready var fee_controls: VBoxContainer = %FeeControls
+@onready var fee_selector: HBoxContainer = %FeeSelector
+@onready var fee_brush_controls: VBoxContainer = %FeeBrushControls
+@onready var fee_brush_selector: HBoxContainer = %FeeBrushSelector
 var fee_filters: Dictionary = {}
-var wage_selector: HBoxContainer
-var brush_controls: VBoxContainer
-var brush_selector: HBoxContainer
+var fee_filter_group := ButtonGroup.new()
+@onready var wage_selector: HBoxContainer = %WageSelector
+@onready var brush_controls: VBoxContainer = %BrushControls
+@onready var brush_selector: HBoxContainer = %BrushSelector
 var wage_filters: Dictionary = {}
-var action_panel_box: PanelContainer
+var wage_filter_group := ButtonGroup.new()
+@onready var action_panel_box: PanelContainer = %ActionPanelBox
 
 func blocks_simulation() -> bool:
 	return (is_instance_valid(reset_dialog) and reset_dialog.visible) or (is_instance_valid(save_menu) and save_menu.visible)
@@ -164,71 +164,11 @@ func finish_save(result: Dictionary, saving: bool, slot: int, backup := false) -
 		save_status.modulate = Color("#ed9c89")
 	save_status.tooltip_text = save_status.text
 	save_status.show()
-	status_seconds = 10.0 if not result.ok else 4.0
+	status_timer.start(10.0 if not result.ok else 4.0)
 
-func build_save_menu(root: Control) -> void:
-	save_menu = Window.new()
-	save_menu.hide()
-	save_menu.transient = true
-	save_menu.exclusive = true
-	save_menu.unresizable = true
-	save_menu.min_size = Vector2i(480, 400)
-	save_menu.close_requested.connect(save_menu.hide)
-	save_menu.window_input.connect(func(event: InputEvent):
-		if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
-			save_menu.hide()
-			save_menu.set_input_as_handled())
-	root.add_child(save_menu)
-	save_menu.visibility_changed.connect(game.apply_time_settings)
-	var margin := MarginContainer.new()
-	save_menu.add_child(margin)
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 20)
-	var content := VBoxContainer.new()
-	content.add_theme_constant_override("separation", 12)
-	margin.add_child(content)
-	save_slots = ItemList.new()
-	save_slots.add_theme_font_override("font", font)
-	save_slots.add_theme_font_size_override("font_size", 16)
-	save_slots.add_theme_constant_override("v_separation", 16)
-	save_slots.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	save_slots.item_selected.connect(func(_index: int): select_save_slot())
-	content.add_child(save_slots)
-	save_hint = make_label("", 14)
-	save_hint.custom_minimum_size.y = 44
-	save_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	content.add_child(save_hint)
-	var actions := HBoxContainer.new()
-	actions.add_theme_constant_override("separation", 12)
-	content.add_child(actions)
-	backup_action = make_button("读取上一版", "", use_save_slot.bind(true))
-	backup_action.focus_mode = Control.FOCUS_ALL
-	actions.add_child(backup_action)
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	actions.add_child(spacer)
-	var cancel := make_button("取消", "", save_menu.hide)
-	cancel.focus_mode = Control.FOCUS_ALL
-	actions.add_child(cancel)
-	save_action = make_button("保存", "", use_save_slot)
-	save_action.focus_mode = Control.FOCUS_ALL
-	save_action.custom_minimum_size.x = 124
-	save_action.expand_icon = true
-	save_action.add_theme_constant_override("icon_max_width", 22)
-	actions.add_child(save_action)
-
-func _process(delta: float) -> void:
-	delta /= Engine.time_scale
-	alert_timer += delta
-	if alert_timer >= 0.25 and is_instance_valid(alert_rail):
-		alert_timer = 0.0
-		game.alerts.refresh(game)
-		sync_alerts()
-	if status_seconds > 0:
-		status_seconds -= delta
-		if status_seconds <= 0: save_status.hide()
+func refresh_alerts() -> void:
+	game.alerts.refresh(game)
+	sync_alerts()
 
 func reset_screen() -> void:
 	if is_instance_valid(research_panel): research_panel.hide()
@@ -245,6 +185,7 @@ func open_report() -> void:
 	if not is_instance_valid(report_window):
 		report_window = DailyReport.new()
 		report_window.game = game
+		report_window.theme = %Screen.theme
 		add_child(report_window)
 	report_window.refresh()
 	report_window.popup_centered()
@@ -253,8 +194,10 @@ func sync_tool() -> void:
 	var value: String = game.interaction.tool
 	if value in game.BUILDING_KINDS and is_instance_valid(build_tray):
 		show_building_category(value)
-	for name_ in tool_buttons:
-		tool_buttons[name_].button_pressed = name_ == value
+	if tool_buttons.has(value):
+		tool_buttons[value].button_pressed = true
+	elif tool_group.get_pressed_button() != null:
+		tool_group.get_pressed_button().button_pressed = false
 	sync_wage_brush()
 	update_entity_panel()
 
@@ -265,14 +208,11 @@ func sync_wage_brush() -> void:
 	action_panel_box.offset_bottom = 380 if brush_controls.visible or fee_brush_controls.visible else 292
 	brush_selector.sync(game.interaction.brush_wage, "工资刷")
 	fee_brush_selector.sync(game.interaction.brush_fee, "收费刷", "货币")
-	for kind in wage_filters:
-		wage_filters[kind].set_pressed_no_signal(kind == game.interaction.wage_filter)
-	for kind in fee_filters:
-		fee_filters[kind].set_pressed_no_signal(kind == game.interaction.fee_filter)
+	wage_filters[game.interaction.wage_filter].button_pressed = true
+	fee_filters[game.interaction.fee_filter].button_pressed = true
 
 func sync_speed() -> void:
-	for n in speed_buttons:
-		speed_buttons[n].set_pressed_no_signal(n == game.interaction.speed)
+	speed_buttons[int(game.interaction.speed)].button_pressed = true
 
 func sync_pause() -> void:
 	pause_button.set_pressed_no_signal(game.interaction.paused_by_player)
@@ -308,8 +248,13 @@ func update_entity_panel() -> void:
 			for button in fee_selector.buttons.values():
 				button.tooltip_text += "\n当前售价  %s 货币" % String.num(game.sale_price(p, "meat" if kind == "barn" else null), 2)
 	var settings: Dictionary = game.selected_wage_settings()
-	wage_controls.visible = not settings.is_empty()
-	if wage_controls.visible:
+	var recruitment: Dictionary = game.recruitment_settings(p) if game.interaction.selected_worker < 0 and game.interaction.selected_tile == null else {}
+	wage_controls.visible = not settings.is_empty() or not recruitment.is_empty()
+	if not recruitment.is_empty():
+		wage_caption.text = "招募费用"
+		wage_selector.sync(recruitment.recruitment_cost, "居民到达时扣除木牌库存中的金币", "金币 / 人")
+		wage_selector.buttons[0].tooltip_text = "关闭招募"
+	elif not settings.is_empty():
 		wage_caption.text = "建造时薪" if game.world.has_building(p, "site") else ("挖掘时薪" if game.interaction.selected_tile != null else "时薪")
 		wage_selector.sync(settings.get("wage", game.WAGE_PER_HOUR), game.selected_wage_tooltip())
 	update_entity_icons()
@@ -481,7 +426,10 @@ func update_entity_panel() -> void:
 			elif kind == "canteen":
 				status = "用餐中" if game.world.workers.any(func(w): return game.worker_display(w).canteen == p) else "空闲"
 			elif kind == "recruitment_board":
-				status = "招工中"
+				if bench.recruitment_cost == 0:
+					status = "已关闭"
+				else:
+					status = "金币不足" if game.stock_at(p, "money") < bench.recruitment_cost else "招工中"
 			elif kind == "storage_box" or kind in game.BARRIER_KINDS:
 				status = ""
 			elif game.SERVICES.has(kind):
@@ -636,9 +584,7 @@ func update_entity_icons() -> void:
 func make_label(text_: String, size := 14) -> Label:
 	var node := Label.new()
 	node.text = text_
-	node.add_theme_font_override("font", font)
 	node.add_theme_font_size_override("font_size", size)
-	node.add_theme_color_override("font_color", Color("#d7dfd8"))
 	return node
 
 func make_button(text_: String, tooltip: String, action: Callable) -> Button:
@@ -647,47 +593,8 @@ func make_button(text_: String, tooltip: String, action: Callable) -> Button:
 	b.tooltip_text = tooltip
 	b.custom_minimum_size = Vector2(46, 36)
 	b.focus_mode = Control.FOCUS_NONE
-	b.add_theme_font_override("font", font)
 	b.pressed.connect(action)
 	return b
-
-func make_time_button(text_: String, tooltip: String, action: Callable) -> Button:
-	var button := make_button(text_, tooltip, action)
-	button.custom_minimum_size = Vector2(40, 36)
-	button.toggle_mode = true
-	button.add_theme_font_size_override("font_size", 16)
-	for state in ["normal", "hover", "pressed", "hover_pressed", "disabled", "focus"]:
-		button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
-	for property in ["font_color", "icon_normal_color"]:
-		button.add_theme_color_override(property, Color("#737b80"))
-	for property in ["font_pressed_color", "font_hover_pressed_color", "icon_pressed_color", "icon_hover_pressed_color"]:
-		button.add_theme_color_override(property, Color("#f1eddc"))
-	for property in ["font_hover_color", "icon_hover_color"]:
-		button.add_theme_color_override(property, Color("#bdc4c7"))
-	return button
-
-func panel(parent: Node, rect: Rect2, anchor_right := false, anchor_bottom := false) -> VBoxContainer:
-	var box := PanelContainer.new()
-	parent.add_child(box)
-	if anchor_right:
-		box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	if anchor_bottom:
-		box.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	box.offset_left = rect.position.x
-	box.offset_top = rect.position.y
-	box.offset_right = rect.end.x
-	box.offset_bottom = rect.end.y
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color("#202a2eee")
-	style.border_color = Color("#50605b")
-	style.set_border_width_all(1)
-	style.set_content_margin_all(16)
-	style.set_corner_radius_all(3)
-	box.add_theme_stylebox_override("panel", style)
-	var content := VBoxContainer.new()
-	content.add_theme_constant_override("separation", 12)
-	box.add_child(content)
-	return content
 
 func show_build_category(category: String) -> void:
 	selected_build_category = category
@@ -697,8 +604,7 @@ func show_build_category(category: String) -> void:
 	for index in kinds.size():
 		var button: Button = tool_buttons[kinds[index]]
 		button.get_parent().move_child(button, index)
-	for key in category_buttons:
-		category_buttons[key].set_pressed_no_signal(key == category)
+	category_buttons[category].button_pressed = true
 	build_tray.show()
 
 func show_building_category(kind: String) -> void:
@@ -710,8 +616,8 @@ func show_building_category(kind: String) -> void:
 func close_build_tray() -> void:
 	build_tray.hide()
 	selected_build_category = ""
-	for button in category_buttons.values():
-		button.set_pressed_no_signal(false)
+	if category_group.get_pressed_button() != null:
+		category_group.get_pressed_button().button_pressed = false
 	if game.interaction.tool in game.BUILDING_KINDS:
 		game.set_tool("dig")
 
@@ -725,224 +631,82 @@ func toggle_build_category(category: String) -> void:
 
 func build_ui(controller: Node) -> void:
 	game = controller
-	var system_font := SystemFont.new()
-	system_font.font_names = PackedStringArray(["Noto Sans CJK SC", "Microsoft YaHei", "sans-serif"])
-	font = system_font
-	var hud := self
-	var root := Control.new()
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hud.add_child(root)
-	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	day_clock = DayClock.new()
-	day_clock.clock_font = font
-	root.add_child(day_clock)
-	day_clock.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	day_clock.offset_left = -188
-	day_clock.offset_top = 16
-	day_clock.offset_right = -20
-	day_clock.offset_bottom = 176
-	day_clock.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var report_button := make_button("", "每日报告", game.open_report)
-	report_button.icon = game.icon_texture("res://assets/icons/report.svg")
-	report_button.expand_icon = true
-	report_button.add_theme_constant_override("icon_max_width", 26)
-	root.add_child(report_button)
-	report_button.position = Vector2(20, 34)
-	report_button.custom_minimum_size = Vector2(46, 42)
-	pollution_button = make_button("", "污染图层\n绿：0 · 黄：30 · 红：70及以上", func():
+	font = %Screen.get_theme_default_font()
+	category_group.allow_unpress = true
+	$AlertRefresh.timeout.connect(refresh_alerts)
+	status_timer.timeout.connect(save_status.hide)
+	%ReportButton.pressed.connect(game.open_report)
+	pollution_button.pressed.connect(func():
 		game.interaction.pollution_visible = not game.interaction.pollution_visible
 		game.world_view.sync_dynamic())
-	pollution_button.icon = Art.texture("res://assets/icons/pollution.svg")
-	pollution_button.expand_icon = true
-	pollution_button.add_theme_constant_override("icon_max_width", 26)
-	pollution_button.toggle_mode = true
-	root.add_child(pollution_button)
-	pollution_button.position = Vector2(74, 34)
-	pollution_button.custom_minimum_size = Vector2(46, 42)
-	for saving in [true, false]:
-		var button := make_button("", "保存矿区（F5 快速保存）" if saving else "读取矿区（F9 快速读取）", show_save_menu.bind(saving))
-		button.icon = Art.texture("res://assets/icons/save.svg" if saving else "res://assets/icons/load.svg")
-		button.expand_icon = true
-		button.add_theme_constant_override("icon_max_width", 26)
-		button.position = Vector2(128 if saving else 182, 34)
-		button.custom_minimum_size = Vector2(46, 42)
-		root.add_child(button)
-		if saving: save_button = button
-		else: load_button = button
-	research_button = make_button("", "科技", func():
+	save_button.pressed.connect(show_save_menu.bind(true))
+	load_button.pressed.connect(show_save_menu.bind(false))
+	research_button.pressed.connect(func():
 		if research_panel.visible: research_panel.hide()
 		else: research_panel.open())
-	research_button.icon = Art.texture("res://assets/icons/research.svg")
-	research_button.expand_icon = true
-	research_button.add_theme_constant_override("icon_max_width", 26)
-	research_button.position = Vector2(236, 34)
-	research_button.custom_minimum_size = Vector2(46, 42)
-	root.add_child(research_button)
-	save_status = make_label("", 12)
-	save_status.position = Vector2(20, 88)
-	save_status.size = Vector2(350, 48)
-	save_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	save_status.max_lines_visible = 2
-	save_status.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	save_status.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	save_status.hide()
-	root.add_child(save_status)
-	build_save_menu(root)
-	var action_panel := panel(root, Rect2(-336, 220, 316, 72), true)
-	action_panel_box = action_panel.get_parent()
-	var actions := HBoxContainer.new()
-	actions.add_theme_constant_override("separation", 6)
-	action_panel.add_child(actions)
-	var time_controls := HBoxContainer.new()
-	root.add_child(time_controls)
-	time_controls.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	time_controls.offset_left = -188
-	time_controls.offset_top = 180
-	time_controls.offset_right = -20
-	time_controls.offset_bottom = 216
-	time_controls.alignment = BoxContainer.ALIGNMENT_CENTER
-	time_controls.add_theme_constant_override("separation", 2)
-	time_controls.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for entry in [["dig", "pickaxe", "交互（G）"],
-		["cancel", "cancel", "取消（C）"], ["demolish", "demolish", "拆除（X）"], ["wage", "wage", "工资刷（P）"], ["fee", "fee", "收费刷（F）"]]:
-		var b := make_button("", entry[2], game.set_tool.bind(entry[0]))
-		b.toggle_mode = true
-		b.custom_minimum_size = Vector2(46, 40)
-		b.icon = game.icon_texture("res://assets/icons/%s.svg" % entry[1])
-		b.expand_icon = true
-		b.add_theme_constant_override("icon_max_width", 28)
-		actions.add_child(b)
-		tool_buttons[entry[0]] = b
-	brush_controls = VBoxContainer.new()
-	brush_controls.add_theme_constant_override("separation", 8)
-	action_panel.add_child(brush_controls)
-	brush_selector = RateSelector.new()
-	brush_controls.add_child(brush_selector)
-	brush_selector.build(font, game.set_brush_wage, true)
-	var filters := HBoxContainer.new()
-	filters.add_theme_constant_override("separation", 6)
-	brush_controls.add_child(filters)
+	pause_button.pressed.connect(game.toggle_pause)
+	tool_buttons = {"dig": %ToolDig, "cancel": %ToolCancel, "demolish": %ToolDemolish, "wage": %ToolWage, "fee": %ToolFee}
+	for tool in tool_buttons:
+		var button: Button = tool_buttons[tool]
+		button.button_group = tool_group
+		button.pressed.connect(game.set_tool.bind(tool))
+	speed_buttons = {1: %Speed1, 2: %Speed2, 4: %Speed4}
+	for value in speed_buttons:
+		var button: Button = speed_buttons[value]
+		button.button_group = speed_group
+		button.pressed.connect(game.set_speed.bind(value))
+	game.set_speed(1)
+	sync_pause()
+	brush_selector.build(game.set_brush_wage, true)
+	fee_brush_selector.build(game.set_brush_fee)
 	for entry in [["all", "blocks", "全部有薪任务"], ["mine", "pickaxe", "仅挖掘"], ["build", "tools", "仅施工"], ["station", "workbench", "仅岗位劳动"]]:
 		var button := make_button("", entry[2], game.set_wage_filter.bind(entry[0]))
 		button.toggle_mode = true
+		button.button_group = wage_filter_group
 		button.icon = Art.texture("res://assets/icons/%s.svg" % entry[1])
 		button.expand_icon = true
 		button.add_theme_constant_override("icon_max_width", 24)
-		filters.add_child(button)
+		%WageFilters.add_child(button)
 		wage_filters[entry[0]] = button
-	brush_controls.hide()
-	fee_brush_controls = VBoxContainer.new()
-	fee_brush_controls.add_theme_constant_override("separation", 8)
-	action_panel.add_child(fee_brush_controls)
-	fee_brush_selector = RateSelector.new()
-	fee_brush_controls.add_child(fee_brush_selector)
-	fee_brush_selector.build(font, game.set_brush_fee)
-	var price_filters := HBoxContainer.new()
-	price_filters.add_theme_constant_override("separation", 6)
-	fee_brush_controls.add_child(price_filters)
 	for entry in [["all", "blocks", "全部收费项目"], ["goods", "workbench", "仅商品售价"], ["bed", "bed", "仅床费"], ["service", "hospital", "仅服务费"]]:
 		var button := make_button("", entry[2], game.set_fee_filter.bind(entry[0]))
 		button.toggle_mode = true
+		button.button_group = fee_filter_group
 		button.icon = Art.texture("res://assets/icons/%s.svg" % entry[1])
 		button.expand_icon = true
 		button.add_theme_constant_override("icon_max_width", 24)
-		price_filters.add_child(button)
+		%FeeFilters.add_child(button)
 		fee_filters[entry[0]] = button
-	fee_brush_controls.hide()
-	pause_button = make_time_button("", "暂停（空格）", game.toggle_pause)
-	pause_button.icon = Art.texture("res://assets/icons/pause.svg")
-	pause_button.expand_icon = true
-	pause_button.add_theme_constant_override("icon_max_width", 20)
-	time_controls.add_child(pause_button)
-	for value in [1, 2, 4]:
-		var b := make_time_button("", "%d 倍速" % value, game.set_speed.bind(value))
-		b.icon = Art.texture("res://assets/icons/speed-%d.svg" % value)
-		b.expand_icon = true
-		b.add_theme_constant_override("icon_max_width", 26)
-		time_controls.add_child(b)
-		speed_buttons[value] = b
-	game.set_speed(1)
-	sync_pause()
-	var construction := panel(root, Rect2(20, -88, 416, 68), false, true)
-	var categories := HBoxContainer.new()
-	categories.add_theme_constant_override("separation", 8)
-	construction.add_child(categories)
 	for category in BUILD_CATEGORIES:
 		var definition: Dictionary = BUILD_CATEGORIES[category]
 		var button := make_button("", definition.name, toggle_build_category.bind(category))
-		button.icon = game.icon_texture("res://assets/icons/%s.svg" % definition.icon)
+		button.icon = Art.texture("res://assets/icons/%s.svg" % definition.icon)
 		button.expand_icon = true
 		button.add_theme_constant_override("icon_max_width", 28)
 		button.toggle_mode = true
+		button.button_group = category_group
 		button.custom_minimum_size = Vector2(48, 36)
-		categories.add_child(button)
+		%Categories.add_child(button)
 		category_buttons[category] = button
-	var choice_panel := panel(root, Rect2(20, -248, 344, 148), false, true)
-	build_tray = choice_panel.get_parent()
-	var choice_scroll := ScrollContainer.new()
-	choice_scroll.custom_minimum_size = Vector2(312, 116)
-	choice_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	choice_panel.add_child(choice_scroll)
-	var choices := GridContainer.new()
-	choices.columns = 4
-	choices.add_theme_constant_override("h_separation", 8)
-	choices.add_theme_constant_override("v_separation", 8)
-	choice_scroll.add_child(choices)
 	for kind in game.BUILDING_KINDS:
 		var button := BuildButton.new()
 		button.game = game
 		button.kind = kind
 		button.tooltip_text = game.building_name(kind)
 		button.focus_mode = Control.FOCUS_NONE
-		button.icon = game.icon_texture("res://assets/icons/%s.svg" % kind)
+		button.icon = Art.texture("res://assets/icons/%s.svg" % kind)
 		button.expand_icon = true
 		button.add_theme_constant_override("icon_max_width", 64)
 		button.add_theme_color_override("icon_disabled_color", Color(0.45, 0.45, 0.45, 0.55))
 		button.toggle_mode = true
+		button.button_group = tool_group
 		button.custom_minimum_size = Vector2(72, 54)
 		button.pressed.connect(game.set_tool.bind(kind))
 		button.hide()
-		choices.add_child(button)
+		%BuildingChoices.add_child(button)
 		tool_buttons[kind] = button
-	build_tray.hide()
-	var inspector := panel(root, Rect2(0, 0, 280, 330))
-	entity_panel = inspector.get_parent()
-	entity_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	entity_panel.offset_left = -300
-	entity_panel.offset_top = -350
-	entity_panel.offset_right = -20
-	entity_panel.offset_bottom = -20
-	var inspector_heading := HBoxContainer.new()
-	entity_title = make_label("", 20)
-	entity_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	inspector_heading.add_child(entity_title)
-	inspector_heading.add_child(make_button("×", "关闭属性（Esc）", game.clear_entity_selection))
-	inspector.add_child(inspector_heading)
-	inspector.add_child(HSeparator.new())
-	var detail_scroll := ScrollContainer.new()
-	detail_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	detail_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	inspector.add_child(detail_scroll)
-	var detail_content := VBoxContainer.new()
-	detail_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	detail_content.add_theme_constant_override("separation", 10)
-	detail_scroll.add_child(detail_content)
-	var inspector_frame := inspector
-	inspector = detail_content
-	wage_controls = VBoxContainer.new()
-	wage_controls.add_theme_constant_override("separation", 4)
-	wage_caption = make_label("时薪", 13)
-	wage_controls.add_child(wage_caption)
-	wage_selector = RateSelector.new()
-	wage_controls.add_child(wage_selector)
-	wage_selector.build(font, game.set_selected_wage, true)
-	wage_controls.hide()
-	entity_details = make_label("", 14)
-	entity_details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	inspector.add_child(entity_details)
-	market_controls = VBoxContainer.new()
-	market_controls.add_theme_constant_override("separation", 4)
-	inspector.add_child(market_controls)
+	wage_selector.build(game.set_selected_rate, true)
+	fee_selector.build(game.set_selected_fee)
 	for item in game.MARKET_GOODS:
 		var row := HBoxContainer.new()
 		var icon := TextureRect.new()
@@ -968,101 +732,34 @@ func build_ui(controller: Node) -> void:
 			inputs.append(price)
 		market_controls.add_child(row)
 		market_inputs[item] = inputs
-	inventory_icons = InspectorIcons.new()
-	inventory_icons.display_font = font
-	inventory_icons.hide()
-	inspector.add_child(inventory_icons)
-	inspector.move_child(inventory_icons, market_controls.get_index())
-	effect_separator = HSeparator.new()
-	effect_separator.hide()
-	inspector.add_child(effect_separator)
-	effect_icons = InspectorIcons.new()
-	effect_icons.display_font = font
 	effect_icons.show_quantities = false
-	effect_icons.hide()
-	inspector.add_child(effect_icons)
-	move_drill = make_button("", "移动矿钻", func(): game.begin_drill_move(game.interaction.selected_entity))
-	move_drill.icon = game.icon_texture("res://assets/icons/move.svg")
-	move_drill.expand_icon = true
-	move_drill.add_theme_constant_override("icon_max_width", 24)
-	inspector_frame.add_child(move_drill)
-	move_drill.hide()
-	slaughter = make_button("", "屠宰：完成当前产毛后执行，不自动补羊", func(): game.request_slaughter(game.interaction.selected_entity))
-	slaughter.icon = game.icon_texture("res://assets/icons/slaughter.svg")
-	slaughter.expand_icon = true
-	slaughter.add_theme_constant_override("icon_max_width", 24)
-	slaughter.hide()
-	bed_assignment = OptionButton.new()
-	bed_assignment.add_theme_font_override("font", font)
-	bed_assignment.add_item("自动安排", -1)
-	bed_assignment.tooltip_text = "指定床位；当前使用结束后生效"
+	%InspectorClose.pressed.connect(game.clear_entity_selection)
+	move_drill.pressed.connect(func(): game.begin_drill_move(game.interaction.selected_entity))
+	slaughter.pressed.connect(func(): game.request_slaughter(game.interaction.selected_entity))
+	remove_order.pressed.connect(func(): game.adjust_production(game.interaction.selected_entity, -1))
+	add_order.pressed.connect(func(): game.adjust_production(game.interaction.selected_entity, 1))
 	bed_assignment.item_selected.connect(func(index: int): game.assign_bed(game.interaction.selected_entity, bed_assignment.get_item_id(index) - 1))
-	inspector.add_child(bed_assignment)
-	bed_assignment.hide()
-	research_choice = OptionButton.new()
-	research_choice.add_theme_font_override("font", font)
-	research_choice.fit_to_longest_item = false
-	research_choice.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	research_choice.item_selected.connect(func(index: int):
 		game.assign_research(game.interaction.selected_entity, research_choice.get_item_metadata(index)))
-	inspector_frame.add_child(research_choice)
-	research_choice.hide()
-	production_controls = HBoxContainer.new()
-	production_controls.add_child(slaughter)
-	remove_order = make_button("−", "", func(): game.adjust_production(game.interaction.selected_entity, -1))
-	production_controls.add_child(remove_order)
-	queue_count = make_label("", 14)
-	queue_count.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	queue_count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	production_controls.add_child(queue_count)
-	add_order = make_button("+", "", func(): game.adjust_production(game.interaction.selected_entity, 1))
-	production_controls.add_child(add_order)
-	inspector_frame.add_child(production_controls)
-	production_controls.hide()
-	fee_details = make_label("", 14)
-	fee_details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	fee_controls = VBoxContainer.new()
-	fee_controls.add_theme_constant_override("separation", 4)
-	fee_controls.add_child(fee_details)
-	fee_selector = RateSelector.new()
-	fee_controls.add_child(fee_selector)
-	fee_selector.build(font, game.set_selected_fee)
-	fee_controls.hide()
-	inspector_frame.add_child(fee_controls)
-	inspector_frame.add_child(wage_controls)
-	worker_attributes = VBoxContainer.new()
-	worker_attributes.add_theme_constant_override("separation", 6)
-	inspector.add_child(worker_attributes)
-	for attribute in ["饥饿值", "疲劳", "污染", "心情", "动作进度"]:
-		var caption := make_label(attribute, 13)
-		var bar := ProgressBar.new()
-		bar.custom_minimum_size = Vector2(0, 8)
-		bar.show_percentage = false
-		if attribute == "心情":
-			caption.mouse_filter = Control.MOUSE_FILTER_PASS
-			bar.mouse_filter = Control.MOUSE_FILTER_PASS
-			bar.min_value = -game.WorkerMood.LIMIT
-			bar.max_value = game.WorkerMood.LIMIT
-		worker_attributes.add_child(caption)
-		worker_attributes.add_child(bar)
-		worker_bars[attribute] = [caption, bar]
-	worker_attributes.hide()
-	entity_panel.hide()
-	alert_rail = AlertRail.new()
-	alert_rail.game = game
-	root.add_child(alert_rail)
-	alert_rail.set_anchors_preset(Control.PRESET_CENTER_LEFT)
-	alert_rail.offset_left = 20
-	alert_rail.offset_right = 300
-	alert_rail.hide()
-	reset_dialog = ConfirmationDialog.new()
-	reset_dialog.dialog_text = "重新开始矿区？当前任务与交付记录将清空。"
-	reset_dialog.title = "重置矿区"
+	var captions := [%Attribute0, %Attribute2, %Attribute4, %Attribute6, %Attribute8]
+	var bars := [%Attribute1, %Attribute3, %Attribute5, %Attribute7, %Attribute9]
+	for index in captions.size():
+		worker_bars[captions[index].text] = [captions[index], bars[index]]
+	worker_bars["心情"][1].min_value = -game.WorkerMood.LIMIT
+	worker_bars["心情"][1].max_value = game.WorkerMood.LIMIT
+	save_menu.close_requested.connect(save_menu.hide)
+	save_menu.window_input.connect(func(event: InputEvent):
+		if event.is_action_pressed(&"game_cancel"):
+			save_menu.hide()
+			save_menu.set_input_as_handled())
+	save_menu.visibility_changed.connect(game.apply_time_settings)
+	save_slots.item_selected.connect(func(_index: int): select_save_slot())
+	backup_action.pressed.connect(use_save_slot.bind(true))
+	%SaveCancel.pressed.connect(save_menu.hide)
+	save_action.pressed.connect(use_save_slot)
 	reset_dialog.confirmed.connect(game.reset_world)
-	root.add_child(reset_dialog)
 	reset_dialog.visibility_changed.connect(game.apply_time_settings)
-	research_panel = ResearchPanel.new()
-	root.add_child(research_panel)
+	alert_rail.game = game
 	research_panel.build(game, self)
 	game.set_tool("dig")
 
@@ -1085,8 +782,6 @@ func update_ui() -> void:
 		tool_buttons[kind].visible = selected_build_category != "" and kind in BUILD_CATEGORIES[selected_build_category].kinds and game.is_building_unlocked(kind)
 	if is_instance_valid(research_panel) and research_panel.visible: research_panel.sync()
 	update_entity_panel()
-	game.alerts.refresh(game)
-	sync_alerts()
 	day_clock.set_time(game.world.day_elapsed, game.world.day, game.DAY_SECONDS)
 
 func sync_alerts() -> void:

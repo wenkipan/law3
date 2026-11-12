@@ -66,6 +66,8 @@ func create_building(kind: String, p: Vector2i, cells: Array[Vector2i], settings
 	if ground_items.has(p):
 		ground_items[p].transfer_to(building.inventory)
 		ground_items.erase(p)
+		smart_objects.unregister(StringName(SmartObjects.key("ground", p)))
+	refresh_interactions_at(p)
 	return building
 
 func remove_building(building) -> void:
@@ -74,8 +76,68 @@ func remove_building(building) -> void:
 	if not building.inventory.is_empty():
 		if not ground_items.has(p): ground_items[p] = Storage.new()
 		building.inventory.transfer_to(ground_items[p])
+	smart_objects.unregister(SmartObjects.building_id(building.id))
 	building_map.remove(building.id)
 	buildings.erase(building.id)
+	refresh_interactions_at(p)
+
+func move_building(building, target: Vector2i, cells: Array[Vector2i]) -> void:
+	var origin := building_map.origin(building.id)
+	building_map.place(building.id, target, cells)
+	refresh_interactions_at(target)
+	refresh_interactions_at(origin)
+
+func refresh_interactions_at(p: Vector2i) -> void:
+	# A power line may share an origin with the primary storage container.
+	var primary = building_at(p)
+	for id in building_map.at_origin(p):
+		smart_objects.register_building(buildings[id], p, is_same(buildings[id], primary))
+	if primary == null and ground_items.has(p):
+		smart_objects.register_ground(p, ground_items[p].items)
+	else:
+		smart_objects.unregister(StringName(SmartObjects.key("ground", p)))
+
+func add_wild_resource(p: Vector2i, resource: Dictionary) -> void:
+	wild_resources[p] = resource
+	smart_objects.register_resource(p, resource)
+
+func harvest_wild_resource(p: Vector2i) -> int:
+	var resource: Dictionary = wild_resources[p]
+	var amount := mini(1, resource.stock)
+	resource.stock -= amount
+	resource.task = {}
+	if resource.stock <= 0:
+		smart_objects.unregister(StringName(SmartObjects.key("resource", p)))
+	return amount
+
+func register_delivery(task: Dictionary) -> void:
+	var kind: String = building_state(task.target).get("kind", "")
+	var skill: String = "construction" if has_building(task.target, "site") else SmartObjects.Definitions.JOB_SKILLS.get(kind, "")
+	smart_objects.register_delivery(task, skill)
+
+func available_delivery_requests(filters: Dictionary) -> Array[Dictionary]:
+	var requests: Array[Dictionary] = []
+	for endpoint in smart_objects.query(SmartObjects.Action.DELIVERY, filters):
+		var task: Dictionary = endpoint.instance.source
+		if endpoint.available_to(-1) and not task.get("on_belt", false) and task.owner == -1:
+			requests.append(task)
+	return requests
+
+func rebuild_interactions(game) -> void:
+	smart_objects.configure(game)
+	smart_objects.begin_rebuild()
+	for building in buildings.values():
+		var p := building_map.origin(building.id)
+		smart_objects.register_building(building, p, is_same(building, building_at(p)))
+	for p in ground_items:
+		if not has_building(p): smart_objects.register_ground(p, ground_items[p].items)
+	for p in wild_resources:
+		if wild_resources[p].stock > 0: smart_objects.register_resource(p, wild_resources[p])
+	for p in mining_contracts:
+		var ore: int = terrain.get(p, 0)
+		smart_objects.register_deposit(p, mining_contracts[p], game.ORES[ore].get("item", ore))
+	for task in delivery_tasks: register_delivery(task)
+	smart_objects.finish_rebuild()
 
 func building_at(p, group := ""):
 	if not p is Vector2i: return null
@@ -109,7 +171,9 @@ func buildings_in(group := "") -> Array:
 func storage_at(p: Vector2i, create := false):
 	var building = building_at(p)
 	if building != null: return building.inventory
-	if create and not ground_items.has(p): ground_items[p] = Storage.new()
+	if create and not ground_items.has(p):
+		ground_items[p] = Storage.new()
+		smart_objects.register_ground(p, ground_items[p].items)
 	return ground_items.get(p)
 
 func storage_locations() -> Array:

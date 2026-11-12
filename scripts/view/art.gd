@@ -34,10 +34,9 @@ static func item_texture(item) -> Texture2D:
 
 static func texture(path: String) -> Texture2D:
 	if not textures.has(path):
-		var image := Image.new()
-		var error := image.load_svg_from_string(FileAccess.get_file_as_string(path))
-		assert(error == OK, "Cannot load art: " + path)
-		textures[path] = ImageTexture.create_from_image(image)
+		var resource := ResourceLoader.load(path, "Texture2D") as Texture2D
+		assert(resource != null, "Cannot load art: " + path)
+		textures[path] = resource
 	return textures[path]
 
 static func tile_set(path: String, columns: int) -> TileSet:

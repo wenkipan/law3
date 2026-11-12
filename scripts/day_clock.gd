@@ -1,7 +1,6 @@
 extends Control
 
 const Art = preload("res://scripts/view/art.gd")
-var clock_font: Font
 var segments: Array[TextureRect] = []
 var time_label := Label.new()
 var day_label := Label.new()
@@ -10,6 +9,7 @@ var last_day := -1
 var last_segment := -1
 
 func _ready() -> void:
+	var clock_font := get_theme_default_font()
 	for i in 12:
 		var segment := TextureRect.new()
 		segment.texture = Art.texture("res://assets/world/clock-segment.svg")

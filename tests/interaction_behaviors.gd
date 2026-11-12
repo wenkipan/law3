@@ -8,6 +8,7 @@ func run(t) -> void:
 	await check_blueprints(t)
 	await check_fog(t)
 	await check_player_construction(t)
+	await check_player_harvest_resume(t)
 	await check_player_batches(t)
 	await check_drag_recovery(t)
 	await check_player_operation(t)
@@ -32,7 +33,13 @@ func check_tactical_pause(t) -> void:
 	t.check(g.world.building_positions("site").size() == 3 and g.world.has_building(P + Vector2i(4, 0), "site"), "Paused toolbar drag places the full blueprint row even with no materials (placed %s)" % str(g.world.building_positions("site")))
 	t.near(g.player_inventory()[1], 0, "Planning an unfunded row does not create or charge physical materials")
 	await t.input.close_build_tray()
-	g.hud.show_save_menu(true)
+	# Closing the selected category must also exit placement, not leave a hidden tool active.
+	var empty_cell := P + Vector2i(0, 3)
+	await t.input.click_world(g.tile_center(empty_cell))
+	t.check(not g.world.has_building(empty_cell, "site") and g.interaction.selected_tile == empty_cell,
+		"Closing the selected building category restores ordinary ground selection while paused")
+	await t.input.click(g.hud.save_button.get_global_rect().get_center())
+	t.check(g.hud.save_menu.visible, "The authored save toolbar opens the modal planning window")
 	g.hud.save_menu.hide()
 	var paused_time: float = g.world.day_elapsed
 	await t.tree.create_timer(0.2, true, false, true).timeout
@@ -112,7 +119,27 @@ func check_player_construction(t) -> void:
 	t.near(g.resource_inventory().money, 600, "Player labor neither charges wages nor creates currency")
 	await t.input.click_world(g.tile_center(P))
 	t.check(g.interaction.selected_entity == P, "The manually completed building remains natively selectable")
+	await t.input.click(g.hud.wage_selector.buttons[3].get_global_rect().get_center())
 	await t.input.screenshot("/tmp/law3-input-player-build.png")
+	var funding_route: Array[Vector2i] = [g.BASE, P]
+	await t.input.drag_world(funding_route)
+	g.simulate(g.RECRUITMENT_HOURS * g.HOUR_SECONDS)
+	t.check(g.world.workers.size() == 1, "The funded board attracts one new resident")
+	t.near(g.stock_at(P, "money"), g.STARTING_MONEY - 3, "The shared rate selector sets the actual per-resident coin charge")
+
+func check_player_harvest_resume(t) -> void:
+	var g = t.game
+	t.fixtures.scenario("A wild resource remains usable across a partial harvest save, then yields only once")
+	var source := Vector2i(26, 11)
+	t.fixtures.wild(source, "berries")
+	await t.input.hold_world(g.tile_center(source), g.HOUR_SECONDS * 0.6)
+	t.near(g.stock_at(source, "berries"), 0, "Partial harvesting does not grant a portion")
+	var saved: Dictionary = g.capture_snapshot()
+	t.check(saved.ok and g.restore_snapshot(saved.data).ok, "The player can resume a saved partial harvest")
+	await t.input.hold_world(g.tile_center(source), g.HOUR_SECONDS * 0.6)
+	t.near(g.stock_at(source, "berries"), 1, "A second short hold completes the same harvest without restarting it")
+	await t.input.hold_world(g.tile_center(source), g.HOUR_SECONDS * 1.2)
+	t.near(g.resource_activity("berries", 1).produced, 1, "Trying again cannot collect a depleted resource twice")
 
 func check_player_batches(t) -> void:
 	var g = t.game
@@ -245,8 +272,18 @@ func check_selection_and_market(t) -> void:
 		await t.input.settle()
 	await t.input.click(g.hud.wage_selector.buttons[2].get_global_rect().get_center())
 	t.check(not g.hud.entity_details.text.contains("已关闭"), "A positive employment price reopens recruitment")
+	# A keyboard-selected brush must issue the same command as its toolbar equivalent.
+	await t.input.press_key(KEY_P)
+	await t.input.press_key(KEY_KP_3)
+	await t.input.click_world(g.tile_center(P + Vector2i(2, 0)) + Vector2(10, 16))
+	t.near(g.world.building_state(P, "station").wage, 3, "Mapped tool and keypad actions paint the actual building wage")
+	await t.input.press_key(KEY_G)
 	await t.input.press_key(KEY_ESCAPE)
 	t.check(not g.hud.entity_panel.visible, "Escape closes the selected inspector")
+	await t.input.click(g.hud.get_node("%ReportButton").get_global_rect().get_center())
+	t.check(is_instance_valid(g.hud.report_window) and g.hud.report_window.visible,
+		"The authored report toolbar opens the live daily report")
+	g.hud.report_window.hide()
 
 func check_blueprints(t) -> void:
 	var g = t.game

@@ -74,7 +74,7 @@ func deposit(p: Vector2i, ore := 2, remaining := 3) -> void:
 	game.cache.navigation.set_point_solid(p, false)
 
 func wild(p: Vector2i, item: String) -> void:
-	game.world.wild_resources[p] = game.wild_resource(item)
+	game.world.add_wild_resource(p, game.wild_resource(item))
 
 func bed(p: Vector2i) -> void:
 	game.create_building(p, "bed", {"remaining": 0.0, "assigned": -1})

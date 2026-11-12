@@ -1,0 +1,50 @@
+[gd_resource type="AnimationLibrary" load_steps=3 format=3]
+
+[sub_resource type="Animation" id="Breath"]
+resource_name = "breath"
+length = 3.0
+loop_mode = 1
+tracks/0/type = "value"
+tracks/0/path = NodePath("Bubble:scale")
+tracks/0/interp = 2
+tracks/0/keys = {
+"times": PackedFloat32Array(0, 1.5, 3),
+"transitions": PackedFloat32Array(1, 1, 1),
+"update": 0,
+"values": [Vector2(1, 1), Vector2(1.045, 1.045), Vector2(1, 1)]
+}
+tracks/1/type = "value"
+tracks/1/path = NodePath("Bubble:modulate:a")
+tracks/1/interp = 2
+tracks/1/keys = {
+"times": PackedFloat32Array(0, 1.5, 3),
+"transitions": PackedFloat32Array(1, 1, 1),
+"update": 0,
+"values": [0.92, 1.0, 0.92]
+}
+
+[sub_resource type="Animation" id="Cycle"]
+resource_name = "cycle"
+length = 3.0
+loop_mode = 1
+tracks/0/type = "value"
+tracks/0/path = NodePath("Bubble/Icon:scale:x")
+tracks/0/keys = {
+"times": PackedFloat32Array(0, 2.76, 2.88, 3),
+"transitions": PackedFloat32Array(1, 1, 1, 1),
+"update": 0,
+"values": [1.0, 1.0, 0.0, 1.0]
+}
+tracks/1/type = "method"
+tracks/1/path = NodePath(".")
+tracks/1/keys = {
+"times": PackedFloat32Array(2.88),
+"transitions": PackedFloat32Array(1),
+"values": [{"method": &"advance_item", "args": []}]
+}
+
+[resource]
+_data = {
+&"breath": SubResource("Breath"),
+&"cycle": SubResource("Cycle")
+}

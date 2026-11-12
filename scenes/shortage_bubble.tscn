@@ -1,0 +1,45 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/view/shortage_bubble.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/world/material-shortage.svg" id="2"]
+[ext_resource type="AnimationLibrary" path="res://assets/world/shortage-motion.tres" id="3"]
+
+[node name="ShortageBubble" type="Node2D"]
+visible = false
+script = ExtResource("1")
+
+[node name="Bubble" type="TextureRect" parent="."]
+offset_left = -16.0
+offset_top = -34.0
+offset_right = 16.0
+pivot_offset = Vector2(16, 34)
+mouse_filter = 2
+texture = ExtResource("2")
+expand_mode = 1
+
+[node name="Icon" type="TextureRect" parent="Bubble"]
+offset_left = 6.0
+offset_top = 4.0
+offset_right = 26.0
+offset_bottom = 24.0
+pivot_offset = Vector2(10, 10)
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Quantity" type="Label" parent="Bubble/Icon"]
+offset_left = 22.0
+offset_right = 44.0
+offset_bottom = 20.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.149, 0.2, 0.216, 1)
+theme_override_font_sizes/font_size = 14
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Breath" type="AnimationPlayer" parent="."]
+libraries = {&"": ExtResource("3")}
+
+[node name="Cycle" type="AnimationPlayer" parent="."]
+callback_mode_method = 1
+libraries = {&"": ExtResource("3")}

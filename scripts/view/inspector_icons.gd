@@ -1,6 +1,6 @@
 extends HFlowContainer
 
-var display_font: Font
+const UITheme = preload("res://assets/ui_theme.tres")
 var show_quantities := true
 var entries: Dictionary = {}
 
@@ -9,7 +9,6 @@ class IconEntry extends Control:
 	var quantity: Label
 	var description := ""
 	var tooltip_label: Label
-	var display_font: Font
 	var take_action := Callable()
 
 	func _gui_input(event: InputEvent) -> void:
@@ -17,8 +16,7 @@ class IconEntry extends Control:
 			take_action.call()
 			accept_event()
 
-	func configure(font: Font, with_quantity: bool) -> void:
-		display_font = font
+	func configure(with_quantity: bool) -> void:
 		custom_minimum_size = Vector2(72, 54) if with_quantity else Vector2(32, 32)
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		image = TextureRect.new()
@@ -34,9 +32,7 @@ class IconEntry extends Control:
 		quantity.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		quantity.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		quantity.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		quantity.add_theme_font_override("font", font)
 		quantity.add_theme_font_size_override("font_size", 14)
-		quantity.add_theme_color_override("font_color", Color("#d7dfd8"))
 		quantity.visible = with_quantity
 		add_child(quantity)
 
@@ -52,19 +48,12 @@ class IconEntry extends Control:
 
 	func _make_custom_tooltip(_for_text: String) -> Object:
 		var popup := PanelContainer.new()
-		var style := StyleBoxFlat.new()
-		style.bg_color = Color("#202a2e")
-		style.border_color = Color("#71887b")
-		style.set_border_width_all(1)
-		style.set_corner_radius_all(4)
-		style.set_content_margin_all(12)
-		popup.add_theme_stylebox_override("panel", style)
+		popup.theme = UITheme
+		popup.theme_type_variation = "InventoryTooltip"
 		tooltip_label = Label.new()
 		tooltip_label.custom_minimum_size.x = 224
 		tooltip_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		tooltip_label.add_theme_font_override("font", display_font)
 		tooltip_label.add_theme_font_size_override("font_size", 14)
-		tooltip_label.add_theme_color_override("font_color", Color("#d7dfd8"))
 		tooltip_label.text = description
 		popup.add_child(tooltip_label)
 		return popup
@@ -82,7 +71,7 @@ func sync(data: Array[Dictionary]) -> void:
 		visible_keys[key] = true
 		if not entries.has(key):
 			var node := IconEntry.new()
-			node.configure(display_font, show_quantities)
+			node.configure(show_quantities)
 			add_child(node)
 			entries[key] = node
 		var node: IconEntry = entries[key]

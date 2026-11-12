@@ -1,0 +1,720 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/view/hud.gd" id="1_084dp"]
+[ext_resource type="Theme" path="res://assets/ui_theme.tres" id="2_y2nlu"]
+[ext_resource type="Script" path="res://scripts/day_clock.gd" id="3_kp442"]
+[ext_resource type="Texture2D" path="res://assets/icons/report.svg" id="4_gltyx"]
+[ext_resource type="Texture2D" path="res://assets/icons/pollution.svg" id="5_mgfyp"]
+[ext_resource type="Texture2D" path="res://assets/icons/save.svg" id="6_ptr5m"]
+[ext_resource type="Texture2D" path="res://assets/icons/load.svg" id="7_of3ib"]
+[ext_resource type="Texture2D" path="res://assets/icons/research.svg" id="8_7600b"]
+[ext_resource type="Texture2D" path="res://assets/icons/pickaxe.svg" id="9_e558t"]
+[ext_resource type="Texture2D" path="res://assets/icons/cancel.svg" id="10_frrke"]
+[ext_resource type="Texture2D" path="res://assets/icons/demolish.svg" id="11_vh1iw"]
+[ext_resource type="Texture2D" path="res://assets/icons/wage.svg" id="12_fgtve"]
+[ext_resource type="Texture2D" path="res://assets/icons/fee.svg" id="13_03o4m"]
+[ext_resource type="Script" path="res://scripts/view/rate_selector.gd" id="14_dl6ww"]
+[ext_resource type="Texture2D" path="res://assets/icons/pause.svg" id="15_8f8xv"]
+[ext_resource type="Texture2D" path="res://assets/icons/speed-1.svg" id="16_v0qwq"]
+[ext_resource type="Texture2D" path="res://assets/icons/speed-2.svg" id="17_yawqa"]
+[ext_resource type="Texture2D" path="res://assets/icons/speed-4.svg" id="18_qccye"]
+[ext_resource type="Script" path="res://scripts/view/inspector_icons.gd" id="19_flipt"]
+[ext_resource type="Texture2D" path="res://assets/icons/move.svg" id="20_uorui"]
+[ext_resource type="Texture2D" path="res://assets/icons/slaughter.svg" id="21_wi3kw"]
+[ext_resource type="Script" path="res://scripts/view/alert_rail.gd" id="22_ka0sb"]
+[ext_resource type="Script" path="res://scripts/view/research_panel.gd" id="23_7r3ka"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_snea0"]
+
+[node name="UI" type="CanvasLayer" unique_id=1044347491]
+process_mode = 3
+layer = 10
+script = ExtResource("1_084dp")
+
+[node name="AlertRefresh" type="Timer" parent="." unique_id=1502069902]
+wait_time = 0.25
+autostart = true
+ignore_time_scale = true
+
+[node name="SaveStatusTimeout" type="Timer" parent="." unique_id=2135239200]
+one_shot = true
+ignore_time_scale = true
+
+[node name="Screen" type="Control" parent="." unique_id=61849883]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+theme = ExtResource("2_y2nlu")
+
+[node name="DayClock" type="Control" parent="Screen" unique_id=1342174326]
+unique_name_in_owner = true
+anchors_preset = 0
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -188.0
+offset_top = 16.0
+offset_right = -20.0
+offset_bottom = 176.0
+mouse_filter = 2
+script = ExtResource("3_kp442")
+
+[node name="ReportButton" type="Button" parent="Screen" unique_id=1951997122]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 42)
+layout_mode = 0
+offset_left = 20.0
+offset_top = 34.0
+offset_right = 66.0
+offset_bottom = 70.0
+tooltip_text = "每日报告"
+focus_mode = 0
+theme_override_constants/icon_max_width = 26
+icon = ExtResource("4_gltyx")
+expand_icon = true
+
+[node name="PollutionButton" type="Button" parent="Screen" unique_id=476608830]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 42)
+layout_mode = 0
+offset_left = 74.0
+offset_top = 34.0
+offset_right = 120.0
+offset_bottom = 70.0
+tooltip_text = "污染图层
+绿：0 · 黄：30 · 红：70及以上"
+focus_mode = 0
+theme_override_constants/icon_max_width = 26
+toggle_mode = true
+icon = ExtResource("5_mgfyp")
+expand_icon = true
+
+[node name="SaveButton" type="Button" parent="Screen" unique_id=988097177]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 42)
+layout_mode = 0
+offset_left = 128.0
+offset_top = 34.0
+offset_right = 128.0
+offset_bottom = 34.0
+tooltip_text = "保存矿区（F5 快速保存）"
+focus_mode = 0
+theme_override_constants/icon_max_width = 26
+icon = ExtResource("6_ptr5m")
+expand_icon = true
+
+[node name="LoadButton" type="Button" parent="Screen" unique_id=1530409576]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 42)
+layout_mode = 0
+offset_left = 182.0
+offset_top = 34.0
+offset_right = 182.0
+offset_bottom = 34.0
+tooltip_text = "读取矿区（F9 快速读取）"
+focus_mode = 0
+theme_override_constants/icon_max_width = 26
+icon = ExtResource("7_of3ib")
+expand_icon = true
+
+[node name="ResearchButton" type="Button" parent="Screen" unique_id=1566267955]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 42)
+layout_mode = 0
+offset_left = 236.0
+offset_top = 34.0
+offset_right = 236.0
+offset_bottom = 34.0
+tooltip_text = "科技"
+focus_mode = 0
+theme_override_constants/icon_max_width = 26
+icon = ExtResource("8_7600b")
+expand_icon = true
+
+[node name="SaveStatus" type="Label" parent="Screen" unique_id=525514052]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+offset_left = 20.0
+offset_top = 88.0
+offset_right = 370.0
+offset_bottom = 136.0
+theme_override_font_sizes/font_size = 12
+autowrap_mode = 3
+text_overrun_behavior = 3
+max_lines_visible = 2
+
+[node name="SaveMenu" type="Window" parent="Screen" unique_id=318469385]
+unique_name_in_owner = true
+size = Vector2i(480, 400)
+visible = false
+transient = true
+exclusive = true
+unresizable = true
+min_size = Vector2i(480, 400)
+
+[node name="MarginContainer0" type="MarginContainer" parent="Screen/SaveMenu" unique_id=141841689]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 20
+
+[node name="SaveContent" type="VBoxContainer" parent="Screen/SaveMenu/MarginContainer0" unique_id=1309788627]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="SaveSlots" type="ItemList" parent="Screen/SaveMenu/MarginContainer0/SaveContent" unique_id=1946442012]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/v_separation = 16
+theme_override_font_sizes/font_size = 16
+
+[node name="SaveHint" type="Label" parent="Screen/SaveMenu/MarginContainer0/SaveContent" unique_id=445192279]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+autowrap_mode = 3
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="Screen/SaveMenu/MarginContainer0/SaveContent" unique_id=431990624]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="BackupAction" type="Button" parent="Screen/SaveMenu/MarginContainer0/SaveContent/HBoxContainer2" unique_id=1683495484]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 36)
+layout_mode = 2
+text = "读取上一版"
+
+[node name="Control1" type="Control" parent="Screen/SaveMenu/MarginContainer0/SaveContent/HBoxContainer2" unique_id=378741879]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="SaveCancel" type="Button" parent="Screen/SaveMenu/MarginContainer0/SaveContent/HBoxContainer2" unique_id=1754352840]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 36)
+layout_mode = 2
+text = "取消"
+
+[node name="SaveAction" type="Button" parent="Screen/SaveMenu/MarginContainer0/SaveContent/HBoxContainer2" unique_id=753200909]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(124, 36)
+layout_mode = 2
+theme_override_constants/icon_max_width = 22
+text = "保存"
+expand_icon = true
+
+[node name="ActionPanelBox" type="PanelContainer" parent="Screen" unique_id=746945914]
+unique_name_in_owner = true
+layout_mode = 0
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -336.0
+offset_top = 220.0
+offset_right = -20.0
+offset_bottom = 292.0
+theme_type_variation = &"HudPanel"
+
+[node name="VBoxContainer0" type="VBoxContainer" parent="Screen/ActionPanelBox" unique_id=1301101405]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Tools" type="HBoxContainer" parent="Screen/ActionPanelBox/VBoxContainer0" unique_id=81438426]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="ToolDig" type="Button" parent="Screen/ActionPanelBox/VBoxContainer0/Tools" unique_id=1117927365]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 40)
+layout_mode = 2
+tooltip_text = "交互（G）"
+focus_mode = 0
+theme_override_constants/icon_max_width = 28
+toggle_mode = true
+icon = ExtResource("9_e558t")
+expand_icon = true
+
+[node name="ToolCancel" type="Button" parent="Screen/ActionPanelBox/VBoxContainer0/Tools" unique_id=2080820498]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 40)
+layout_mode = 2
+tooltip_text = "取消（C）"
+focus_mode = 0
+theme_override_constants/icon_max_width = 28
+toggle_mode = true
+icon = ExtResource("10_frrke")
+expand_icon = true
+
+[node name="ToolDemolish" type="Button" parent="Screen/ActionPanelBox/VBoxContainer0/Tools" unique_id=1250804154]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 40)
+layout_mode = 2
+tooltip_text = "拆除（X）"
+focus_mode = 0
+theme_override_constants/icon_max_width = 28
+toggle_mode = true
+icon = ExtResource("11_vh1iw")
+expand_icon = true
+
+[node name="ToolWage" type="Button" parent="Screen/ActionPanelBox/VBoxContainer0/Tools" unique_id=617775557]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 40)
+layout_mode = 2
+tooltip_text = "工资刷（P）"
+focus_mode = 0
+theme_override_constants/icon_max_width = 28
+toggle_mode = true
+icon = ExtResource("12_fgtve")
+expand_icon = true
+
+[node name="ToolFee" type="Button" parent="Screen/ActionPanelBox/VBoxContainer0/Tools" unique_id=1162078652]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 40)
+layout_mode = 2
+tooltip_text = "收费刷（F）"
+focus_mode = 0
+theme_override_constants/icon_max_width = 28
+toggle_mode = true
+icon = ExtResource("13_03o4m")
+expand_icon = true
+
+[node name="BrushControls" type="VBoxContainer" parent="Screen/ActionPanelBox/VBoxContainer0" unique_id=1863563168]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="BrushSelector" type="HBoxContainer" parent="Screen/ActionPanelBox/VBoxContainer0/BrushControls" unique_id=2013408814]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 2
+script = ExtResource("14_dl6ww")
+
+[node name="WageFilters" type="HBoxContainer" parent="Screen/ActionPanelBox/VBoxContainer0/BrushControls" unique_id=1764082652]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="FeeBrushControls" type="VBoxContainer" parent="Screen/ActionPanelBox/VBoxContainer0" unique_id=915676930]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="FeeBrushSelector" type="HBoxContainer" parent="Screen/ActionPanelBox/VBoxContainer0/FeeBrushControls" unique_id=190340663]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 2
+script = ExtResource("14_dl6ww")
+
+[node name="FeeFilters" type="HBoxContainer" parent="Screen/ActionPanelBox/VBoxContainer0/FeeBrushControls" unique_id=197087122]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="TimeControls" type="HBoxContainer" parent="Screen" unique_id=546727970]
+unique_name_in_owner = true
+layout_mode = 0
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -188.0
+offset_top = 180.0
+offset_right = -20.0
+offset_bottom = 216.0
+mouse_filter = 2
+theme_override_constants/separation = 2
+alignment = 1
+
+[node name="PauseButton" type="Button" parent="Screen/TimeControls" unique_id=397115924]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(40, 36)
+layout_mode = 2
+tooltip_text = "暂停（空格）"
+focus_mode = 0
+theme_type_variation = &"TimeButton"
+theme_override_constants/icon_max_width = 20
+toggle_mode = true
+icon = ExtResource("15_8f8xv")
+expand_icon = true
+
+[node name="Speed1" type="Button" parent="Screen/TimeControls" unique_id=205060288]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(40, 36)
+layout_mode = 2
+tooltip_text = "1 倍速"
+focus_mode = 0
+theme_type_variation = &"TimeButton"
+theme_override_constants/icon_max_width = 26
+toggle_mode = true
+icon = ExtResource("16_v0qwq")
+expand_icon = true
+
+[node name="Speed2" type="Button" parent="Screen/TimeControls" unique_id=440639001]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(40, 36)
+layout_mode = 2
+tooltip_text = "2 倍速"
+focus_mode = 0
+theme_type_variation = &"TimeButton"
+theme_override_constants/icon_max_width = 26
+toggle_mode = true
+icon = ExtResource("17_yawqa")
+expand_icon = true
+
+[node name="Speed4" type="Button" parent="Screen/TimeControls" unique_id=44000056]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(40, 36)
+layout_mode = 2
+tooltip_text = "4 倍速"
+focus_mode = 0
+theme_type_variation = &"TimeButton"
+theme_override_constants/icon_max_width = 26
+toggle_mode = true
+icon = ExtResource("18_qccye")
+expand_icon = true
+
+[node name="Construction" type="PanelContainer" parent="Screen" unique_id=222163452]
+unique_name_in_owner = true
+layout_mode = 0
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = -88.0
+offset_right = 436.0
+offset_bottom = -20.0
+theme_type_variation = &"HudPanel"
+
+[node name="VBoxContainer0" type="VBoxContainer" parent="Screen/Construction" unique_id=1029003169]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Categories" type="HBoxContainer" parent="Screen/Construction/VBoxContainer0" unique_id=1504336564]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="BuildTray" type="PanelContainer" parent="Screen" unique_id=159871124]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = -248.0
+offset_right = 364.0
+offset_bottom = -100.0
+theme_type_variation = &"HudPanel"
+
+[node name="VBoxContainer0" type="VBoxContainer" parent="Screen/BuildTray" unique_id=1871670280]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="ScrollContainer0" type="ScrollContainer" parent="Screen/BuildTray/VBoxContainer0" unique_id=1321085124]
+custom_minimum_size = Vector2(312, 116)
+layout_mode = 2
+horizontal_scroll_mode = 0
+
+[node name="BuildingChoices" type="GridContainer" parent="Screen/BuildTray/VBoxContainer0/ScrollContainer0" unique_id=2004385503]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
+columns = 4
+
+[node name="EntityPanel" type="PanelContainer" parent="Screen" unique_id=1316118069]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -300.0
+offset_top = -350.0
+offset_right = -20.0
+offset_bottom = -20.0
+theme_type_variation = &"HudPanel"
+
+[node name="VBoxContainer0" type="VBoxContainer" parent="Screen/EntityPanel" unique_id=1151801934]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="HBoxContainer0" type="HBoxContainer" parent="Screen/EntityPanel/VBoxContainer0" unique_id=326332417]
+layout_mode = 2
+
+[node name="EntityTitle" type="Label" parent="Screen/EntityPanel/VBoxContainer0/HBoxContainer0" unique_id=2119816587]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 20
+
+[node name="InspectorClose" type="Button" parent="Screen/EntityPanel/VBoxContainer0/HBoxContainer0" unique_id=569196901]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 36)
+layout_mode = 2
+tooltip_text = "关闭属性（Esc）"
+focus_mode = 0
+text = "×"
+
+[node name="HSeparator1" type="HSeparator" parent="Screen/EntityPanel/VBoxContainer0" unique_id=1611476531]
+layout_mode = 2
+
+[node name="ScrollContainer2" type="ScrollContainer" parent="Screen/EntityPanel/VBoxContainer0" unique_id=718904600]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="InspectorDetails" type="VBoxContainer" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2" unique_id=302956782]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 10
+
+[node name="EntityDetails" type="Label" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails" unique_id=126927802]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+autowrap_mode = 3
+
+[node name="InventoryIcons" type="HFlowContainer" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails" unique_id=2070124650]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
+script = ExtResource("19_flipt")
+
+[node name="MarketControls" type="VBoxContainer" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails" unique_id=133682256]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="EffectSeparator" type="HSeparator" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails" unique_id=1018027371]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+
+[node name="EffectIcons" type="HFlowContainer" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails" unique_id=1353221984]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
+script = ExtResource("19_flipt")
+
+[node name="BedAssignment" type="OptionButton" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails" unique_id=1533687583]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+tooltip_text = "指定床位；当前使用结束后生效"
+selected = 0
+item_count = 1
+popup/item_0/text = "自动安排"
+popup/item_0/id = 0
+
+[node name="WorkerAttributes" type="VBoxContainer" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails" unique_id=224914373]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Attribute0" type="Label" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails/WorkerAttributes" unique_id=408543710]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "饥饿值"
+
+[node name="Attribute1" type="ProgressBar" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails/WorkerAttributes" unique_id=185542070]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 8)
+layout_mode = 2
+show_percentage = false
+
+[node name="Attribute2" type="Label" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails/WorkerAttributes" unique_id=1025343682]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "疲劳"
+
+[node name="Attribute3" type="ProgressBar" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails/WorkerAttributes" unique_id=1478289502]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 8)
+layout_mode = 2
+show_percentage = false
+
+[node name="Attribute4" type="Label" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails/WorkerAttributes" unique_id=849752640]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "污染"
+
+[node name="Attribute5" type="ProgressBar" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails/WorkerAttributes" unique_id=1806401669]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 8)
+layout_mode = 2
+show_percentage = false
+
+[node name="Attribute6" type="Label" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails/WorkerAttributes" unique_id=56273851]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 1
+theme_override_font_sizes/font_size = 13
+text = "心情"
+
+[node name="Attribute7" type="ProgressBar" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails/WorkerAttributes" unique_id=588825823]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 8)
+layout_mode = 2
+mouse_filter = 1
+min_value = -100.0
+show_percentage = false
+
+[node name="Attribute8" type="Label" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails/WorkerAttributes" unique_id=985459170]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "动作进度"
+
+[node name="Attribute9" type="ProgressBar" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails/WorkerAttributes" unique_id=894690683]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 8)
+layout_mode = 2
+show_percentage = false
+
+[node name="MoveDrill" type="Button" parent="Screen/EntityPanel/VBoxContainer0" unique_id=1185739166]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(46, 36)
+layout_mode = 2
+tooltip_text = "移动矿钻"
+focus_mode = 0
+theme_override_constants/icon_max_width = 24
+icon = ExtResource("20_uorui")
+expand_icon = true
+
+[node name="ResearchChoice" type="OptionButton" parent="Screen/EntityPanel/VBoxContainer0" unique_id=162850138]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+fit_to_longest_item = false
+
+[node name="ProductionControls" type="HBoxContainer" parent="Screen/EntityPanel/VBoxContainer0" unique_id=1159955842]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+
+[node name="Slaughter" type="Button" parent="Screen/EntityPanel/VBoxContainer0/ProductionControls" unique_id=1183984218]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(46, 36)
+layout_mode = 2
+tooltip_text = "屠宰：完成当前产毛后执行，不自动补羊"
+focus_mode = 0
+theme_override_constants/icon_max_width = 24
+icon = ExtResource("21_wi3kw")
+expand_icon = true
+
+[node name="RemoveOrder" type="Button" parent="Screen/EntityPanel/VBoxContainer0/ProductionControls" unique_id=1865805457]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 36)
+layout_mode = 2
+focus_mode = 0
+text = "−"
+
+[node name="QueueCount" type="Label" parent="Screen/EntityPanel/VBoxContainer0/ProductionControls" unique_id=1171222927]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 14
+horizontal_alignment = 1
+
+[node name="AddOrder" type="Button" parent="Screen/EntityPanel/VBoxContainer0/ProductionControls" unique_id=2075918211]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 36)
+layout_mode = 2
+focus_mode = 0
+text = "+"
+
+[node name="FeeControls" type="VBoxContainer" parent="Screen/EntityPanel/VBoxContainer0" unique_id=967198751]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="FeeDetails" type="Label" parent="Screen/EntityPanel/VBoxContainer0/FeeControls" unique_id=2060529048]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+autowrap_mode = 3
+
+[node name="FeeSelector" type="HBoxContainer" parent="Screen/EntityPanel/VBoxContainer0/FeeControls" unique_id=23009183]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 2
+script = ExtResource("14_dl6ww")
+
+[node name="WageControls" type="VBoxContainer" parent="Screen/EntityPanel/VBoxContainer0" unique_id=2027301745]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="WageCaption" type="Label" parent="Screen/EntityPanel/VBoxContainer0/WageControls" unique_id=109390146]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "时薪"
+
+[node name="WageSelector" type="HBoxContainer" parent="Screen/EntityPanel/VBoxContainer0/WageControls" unique_id=250920889]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 2
+script = ExtResource("14_dl6ww")
+
+[node name="AlertRail" type="ScrollContainer" parent="Screen" unique_id=959779893]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+anchor_top = 0.5
+anchor_bottom = 0.5
+offset_left = 20.0
+offset_top = -450.0
+offset_right = 300.0
+offset_bottom = -450.0
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxEmpty_snea0")
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 3
+script = ExtResource("22_ka0sb")
+
+[node name="ResetDialog" type="ConfirmationDialog" parent="Screen" unique_id=374692098]
+unique_name_in_owner = true
+title = "重置矿区"
+dialog_text = "重新开始矿区？当前任务与交付记录将清空。"
+
+[node name="ResearchPanel" type="PanelContainer" parent="Screen" unique_id=441689318]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = 108.0
+offset_right = -20.0
+offset_bottom = -20.0
+theme_type_variation = &"ResearchFrame"
+script = ExtResource("23_7r3ka")

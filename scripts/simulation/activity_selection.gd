@@ -217,7 +217,7 @@ static func delivery_options(c, e, choices: Array) -> void:
 		add_delivery(c, e, choices, w.delivery_tasks[0].source, w.delivery_tasks,
 			w.delivery_tasks.map(func(task): return task.item), w.delivery_tasks[0].get("mined", false))
 		return
-	var requests: Array = g.world.smart_objects.delivery_requests({"skill": w.skill} if w.employer == null else {})
+	var requests: Array = g.world.available_delivery_requests({"skill": w.skill} if w.employer == null else {})
 	if not is_same(w.carry, 0):
 		var count: int = choices.size()
 		held_deliveries(c, e, choices, requests)
