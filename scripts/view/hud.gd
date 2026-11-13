@@ -6,7 +6,7 @@ const Art = preload("res://scripts/view/art.gd")
 const InspectorIcons = preload("res://scripts/view/inspector_icons.gd")
 const SaveStore = preload("res://scripts/persistence/save_store.gd")
 const BUILD_CATEGORIES := {
-	"food": {"name": "农业与食品", "icon": "wheat", "kinds": ["farm", "barn", "mill", "brewery", "grow_light"]},
+	"food": {"name": "农业与食品", "icon": "wheat", "kinds": ["farm", "hunting_ground", "gathering_garden", "barn", "mill", "brewery", "grow_light"]},
 	"industry": {"name": "工业与装备", "icon": "tools", "kinds": ["mine", "drill", "smelter", "sawmill", "smithy", "weaver", "tailor", "bench", "workbench", "chemical_plant", "soapworks", "pharmacy"]},
 	"water": {"name": "水务", "icon": "water", "kinds": ["pump", "purifier"]},
 	"power": {"name": "电力", "icon": "electricity", "kinds": ["manual_generator", "power_plant", "low_line", "high_line", "transformer"]},
@@ -46,7 +46,6 @@ var selected_build_category := ""
 @onready var remove_order: Button = %RemoveOrder
 @onready var add_order: Button = %AddOrder
 @onready var move_drill: Button = %MoveDrill
-@onready var slaughter: Button = %Slaughter
 @onready var pollution_button: Button = %PollutionButton
 @onready var save_button: Button = %SaveButton
 @onready var load_button: Button = %LoadButton
@@ -242,11 +241,11 @@ func update_entity_panel() -> void:
 	fee_selector.visible = fee_controls.visible and not game.fee_settings(p).is_empty()
 	if fee_selector.visible:
 		var kind: String = game.building_kind(p)
-		fee_details.text = {"bed": "床费", "service": "服务费", "goods": "肉售价" if kind == "barn" else "售价"}[game.fee_kind(kind)]
+		fee_details.text = {"bed": "床费", "service": "服务费", "goods": "售价"}[game.fee_kind(kind)]
 		fee_selector.sync(game.base_fee(p), "商品到店、床位到达、服务完成时按当时价格结算", game.fee_unit(kind))
-		if game.fee_kind(kind) == "goods" and not is_equal_approx(game.base_fee(p), game.sale_price(p, "meat" if kind == "barn" else null)):
+		if game.fee_kind(kind) == "goods" and not is_equal_approx(game.base_fee(p), game.sale_price(p)):
 			for button in fee_selector.buttons.values():
-				button.tooltip_text += "\n当前售价  %s 货币" % String.num(game.sale_price(p, "meat" if kind == "barn" else null), 2)
+				button.tooltip_text += "\n当前售价  %s 货币" % String.num(game.sale_price(p), 2)
 	var settings: Dictionary = game.selected_wage_settings()
 	var recruitment: Dictionary = game.recruitment_settings(p) if game.interaction.selected_worker < 0 and game.interaction.selected_tile == null else {}
 	wage_controls.visible = not settings.is_empty() or not recruitment.is_empty()
@@ -259,9 +258,6 @@ func update_entity_panel() -> void:
 		wage_selector.sync(settings.get("wage", game.WAGE_PER_HOUR), game.selected_wage_tooltip())
 	update_entity_icons()
 	entity_details.visible = true
-	slaughter.visible = game.interaction.selected_worker < 0 and game.world.has_building(p, "station") and game.building_kind(p) == "barn"
-	if slaughter.visible:
-		slaughter.disabled = game.world.building_state(p, "station").sheep <= 0 or game.world.building_state(p, "station").slaughter
 	move_drill.visible = game.interaction.selected_worker < 0 and game.world.has_building(p, "station") and game.building_kind(p) == "drill"
 	production_controls.visible = game.interaction.selected_worker < 0 and game.world.has_building(p, "station") and game.PRODUCTS.has(game.building_kind(p))
 	research_choice.visible = game.interaction.selected_worker < 0 and game.world.has_building(p, "station") and game.building_kind(p) == "research_bench"
@@ -444,7 +440,7 @@ func update_entity_panel() -> void:
 		var status := "空闲"
 		if game.uses_daily_output(kind) and bench.task.is_empty() and not game.has_production_order(p):
 			status = "已停产" if bench.daily_output == 0 else "今日已完成"
-		if game.has_production_order(p) and bench.task.is_empty() and not (kind == "barn" and bench.slaughter) and not game.recipe_ready(p, game.production_materials(kind)):
+		if game.has_production_order(p) and bench.task.is_empty() and bench.growth <= 0 and not game.recipe_ready(p, game.production_materials(kind)):
 			var missing: Array[String] = []
 			for item in game.production_materials(kind):
 				if is_same(item, 0):
@@ -460,21 +456,21 @@ func update_entity_panel() -> void:
 				status = "生长中  %.1fh" % (bench.growth / game.HOUR_SECONDS)
 			elif not bench.task.is_empty():
 				status = ("收割 · " if bench.harvest else "浇水 · ") + status
-		if kind == "barn":
-			if bench.growth > 0: status += "\n产毛中 %.1fh" % (bench.growth / game.HOUR_SECONDS)
-			if bench.slaughter: status += "\n待屠宰" if not bench.task.get("slaughter", false) else "\n屠宰中"
+		if kind == "barn" and bench.growth > 0:
+			status = "产毛中 %.1fh" % (bench.growth / game.HOUR_SECONDS)
+		if product.has("recovery_hours") and bench.growth > 0:
+			status = "%s中  %.1fh" % [product.recovery_name, bench.growth / game.HOUR_SECONDS]
 		entity_details.text = status + "\n\n" + game.product_recipe_text(kind, p)
 		var effects: String = game.product_effects_text(kind, p, false)
 		if effects != "":
 			entity_details.text += "\n\n" + effects
+		add_order.disabled = false
 		if game.uses_daily_output(kind):
-			add_order.disabled = kind == "barn" and (bench.sheep <= 0 or bench.slaughter)
 			queue_count.text = "每日产出 %d%s" % [bench.daily_output, product.unit]
 			remove_order.disabled = bench.daily_output == 0
 			remove_order.tooltip_text = "每日产出 −%d%s" % [product.get("amount", 1), product.unit]
 			add_order.tooltip_text = "每日产出 +%d%s" % [product.get("amount", 1), product.unit]
 		else:
-			add_order.disabled = false
 			queue_count.text = "待制  %d" % bench.queue
 			remove_order.disabled = bench.queue <= (0 if bench.task.is_empty() else 1)
 			remove_order.tooltip_text = "减少一%s%s" % [product.unit, product.name]
@@ -566,10 +562,6 @@ func update_entity_icons() -> void:
 				var carrier: Dictionary = game.world.worker(cargo.worker)
 				add_held_item(contents, notes, cargo.delivery.item, cargo.delivery.amount, "搬运" + (" · " + carrier.name if not carrier.is_empty() else ""))
 			items = inventory_entries(contents, notes)
-			if game.world.has_building(p, "station") and game.building_kind(p) == "barn":
-				var sheep: int = game.world.building_state(p, "station").sheep
-				items.append({"id": "sheep", "name": "羊", "texture": Art.texture("res://assets/icons/sheep.svg"),
-					"quantity": str(sheep), "description": "羊\n数量 %d" % sheep})
 	elif game.interaction.selected_tile != null:
 		p = game.interaction.selected_tile
 		items = inventory_entries(game.storage_contents(p), {})
@@ -735,7 +727,6 @@ func build_ui(controller: Node) -> void:
 	effect_icons.show_quantities = false
 	%InspectorClose.pressed.connect(game.clear_entity_selection)
 	move_drill.pressed.connect(func(): game.begin_drill_move(game.interaction.selected_entity))
-	slaughter.pressed.connect(func(): game.request_slaughter(game.interaction.selected_entity))
 	remove_order.pressed.connect(func(): game.adjust_production(game.interaction.selected_entity, -1))
 	add_order.pressed.connect(func(): game.adjust_production(game.interaction.selected_entity, 1))
 	bed_assignment.item_selected.connect(func(index: int): game.assign_bed(game.interaction.selected_entity, bed_assignment.get_item_id(index) - 1))

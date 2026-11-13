@@ -8,6 +8,12 @@ const Pollution = preload("res://scripts/simulation/pollution.gd")
 var generator: RefCounted
 var navigation := WorldNavigation.new()
 var visible_tiles: Dictionary = {}
+var sight_origins: Dictionary = {}
+var sight_coverage: Dictionary = {}
+var sight_offsets: Array[Vector2i] = []
+var sight_ready := false
+var sight_buildings: Dictionary = {}
+var sight_building_revision := -1
 var powered_devices: Dictionary = {}
 var ready_drills: Dictionary = {}
 var power_output: Dictionary = {}
@@ -28,8 +34,10 @@ func reset(seed_value: int, starting_area: Rect2i) -> void:
 	generator = MapGenerator.new(seed_value, starting_area)
 	navigation.clear()
 	for collection in [visible_tiles, powered_devices, ready_drills, power_output,
-			power_graph, power_nodes]:
+			power_graph, power_nodes, sight_origins, sight_coverage, sight_buildings]:
 		collection.clear()
+	sight_ready = false
+	sight_building_revision = -1
 	power_signature = 0
 	pollution.clear()
 	invalidate_delivery()
@@ -40,6 +48,38 @@ func reset(seed_value: int, starting_area: Rect2i) -> void:
 	supply_receivers.clear()
 	market_supply_changed = false
 	mining_drills.clear()
+
+func update_sight(origins: Dictionary, radius: int, terrain: Dictionary) -> Dictionary:
+	if sight_ready and origins == sight_origins: return {}
+	if sight_offsets.is_empty():
+		for y in range(-radius, radius + 1):
+			for x in range(-radius, radius + 1):
+				if x * x + y * y <= radius * radius: sight_offsets.append(Vector2i(x, y))
+	# On restore, compare against the last gameplay sample, not an empty mask.
+	var changed: Dictionary = {} if sight_ready else visible_tiles.duplicate()
+	for origin in sight_origins:
+		if not origins.has(origin): change_coverage(origin, -1, changed)
+	for origin in origins:
+		if not sight_origins.has(origin): change_coverage(origin, 1, changed)
+	sight_origins = origins
+	sight_ready = true
+	for p in changed.keys():
+		var revealed := sight_coverage.has(p) and terrain.has(p)
+		if revealed == visible_tiles.has(p):
+			changed.erase(p)
+		elif revealed:
+			visible_tiles[p] = true
+		else:
+			visible_tiles.erase(p)
+	return changed
+
+func change_coverage(origin: Vector2i, amount: int, changed: Dictionary) -> void:
+	for offset in sight_offsets:
+		var p := origin + offset
+		var count: int = sight_coverage.get(p, 0) + amount
+		if count == 0: sight_coverage.erase(p)
+		else: sight_coverage[p] = count
+		changed[p] = true
 
 func invalidate_delivery() -> void:
 	delivery_dirty = true

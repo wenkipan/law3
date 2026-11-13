@@ -1,7 +1,8 @@
 extends RefCounted
 
-const VERSION := 12
-const RULES_VERSION := 20
+const VERSION := 13
+const PREVIOUS_VERSION := 12
+const RULES_VERSION := 21
 const MAX_NODES := 200000
 const MAX_BYTES := 64 * 1024 * 1024
 const MAGIC := "LAW3SNAP"
@@ -52,18 +53,11 @@ var nodes: Array = []
 var identities: Array = []
 var instances: Array = []
 
-static func capture(g) -> Dictionary:
-	if not g.world.newborns.is_empty():
+static func capture(world: WorldState, sample: Dictionary) -> Dictionary:
+	if not world.newborns.is_empty():
 		return failure("World is not at a completed simulation step.")
 	var codec = load("res://scripts/persistence/world_snapshot.gd").new()
-	var root = codec.pack({"world": g.world,
-		"sample": {"powered_devices": g.cache.powered_devices, "ready_drills": g.cache.ready_drills,
-			"power_output": g.cache.power_output, "visible_tiles": g.cache.visible_tiles},
-		"view": {"center": Vector2(g.interaction.view_origin) + g.world_view.camera.position / g.CELL,
-			"zoom": g.world_view.camera.zoom.x, "speed": g.interaction.speed,
-			"paused": g.interaction.paused_by_player, "pollution": g.interaction.pollution_visible,
-			"brush_wage": g.interaction.brush_wage, "wage_filter": g.interaction.wage_filter,
-			"brush_fee": g.interaction.brush_fee, "fee_filter": g.interaction.fee_filter}})
+	var root = codec.pack({"world": world, "sample": sample})
 	if codec.error != "": return failure(codec.error)
 	var payload := {"version": VERSION, "rules": RULES_VERSION, "map": MapGenerator.VERSION,
 		"root": root, "nodes": codec.nodes}
@@ -90,7 +84,7 @@ static func decode(data: PackedByteArray, building_kinds: Array, day_seconds: fl
 	if digest(encoded) != data.slice(8, 40): return failure("Snapshot checksum failed.")
 	var payload = bytes_to_var(encoded)
 	if not payload is Dictionary: return failure("Invalid snapshot data.")
-	if payload.get("version") != VERSION or payload.get("rules") != RULES_VERSION or payload.get("map") != MapGenerator.VERSION:
+	if payload.get("version") not in [VERSION, PREVIOUS_VERSION] or payload.get("rules") != RULES_VERSION or payload.get("map") != MapGenerator.VERSION:
 		return failure("Incompatible snapshot or game rules version.", "version")
 	if not payload.get("nodes") is Array or payload.nodes.size() > MAX_NODES:
 		return failure("Invalid snapshot object table.")
@@ -102,8 +96,10 @@ static func decode(data: PackedByteArray, building_kinds: Array, day_seconds: fl
 	if codec.error != "": return failure(codec.error)
 	var root = codec.unpack(payload.root)
 	if not codec.validate(root, building_kinds, day_seconds): return failure(codec.error)
+	# The old cursor position never determined where held goods were returned.
+	root.world.player_cargo.erase("position")
 	codec.finish()
-	return {"ok": true, "world": root.world, "sample": root.sample, "view": root.view}
+	return {"ok": true, "world": root.world, "sample": root.sample}
 
 static func failure(message: String, code := "invalid") -> Dictionary:
 	return {"ok": false, "error": message, "code": code}
@@ -139,7 +135,8 @@ func pack(value, depth := 0):
 			for item in value: entry.values.append(pack(item, depth + 1))
 		else:
 			for field in FIELDS[kind]:
-				entry.values.append(pack(value.get(field), depth + 1))
+				var child = value.snapshot_claims() if kind == "slots" and field == "slots" else value.get(field)
+				entry.values.append(pack(child, depth + 1))
 		return {"ref": id}
 	if not leaf(value): error = "Unsupported snapshot value."
 	return value
@@ -260,7 +257,7 @@ func fill() -> void:
 			target.set(field, value)
 
 func validate(root, building_kinds: Array, day_seconds: float) -> bool:
-	if not root is Dictionary or not root.get("world") is WorldState or not root.get("sample") is Dictionary or not root.get("view") is Dictionary:
+	if not root is Dictionary or not root.get("world") is WorldState or not root.get("sample") is Dictionary:
 		return invalid("Incomplete snapshot.")
 	var w: WorldState = root.world
 	if not validate_buildings(w, building_kinds): return false
@@ -275,11 +272,6 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 		return invalid("Invalid world clock or services.")
 	for field in ["powered_devices", "ready_drills", "power_output", "visible_tiles"]:
 		if not root.sample.get(field) is Dictionary: return invalid("Missing step sample.")
-	if not root.view.get("center") is Vector2 or not root.view.get("zoom") is float or root.view.zoom < 0.45 or root.view.zoom > 2.2 or not is_number(root.view.get("speed")) or root.view.speed <= 0 or not root.view.get("paused") is bool or not root.view.get("pollution") is bool:
-		return invalid("Invalid saved camera settings.")
-	if not valid_wage(root.view.get("brush_wage")): return invalid("Invalid saved wage brush.")
-	if root.view.get("wage_filter") not in ["all", "mine", "build", "station"]: return invalid("Invalid saved wage filter.")
-	if not valid_wage(root.view.get("brush_fee", 1.0)) or root.view.get("brush_fee", 1.0) < 1 or root.view.get("fee_filter", "all") not in ["all", "goods", "bed", "service"]: return invalid("Invalid saved fee brush.")
 	for collection in [w.generated_chunks, w.terrain, w.water_sources,
 			w.mining_contracts, w.ground_items, w.pollution_operations]:
 		for key in collection:
@@ -315,7 +307,7 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 	if not w.player_cargo is Dictionary: return invalid("Invalid player cargo.")
 	if not w.player_cargo.is_empty():
 		var goods: Dictionary = w.player_cargo
-		if not (goods.get("item") is int or goods.get("item") is String) or not numeric_fields(goods, ["amount", "pollution"]) or goods.amount <= 0 or goods.pollution < 0 or not goods.get("origin") is Vector2i or not goods.get("position") is Vector2i or not w.terrain.has(goods.origin): return invalid("Invalid held goods.")
+		if not (goods.get("item") is int or goods.get("item") is String) or not numeric_fields(goods, ["amount", "pollution"]) or goods.amount <= 0 or goods.pollution < 0 or not goods.get("origin") is Vector2i or not w.terrain.has(goods.origin): return invalid("Invalid held goods.")
 	for cell in w.mining_contracts:
 		var task = w.mining_contracts[cell]
 		if not w.terrain.has(cell) or not valid_task(task) or (task.has("wage") and not valid_wage(task.wage)): return invalid("Invalid mining task.")
@@ -331,7 +323,6 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 		if bench.has("stock"): return invalid("Production goods must use local inventory.")
 		if not numeric_fields(bench, ["queue", "daily_output", "produced_today", "growth", "water_day"]) or not bench.get("harvest") is bool:
 			return invalid("Incomplete production facility.")
-		if bench.kind == "barn" and (not numeric_fields(bench, ["sheep"]) or not bench.get("slaughter") is bool): return invalid("Invalid livestock.")
 		if bench.kind == "recruitment_board":
 			if not valid_wage(bench.get("recruitment_cost")) or not numeric_fields(bench, ["recruitment_elapsed"]) or bench.recruitment_elapsed < 0 or bench.recruitment_elapsed > day_seconds / 4.0 or bench.employee != -1:
 				return invalid("Invalid recruitment board.")
@@ -418,7 +409,7 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 			if entry.kind == "delivery" and not valid_delivery_task(process.task, people): return invalid("Invalid delivery process.")
 		if entry.kind == "record":
 			var values: Dictionary = instances[i]._values
-			if values.get("kind") not in ["mine", "build", "produce", "operate", "harvest", "sell", "eat", "sleep", "rest", "use_item", "service", "purchase", "borrow", "payroll", "deliver"] or not values.get("target") is Vector2i or not values.get("data") is Dictionary:
+			if values.get("kind") not in ["build", "produce", "operate", "sell", "eat", "sleep", "rest", "use_item", "service", "purchase", "borrow", "payroll", "deliver"] or not values.get("target") is Vector2i or not values.get("data") is Dictionary:
 				return invalid("Invalid chosen activity.")
 			var required: Array = Record.PARAMETER_KEYS.get(values.kind, [])
 			for field in required:

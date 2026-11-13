@@ -123,7 +123,6 @@ func production_shortages(g: Node, p: Vector2i) -> Array:
 	if b.get("wage", g.WAGE_PER_HOUR) == 0: return items
 	if not (g.PRODUCTS.has(b.kind) or b.kind == "research_bench"): return items
 	if not g.has_production_order(p) or not b.task.is_empty() or b.growth > 0 or b.harvest: return items
-	if b.kind == "barn" and b.slaughter: return items
 	var recipe: Dictionary = g.station_materials(p)
 	for item in recipe:
 		if missing(g, p, item, recipe[item]): items.append(item)

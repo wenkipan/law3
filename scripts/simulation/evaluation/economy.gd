@@ -2,16 +2,6 @@ extends RefCounted
 
 const Labor = preload("res://scripts/simulation/evaluation/labor.gd")
 
-static func harvest(e, op: Dictionary) -> Dictionary:
-	var g = e.context.game
-	var w: Dictionary = e.context.worker
-	var resource: Dictionary = g.world.wild_resources[op.target]
-	var f: Dictionary = e.environment.estimate(op, 1.0)
-	var amount := mini(1, resource.stock)
-	var food: float = e.needs.food_gain(e.state.hunger + g.personal_food(w), g.FOOD_RECOVERY[resource.item] * amount) if g.eats(w, resource.item) else 0.0
-	var sale: float = e.harvest_income(resource.item)
-	return e.result(f, {"food": food, "trade": sale, "fatigue": e.needs.fatigue_gain(e.state.fatigue, -g.FATIGUE_PER_HOUR)})
-
 static func sell(e, op: Dictionary) -> Dictionary:
 	var f: Dictionary = e.environment.estimate(op, 0)
 	var cash: float = op.data.amount * e.context.game.market_price(op.target, op.data.item, true)

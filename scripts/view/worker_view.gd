@@ -65,17 +65,16 @@ func select_action(w: Dictionary, work_active: bool, walking: bool) -> StringNam
 	if trading: return &"trade_buy" if trade_buying else &"trade_sell"
 	match w.state:
 		"sleep": return &"sleep"
-		"dig": return &"gun" if w.gun_uses > 0 else &"mine"
 		"build": return &"build"
 		"work":
 			if not work_active: return &"idle"
 			match w.get("work_kind", ""):
 				"mine": return &"gun" if w.gun_uses > 0 else &"mine"
+				"hunting_ground": return &"hunt"
+				"gathering_garden": return &"gather"
 				"market", "bank": return &"market"
 				"drill", "power_plant", "manual_generator", "transformer": return &"operate"
 			return &"craft"
-		"gather": return &"gather"
-		"hunt": return &"hunt"
 		"eat": return &"eat"
 		"drink": return &"drink"
 		"use_item":
@@ -144,7 +143,7 @@ func configure_props(item) -> void:
 		&"gun": set_prop(tool, Art.texture("res://assets/icons/mining-gun.svg"), 32)
 		&"market": set_prop(tool, Art.item_texture("money"), 17)
 		&"gather":
-			set_prop(tool, Art.item_texture(item), 15)
+			set_prop(tool, Art.item_texture("berries"), 15)
 			set_prop(exchange, Art.texture("res://assets/world/gathering-basket.svg"), 23)
 		&"hunt": set_prop(tool, Art.texture("res://assets/world/hunting-bow.svg"), 34)
 		&"eat", &"drink": set_prop(tool, Art.item_texture("clean_water" if item == "" else item), 18)

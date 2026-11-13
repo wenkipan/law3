@@ -155,7 +155,7 @@ func select(g, w: Dictionary) -> void:
 	while option != null:
 		var activity
 		match option.kind:
-			"mine", "build", "produce", "operate", "harvest": activity = Work.new()
+			"build", "produce", "operate": activity = Work.new()
 			"eat", "sleep", "rest", "use_item", "service": activity = Life.new()
 			"purchase", "sell", "borrow", "payroll": activity = Economy.new()
 			"deliver": activity = Delivery.new()
@@ -186,10 +186,8 @@ func report_action(g) -> String:
 	if drink_elapsed >= 0:
 		return "吃饭"
 	match active.record.kind:
-		"harvest": return "通勤" if active.phase == "approach" else "工作"
 		"use_item": return "吃饭" if active.record.data.item in ["ale", "meat"] else "空闲"
 		"service": return "通勤" if active.phase == "approach" else "空闲"
-		"mine": return "通勤" if active.phase == "approach" else "挖掘"
 		"build": return "通勤" if active.phase == "approach" else "工作"
 		"produce", "operate":
 			if active.phase == "approach": return "通勤"
@@ -212,11 +210,6 @@ func presentation(g) -> Dictionary:
 	result.path = a.path
 	result.progress = a.elapsed
 	match a.record.kind:
-		"harvest":
-			result.item = a.source_identity.get("item", "")
-			result.state = "walk" if a.phase == "approach" else ("hunt" if result.item == "meat" else "gather")
-			result.job = p
-			result.progress = a.source_identity.get("task", {}).get("progress", 0.0)
 		"sell":
 			result.state = "to_shop"
 			result.station = p
@@ -228,10 +221,6 @@ func presentation(g) -> Dictionary:
 			result.state = "to_service" if a.phase == "approach" else "service"
 			result.service = a.record.data.kind
 			result.station = p
-		"mine":
-			result.state = "walk" if a.phase == "approach" else "dig"
-			result.job = p
-			result.progress = g.world.mining_contracts.get(p, {}).get("progress", 0.0)
 		"build":
 			result.state = "to_build" if a.phase == "approach" else "build"
 			result.building = p

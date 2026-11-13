@@ -5,7 +5,7 @@ var fatigue_factor := 1.0
 
 func enter(g, w: Dictionary, proposal) -> bool:
 	if not super.enter(g, w, proposal): return false
-	return g.can_harvest(w, record.target) if record.kind == "harvest" else g.employ(w, record.target)
+	return g.employ(w, record.target)
 
 func exit(g, w: Dictionary, reason: String) -> void:
 	g.settle_labor(w, segment, reason)

@@ -11,12 +11,11 @@ func preview_seed(t, seed_value: int) -> void:
 	t.fixtures.scenario_name = "Generated map overview: %d" % seed_value
 	var overview := Rect2i(-64, -64, 256, 192)
 	g.ensure_region(overview)
-	g.world_view.rebuild(g)
 	for cell in g.world.terrain:
 		if not overview.has_point(cell):
 			continue
 		g.cache.visible_tiles[cell] = true
-	g.world_view.sync_fog()
+	g.world_view.rebuild(g)
 	if t.native:
 		g.world_view.camera.position = g.tile_center(g.BASE)
 		g.world_view.camera.zoom = Vector2.ONE * 0.5

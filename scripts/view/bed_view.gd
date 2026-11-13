@@ -34,6 +34,8 @@ func set_progress(value: float) -> void:
 	$Solid.material.set_shader_parameter("progress", value)
 	$Blueprint.material.set_shader_parameter("progress", value)
 	$Blueprint.visible = value < 1
+	if is_instance_valid(sheep):
+		sheep.visible = value >= 1.0
 	if is_instance_valid(belt_art):
 		$Blueprint.hide()
 		belt_art.set_progress(value)
@@ -106,9 +108,6 @@ func set_operating(active: bool) -> void:
 	operating = active
 	$Machinery.play(("machine" if kind in ["drill", "power_plant", "manual_generator"] else "powered") if active else "RESET")
 	$Machinery.advance(0)
-
-func sync_sheep(count: int) -> void:
-	sheep.visible = count > 0 and progress >= 1.0
 
 func set_belt_connections(connections: int, direction: Vector2i) -> void:
 	belt_art.configure(connections, direction, progress)

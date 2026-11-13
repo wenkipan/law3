@@ -73,9 +73,9 @@ func rebuild(controller: Node) -> void:
 	for row in rows:
 		row.dismiss()
 	known_effects.clear()
-	# Existing possessions/effects are not new events on reset or load.
-	for w in game.world.workers:
-		known_effects[w.id] = effect_keys(w)
+
+func forget_effects(worker_id: int) -> void:
+	known_effects.erase(worker_id)
 
 func effect_keys(w: Dictionary) -> Dictionary:
 	var result: Dictionary = {}

@@ -8,6 +8,7 @@ const JOB_SKILLS := {
 	"market": "trade", "bank": "trade", "storage_box": "transport",
 	"mine": "mining", "drill": "mining",
 	"farm": "farming", "barn": "farming", "pump": "farming",
+	"hunting_ground": "hunting", "gathering_garden": "gathering",
 	"power_plant": "power", "manual_generator": "power", "transformer": "power",
 	"research_bench": "research", "hospital": "medicine",
 	"bench": "processing", "workbench": "processing", "purifier": "processing",
@@ -69,7 +70,6 @@ func configure(g) -> void:
 		if g.PRODUCTS.has(kind) and kind != "printer": definition.products = [g.product_item(kind)]
 		elif kind == "mine": definition.products = MINERALS.duplicate()
 		elif kind == "drill": definition.products = [2, 3]
-		if kind == "barn": definition.products.append("meat")
 		if JOB_SKILLS.has(kind):
 			definition.work_activity = &"operate" if kind in g.OPERATED_KINDS + g.DUTY_KINDS + ["mine"] else &"produce"
 			definition.interactions.append(SlotDefinition.new(Action.WORK, &"work", JOB_SKILLS[kind], false, definition.products))
@@ -97,7 +97,7 @@ func configure(g) -> void:
 	for item in g.MapGenerator.WILD_ITEMS.values():
 		var definition := ObjectDefinition.new("wild_" + item, Domain.RESOURCE)
 		definition.products = [item]
-		definition.interactions.append(SlotDefinition.new(Action.HARVEST, &"harvest", &"hunting" if item == "meat" else &"gathering", false, [item]))
+		definition.interactions.append(SlotDefinition.new(Action.HARVEST, &"harvest", &"", false, [item]))
 		resources[item] = definition
 	for skill in [""] + g.SKILLS.keys():
 		var definition := ObjectDefinition.new(&"delivery_request", Domain.REQUEST)

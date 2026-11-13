@@ -37,6 +37,20 @@ var alert_targets: Array = []
 var alert_fade := 0.0
 var wage_labels: Dictionary = {}
 var item_nodes: Dictionary = {}
+var item_samples: Dictionary = {}
+var pending_terrain: Dictionary = {}
+var pending_sight: Dictionary = {}
+var pending_stock: Dictionary = {}
+var shown_cells := Rect2i()
+var shortage_zoom := 0.0
+var layout_cells := Rect2i()
+var building_revision := -1
+var layout_revision := 0
+var nearby_buildings: Array = []
+var nearby_lines: Dictionary = {}
+var nearby_barriers: Dictionary = {}
+var nearby_ports: Dictionary = {}
+var line_masks: Dictionary = {}
 
 func pointer_texture() -> Texture2D:
 	if not initialized or game == null: return null
@@ -55,7 +69,7 @@ func pointer_texture() -> Texture2D:
 		var icon := "pickaxe" if kind in ["mine", "drill"] else "tools"
 		return Art.texture("res://assets/icons/%s.svg" % icon)
 	elif hovered == $GroundInput:
-		if game.world.wild_resources.get(p, {}).get("stock", 0) > 0:
+		if game.can_hand_harvest(p):
 			return Art.texture("res://assets/cursors/hand.svg")
 		elif game.world.deposits.get(p, 0) > 0 and game.world.terrain.get(p, 0) in game.SmartObjectDefinitions.MINERALS:
 			return Art.texture("res://assets/icons/pickaxe.svg")
@@ -142,6 +156,9 @@ func rebuild(controller: Node) -> void:
 	$Overlays/WorkerFeedback.rebuild(game)
 	if not game.transaction_completed.is_connected(on_transaction):
 		game.transaction_completed.connect(on_transaction)
+		game.terrain_cell_changed.connect(queue_terrain)
+		game.sight_changed.connect(queue_sight)
+		game.presentation_stock_changed.connect(queue_stock)
 	hovered = null
 	if not $GroundInput.input_event.is_connected(_on_pick_input.bind($GroundInput)):
 		connect_pick($GroundInput, -1, null)
@@ -157,30 +174,76 @@ func rebuild(controller: Node) -> void:
 	building_nodes.clear()
 	line_nodes.clear()
 	item_nodes.clear()
+	item_samples.clear()
 	cargo_nodes.clear()
 	fog_cells.clear()
 	order_cells.clear()
 	pollution_cells.clear()
 	pollution_revision = -1
+	shown_cells = Rect2i()
+	building_revision = -1
+	pending_terrain.clear()
+	pending_sight.clear()
+	pending_stock.clear()
 	initialized = true
-	sync_chunks()
-	sync_fog()
-	sync_orders()
 	sync_dynamic()
 
+func queue_terrain(p: Vector2i) -> void:
+	if initialized and chunks.has(game.MapGenerator.chunk_at(p)): pending_terrain[p] = true
+
+func queue_sight(changed: Dictionary) -> void:
+	if not initialized: return
+	for p in changed:
+		if chunks.has(game.MapGenerator.chunk_at(p)): pending_sight[p] = true
+
+func queue_stock(p: Vector2i) -> void:
+	if initialized and chunks.has(game.MapGenerator.chunk_at(p)): pending_stock[p] = true
+
 func block_changed(p: Vector2i) -> void:
-	if not initialized or not chunks.has(game.MapGenerator.chunk_at(p)):
-		return
-	var chunk: Dictionary = chunks[game.MapGenerator.chunk_at(p)]
-	var local: Vector2i = p - game.MapGenerator.chunk_at(p) * game.MapGenerator.CHUNK_SIZE
-	if game.world.terrain[p] == 0:
-		chunk.blocks.erase_cell(local)
-	else:
-		chunk.blocks.set_cell(local, 0, Vector2i(game.world.terrain[p], 0))
-	for sprite in chunk.water.get_children():
-		if sprite.get_meta("cell", null) == p and game.world.wild_resources.has(p):
-			sprite.visible = game.world.wild_resources[p].stock > 0
+	var index: Vector2i = game.MapGenerator.chunk_at(p)
+	if not chunks.has(index) or not game.cache.visible_tiles.has(p): return
+	var local: Vector2i = p - index * game.MapGenerator.CHUNK_SIZE
+	sync_surface(chunks[index], p, local, true)
 	cell_updates += 1
+
+func sync_surface(chunk: Dictionary, p: Vector2i, local: Vector2i, revealed: bool) -> void:
+	if revealed:
+		var material: int = game.world.terrain.get(p, 0)
+		if chunk.background.get_cell_source_id(local) == -1: chunk.background.set_cell(local, 0, Vector2i.ZERO)
+		if material == 0:
+			if chunk.blocks.get_cell_source_id(local) != -1: chunk.blocks.erase_cell(local)
+		elif chunk.blocks.get_cell_atlas_coords(local) != Vector2i(material, 0):
+			chunk.blocks.set_cell(local, 0, Vector2i(material, 0))
+		var texture: Texture2D
+		if game.world.water_sources.has(p):
+			texture = Art.texture("res://assets/world/water-source.svg")
+		else:
+			var resource: Dictionary = game.world.wild_resources.get(p, {})
+			if resource.get("stock", 0) > 0:
+				texture = Art.texture("res://assets/world/%s.svg" % {"berries": "wild-berries", "wheat": "wild-grain", "meat": "wild-animal"}[resource.item])
+		if texture != null:
+			if not chunk.surfaces.has(p):
+				var sprite: Sprite2D = Sprite2D.new() if chunk.surface_pool.is_empty() else chunk.surface_pool.pop_back()
+				if sprite.get_parent() == null: chunk.water.add_child(sprite)
+				chunk.surfaces[p] = sprite
+				sprite.position = (Vector2(local) + Vector2.ONE * 0.5) * game.CELL
+				sprite.show()
+			chunk.surfaces[p].texture = texture
+			return
+	else:
+		chunk.background.erase_cell(local)
+		chunk.blocks.erase_cell(local)
+		if pollution_cells.has(p):
+			chunk.pollution.erase_cell(local)
+			pollution_cells.erase(p)
+	release_surface(chunk, p)
+
+func release_surface(chunk: Dictionary, p: Vector2i) -> void:
+	if not chunk.surfaces.has(p): return
+	var sprite: Sprite2D = chunk.surfaces[p]
+	sprite.hide()
+	chunk.surface_pool.append(sprite)
+	chunk.surfaces.erase(p)
 
 func make_chunk() -> Dictionary:
 	var chunk: Dictionary = {}
@@ -192,6 +255,8 @@ func make_chunk() -> Dictionary:
 	var water := Node2D.new()
 	$WaterSources.add_child(water)
 	chunk.water = water
+	chunk.surfaces = {}
+	chunk.surface_pool = []
 	return chunk
 
 func release_chunk(index: Vector2i) -> void:
@@ -200,6 +265,7 @@ func release_chunk(index: Vector2i) -> void:
 		chunk[key].clear()
 		chunk[key].hide()
 	chunk.water.hide()
+	for p in chunk.surfaces.keys(): release_surface(chunk, p)
 	var origin: Vector2i = index * game.MapGenerator.CHUNK_SIZE
 	for y in game.MapGenerator.CHUNK_SIZE:
 		for x in game.MapGenerator.CHUNK_SIZE:
@@ -214,41 +280,16 @@ func refresh_chunk(index: Vector2i) -> void:
 		return
 	var chunk: Dictionary = chunks[index]
 	var origin: Vector2i = index * game.MapGenerator.CHUNK_SIZE
-	var water_count := 0
 	for y in game.MapGenerator.CHUNK_SIZE:
 		for x in game.MapGenerator.CHUNK_SIZE:
 			var local := Vector2i(x, y)
 			var cell := origin + local
-			pollution_cells.erase(cell)
-			chunk.background.set_cell(local, 0, Vector2i.ZERO)
-			var material: int = game.world.terrain.get(cell, 0)
-			if material != 0:
-				chunk.blocks.set_cell(local, 0, Vector2i(material, 0))
+			var revealed: bool = game.cache.visible_tiles.has(cell)
+			fog_cells[cell] = -1 if revealed else 0
+			if revealed:
+				sync_surface(chunk, cell, local, true)
 			else:
-				chunk.blocks.erase_cell(local)
-			var fog := -1 if game.cache.visible_tiles.has(cell) else 0
-			fog_cells[cell] = fog
-			if fog < 0:
-				chunk.fog.erase_cell(local)
-			else:
-				chunk.fog.set_cell(local, 0, Vector2i(fog, 0))
-			if game.world.water_sources.has(cell) or game.world.wild_resources.get(cell, {}).get("stock", 0) > 0:
-				if water_count == chunk.water.get_child_count():
-					var sprite := Sprite2D.new()
-					chunk.water.add_child(sprite)
-				var sprite: Sprite2D = chunk.water.get_child(water_count)
-				sprite.set_meta("cell", cell)
-				sprite.modulate = Color.WHITE
-				if game.world.water_sources.has(cell):
-					sprite.texture = Art.texture("res://assets/world/water-source.svg")
-				else:
-					var resource: Dictionary = game.world.wild_resources[cell]
-					sprite.texture = Art.texture("res://assets/world/%s.svg" % {"berries": "wild-berries", "wheat": "wild-grain", "meat": "wild-animal"}[resource.item])
-				sprite.position = (Vector2(local) + Vector2.ONE * 0.5) * game.CELL
-				sprite.show()
-				water_count += 1
-	for i in range(water_count, chunk.water.get_child_count()):
-		chunk.water.get_child(i).hide()
+				chunk.fog.set_cell(local, 0, Vector2i.ZERO)
 	pollution_revision = -1
 
 func sync_pollution() -> void:
@@ -256,13 +297,16 @@ func sync_pollution() -> void:
 	if not game.interaction.pollution_visible: return
 	if pollution_revision == game.cache.pollution.revision: return
 	pollution_revision = game.cache.pollution.revision
-	for p in game.cache.visible_tiles:
-		var index: Vector2i = game.MapGenerator.chunk_at(p)
-		if not chunks.has(index): continue
-		var band := clampi(ceili(game.cache.pollution.at(p) / 10.0), 0, 10)
-		if pollution_cells.get(p, -1) == band: continue
-		pollution_cells[p] = band
-		chunks[index].pollution.set_cell(p - index * game.MapGenerator.CHUNK_SIZE, 0, Vector2i(band, 0))
+	for y in range(shown_cells.position.y, shown_cells.end.y):
+		for x in range(shown_cells.position.x, shown_cells.end.x):
+			var p := Vector2i(x, y)
+			if not game.cache.visible_tiles.has(p): continue
+			var index: Vector2i = game.MapGenerator.chunk_at(p)
+			if not chunks.has(index): continue
+			var band := clampi(ceili(game.cache.pollution.at(p) / 10.0), 0, 10)
+			if pollution_cells.get(p, -1) == band: continue
+			pollution_cells[p] = band
+			chunks[index].pollution.set_cell(p - index * game.MapGenerator.CHUNK_SIZE, 0, Vector2i(band, 0))
 
 func sync_chunks() -> void:
 	if not initialized:
@@ -286,6 +330,7 @@ func sync_chunks() -> void:
 				continue
 			chunks[index] = chunk_pool.pop_back() if not chunk_pool.is_empty() else make_chunk()
 			for node in chunks[index].values():
+				if not node is Node2D: continue
 				node.position = game.tile_corner(index * game.MapGenerator.CHUNK_SIZE)
 				node.show()
 			refresh_chunk(index)
@@ -296,17 +341,18 @@ func reposition() -> void:
 		return
 	for index in chunks:
 		for node in chunks[index].values():
-			node.position = game.tile_corner(index * game.MapGenerator.CHUNK_SIZE)
+			if node is Node2D: node.position = game.tile_corner(index * game.MapGenerator.CHUNK_SIZE)
 	for id in building_nodes:
 		if game.world.buildings.has(id): building_nodes[id].position = game.tile_corner(game.world.building_map.origin(id))
 	for id in line_nodes:
 		if game.world.buildings.has(id): line_nodes[id].position = game.tile_corner(game.world.building_map.origin(id))
+	for p in item_nodes: item_nodes[p].position = game.tile_center(p)
 
-func sync_fog(changed: Dictionary = {}) -> void:
+func sync_fog(changed: Dictionary) -> void:
 	if not initialized:
 		return
 	# Update lost sight as well as gained sight, without resubmitting unchanged cells.
-	for p in (fog_cells if changed.is_empty() else changed):
+	for p in changed:
 		if not fog_cells.has(p):
 			continue
 		var next := -1 if game.cache.visible_tiles.has(p) else 0
@@ -321,6 +367,7 @@ func sync_fog(changed: Dictionary = {}) -> void:
 			layer.erase_cell(local)
 		else:
 			layer.set_cell(local, 0, Vector2i(next, 0))
+		sync_surface(chunks[index], p, local, next == -1)
 		cell_updates += 1
 
 func sync_orders() -> void:
@@ -334,86 +381,104 @@ func sync_orders() -> void:
 			order_cells.erase(p)
 			cell_updates += 1
 
-func sync_buildings() -> void:
-	var barriers: Dictionary = {}
-	for p in game.world.building_positions("station"):
-		if game.world.building_state(p, "station").kind in game.BARRIER_KINDS: barriers[p] = true
-	for p in game.world.building_positions("site"):
-		if game.world.building_state(p, "site").kind in game.BARRIER_KINDS and not game.world.building_state(p, "site").get("cancelled", false): barriers[p] = true
+func chunks_in(area: Rect2i) -> Array[Vector2i]:
+	var first: Vector2i = game.MapGenerator.chunk_at(area.position)
+	var last: Vector2i = game.MapGenerator.chunk_at(area.end - Vector2i.ONE)
+	var result: Array[Vector2i] = []
+	for y in range(first.y, last.y + 1):
+		for x in range(first.x, last.x + 1): result.append(Vector2i(x, y))
+	return result
+
+func retire_node(nodes: Dictionary, id) -> void:
+	var node: Node2D = nodes[id]
+	if hovered == node: hovered = null
+	if node is Area2D: node.input_pickable = false
+	node.hide()
+	node.get_parent().remove_child(node)
+	node.queue_free()
+	nodes.erase(id)
+
+func sync_building_layout() -> void:
+	var neighborhood := shown_cells.grow(2)
+	if layout_cells == neighborhood and building_revision == game.world.building_revision: return
+	layout_cells = neighborhood
+	building_revision = game.world.building_revision
+	layout_revision += 1
+	var ids: Dictionary = {}
+	for chunk in chunks_in(neighborhood): ids.merge(game.world.building_map.in_chunk(chunk))
+	nearby_buildings.clear()
+	nearby_lines.clear()
+	nearby_barriers.clear()
+	for id in ids:
+		var placement: Dictionary = game.world.building_map.placements[id]
+		if not placement.cells.any(func(p): return neighborhood.has_point(p)): continue
+		nearby_buildings.append(id)
+		var entity = game.world.buildings[id]
+		if entity.kind in game.LINE_KINDS: nearby_lines[placement.origin] = entity.state
+		if entity.kind in game.BARRIER_KINDS and not entity.state.get("cancelled", false):
+			nearby_barriers[placement.origin] = true
+	nearby_buildings.sort()
+	nearby_ports = line_port_map()
+	line_masks.clear()
+	if not nearby_lines.is_empty():
+		var cells := line_cell_map(nearby_lines)
+		for p in nearby_lines: line_masks[p] = line_connection_masks(p, nearby_lines[p], cells, nearby_ports)
+
+func sync_buildings(nearby_workers: Array[Dictionary]) -> void:
+	sync_building_layout()
 	var open_doors: Dictionary = {}
-	for w in game.world.workers:
-		var cell := Vector2i(w.pos.round())
-		for offset in [Vector2i.ZERO] + game.DIRS:
-			if barriers.has(cell + offset): open_doors[cell + offset] = true
-	var line_positions: Dictionary = {}
-	for entity in game.world.buildings_in("line"):
-		line_positions[game.world.building_map.origin(entity.id)] = entity.state
-	for p in game.world.building_positions("site"):
-		if game.world.building_state(p, "site").kind in game.LINE_KINDS:
-			line_positions[p] = game.world.building_state(p, "site")
-	for id in line_nodes.keys():
-		if not game.world.buildings.has(id):
-			if hovered == line_nodes[id]: hovered = null
-			line_nodes[id].free()
-			line_nodes.erase(id)
-	var cells := line_cell_map(line_positions)
-	var ports := line_port_map() if not line_positions.is_empty() else {}
-	for p in line_positions:
-		var kind: String = line_positions[p].kind
-		var entity = game.world.building_at(p, "site") if game.world.building_state(p, "site").get("kind", "") in game.LINE_KINDS else game.world.building_at(p, "line")
-		var id: int = entity.id
-		if not line_nodes.has(id):
-			var node := BedScene.instantiate()
-			$Buildings.add_child(node)
-			$Buildings.move_child(node, 0)
-			node.set_kind(kind)
-			node.position = game.tile_corner(p)
-			connect_pick(node, -1, p)
-			node.set_meta("building_id", id)
-			node.set_meta("line", true)
-			line_nodes[id] = node
-		line_nodes[id].set_size(game.building_size(p, kind))
-		line_nodes[id].set_progress(line_positions[p].progress / line_positions[p].seconds if line_positions[p].has("progress") else 1.0)
-		line_nodes[id].set_line_connections(line_connection_masks(p, line_positions[p], cells, ports))
-		sync_shortages(line_nodes[id], p)
-		line_nodes[id].input_pickable = game.cache.visible_tiles.has(p)
-	for id in building_nodes.keys():
-		if not game.world.buildings.has(id):
-			if hovered == building_nodes[id]: hovered = null
-			building_nodes[id].free()
-			building_nodes.erase(id)
-	for entity in game.world.buildings.values():
+	if not nearby_barriers.is_empty():
+		for w in nearby_workers:
+			var cell := Vector2i(w.pos.round())
+			for offset in [Vector2i.ZERO] + game.DIRS:
+				if nearby_barriers.has(cell + offset): open_doors[cell + offset] = true
+	var shown: Dictionary = {}
+	for id in nearby_buildings:
+		var placement: Dictionary = game.world.building_map.placements[id]
+		if not placement.cells.any(func(cell): return shown_cells.has_point(cell) and game.cache.visible_tiles.has(cell)): continue
+		var entity = game.world.buildings[id]
+		var p: Vector2i = placement.origin
 		var kind: String = entity.kind
-		if kind in game.LINE_KINDS: continue
-		var id: int = entity.id
-		var p: Vector2i = game.world.building_map.origin(id)
-		if not building_nodes.has(id):
-			var bed := BedScene.instantiate()
-			bed.name = "Bed_%d_%d" % [p.x, p.y]
-			$Buildings.add_child(bed)
-			bed.set_kind(kind)
-			bed.position = game.tile_corner(p)
-			connect_pick(bed, -1, p)
-			bed.set_meta("building_id", id)
-			building_nodes[id] = bed
+		var line: bool = kind in game.LINE_KINDS
+		var nodes := line_nodes if line else building_nodes
+		var fresh := not nodes.has(id)
+		if fresh:
+			var visual := BedScene.instantiate()
+			$Buildings.add_child(visual)
+			if line: $Buildings.move_child(visual, 0)
+			visual.set_kind(kind)
+			connect_pick(visual, -1, p)
+			visual.set_meta("building_id", id)
+			visual.set_meta("line", line)
+			nodes[id] = visual
+		shown[id] = true
+		var node: Area2D = nodes[id]
+		var can_pick: bool = game.cache.visible_tiles.has(p)
 		var progress: float = entity.state.progress / entity.state.seconds if entity.in_group("site") else 1.0
-		var node: Area2D = building_nodes[id]
-		node.position = game.tile_corner(p)
-		node.set_meta("entity", p)
 		node.set_progress(progress)
-		node.set_size(game.building_size(p, kind))
-		sync_shortages(node, p)
+		var moved: bool = node.get_meta("entity", null) != p
+		if fresh or moved:
+			node.position = game.tile_corner(p)
+			node.set_meta("entity", p)
+		var layout_changed: bool = node.get_meta("layout_revision", -1) != layout_revision
+		if layout_changed:
+			node.set_meta("layout_revision", layout_revision)
+			node.set_size(game.building_size(p, kind))
+			if line: node.set_line_connections(line_masks[p])
+			if kind in game.BELT_KINDS: node.set_belt_connections(game.belt_connections(p), game.belt_direction_at(p))
+		if fresh or moved or pending_stock.has(p) or node.input_pickable != can_pick: sync_shortages(node, p)
+		if layout_changed or shortage_zoom != camera.zoom.x: node.position_shortage(camera.zoom.x)
+		node.input_pickable = can_pick
 		node.set_operating(game.cache.powered_devices.has(p) or game.cache.power_output.get(p, 0.0) > 0)
-		if kind == "barn":
-			node.sync_sheep(entity.state.get("sheep", 0))
-		if kind in game.BELT_KINDS:
-			node.set_belt_connections(game.belt_connections(p), game.belt_direction_at(p))
-		if kind in game.BARRIER_KINDS:
+		if kind in game.BARRIER_KINDS and (layout_changed or kind == "door"):
 			var mask := 0
 			for i in game.DIRS.size():
-				if barriers.has(p + game.DIRS[i]): mask |= 1 << i
+				if nearby_barriers.has(p + game.DIRS[i]): mask |= 1 << i
 			node.set_barrier_connections(mask, open_doors.has(p))
-		node.input_pickable = game.cache.visible_tiles.has(p)
+	shortage_zoom = camera.zoom.x
+	for nodes in [line_nodes, building_nodes]:
+		for id in nodes.keys():
+			if not shown.has(id): retire_node(nodes, id)
 
 func sync_shortages(node: Area2D, p: Vector2i) -> void:
 	var amounts: Dictionary = {}
@@ -427,15 +492,15 @@ func sync_shortages(node: Area2D, p: Vector2i) -> void:
 		else:
 			items = game.alerts.production_shortages(game, p)
 	node.set_shortages(items, amounts)
-	node.position_shortage(camera.zoom.x)
 
-func sync_belt_cargo() -> void:
-	for id in cargo_nodes.keys():
-		if not game.world.belt_cargo.has(id):
-			cargo_nodes[id].free()
-			cargo_nodes.erase(id)
-	for id in game.world.belt_cargo:
+func sync_belt_cargo(ids: Dictionary) -> void:
+	var shown: Dictionary = {}
+	for id in ids:
 		var cargo: Dictionary = game.world.belt_cargo[id]
+		var position := Vector2(cargo.from).lerp(Vector2(cargo.to), clampf(cargo.progress, 0, 1))
+		var cell := Vector2i(position.round())
+		if not shown_cells.has_point(cell) or not game.cache.visible_tiles.has(cell): continue
+		shown[id] = true
 		if not cargo_nodes.has(id):
 			var sprite := Sprite2D.new()
 			sprite.texture = Art.item_texture(cargo.delivery.item)
@@ -443,26 +508,45 @@ func sync_belt_cargo() -> void:
 			sprite.z_index = 1
 			$Buildings.add_child(sprite)
 			cargo_nodes[id] = sprite
-		cargo_nodes[id].position = game.tile_center(Vector2(cargo.from).lerp(Vector2(cargo.to), clampf(cargo.progress, 0, 1)))
+		cargo_nodes[id].position = game.tile_center(position)
+	for id in cargo_nodes.keys():
+		if not shown.has(id): retire_node(cargo_nodes, id)
 
 func sync_dynamic() -> void:
 	if not initialized:
 		return
 	sync_chunks()
+	for p in pending_terrain: block_changed(p)
+	sync_fog(pending_sight)
+	pending_terrain.clear()
+	pending_sight.clear()
+	var half: Vector2 = get_viewport_rect().size / camera.zoom / 2.0
+	var first: Vector2i = game.world_cell(camera.position - half)
+	var last: Vector2i = game.world_cell(camera.position + half)
+	var bounds := Rect2i(first, last - first + Vector2i.ONE).grow(2)
+	if bounds != shown_cells: pollution_revision = -1
+	shown_cells = bounds
 	sync_pollution()
-	sync_buildings()
-	sync_belt_cargo()
-	sync_loose_items()
-	for id in worker_nodes.keys():
-		if not game.world.worker(id).is_empty(): continue
-		var node: Area2D = worker_nodes[id]
-		if hovered == node:
-			hovered = null
-			hover_frame.hide()
-		$Characters.remove_child(node)
-		node.queue_free()
-		worker_nodes.erase(id)
-	for w in game.world.workers:
+	var worker_ids: Dictionary = {}
+	var cargo_ids: Dictionary = {}
+	var item_cells: Dictionary = {}
+	for index in chunks_in(bounds.grow(2)):
+		worker_ids.merge(game.world.worker_chunks.at(index))
+		cargo_ids.merge(game.world.cargo_chunks.at(index))
+		item_cells.merge(game.world.ground_chunks.at(index))
+	var workers: Array[Dictionary] = []
+	for id in worker_ids:
+		var w: Dictionary = game.world.worker(id)
+		if not w.is_empty() and bounds.grow(2).has_point(Vector2i(w.pos.round())): workers.append(w)
+	sync_buildings(workers)
+	sync_belt_cargo(cargo_ids)
+	sync_loose_items(item_cells)
+	pending_stock.clear()
+	var shown_workers: Dictionary = {}
+	for w in workers:
+		var p := Vector2i(w.pos.round())
+		if not bounds.has_point(p) or not game.cache.visible_tiles.has(p): continue
+		shown_workers[w.id] = true
 		$Overlays/WorkerFeedback.observe_effects(w)
 		if not worker_nodes.has(w.id):
 			var worker := WorkerScene.instantiate()
@@ -472,16 +556,16 @@ func sync_dynamic() -> void:
 			connect_pick(worker, w.id, null)
 			worker_nodes[w.id] = worker
 		worker_nodes[w.id].sync(game.worker_display(w), game.CELL, game.action_for(w) != "等待", game.interaction.view_origin)
-		var visible_now: bool = game.cache.visible_tiles.has(Vector2i(w.pos.round()))
-		worker_nodes[w.id].visible = visible_now
-		worker_nodes[w.id].input_pickable = visible_now
-		if not visible_now: worker_nodes[w.id].cancel_transaction()
+	for id in worker_nodes.keys():
+		if shown_workers.has(id): continue
+		$Overlays/WorkerFeedback.forget_effects(id)
+		retire_node(worker_nodes, id)
 	# Native picking uses tree order for equal Z; match the workers' Y-sort order.
 	var ordered: Array = worker_nodes.keys()
 	ordered.sort_custom(func(a, b):
 		var ay: float = worker_nodes[a].position.y
 		var by: float = worker_nodes[b].position.y
-		return a < b if is_equal_approx(ay, by) else ay < by)
+		return a < b if ay == by else ay < by)
 	for i in ordered.size():
 		var worker: Area2D = worker_nodes[ordered[i]]
 		if worker.get_index() != i:
@@ -493,9 +577,12 @@ func sync_dynamic() -> void:
 		effect_frame.size = Vector2.ONE * (game.EFFECT_RADIUS * 2 + 1) * game.CELL
 	selection_frame.visible = true
 	if game.interaction.selected_worker >= 0:
-		var bounds := pick_bounds(worker_nodes[game.interaction.selected_worker])
-		selection_frame.position = bounds.position
-		selection_frame.size = bounds.size
+		if worker_nodes.has(game.interaction.selected_worker):
+			var selected_bounds := pick_bounds(worker_nodes[game.interaction.selected_worker])
+			selection_frame.position = selected_bounds.position
+			selection_frame.size = selected_bounds.size
+		else:
+			selection_frame.hide()
 	elif game.interaction.selected_line and game.world.has_building(p, "line"):
 		selection_frame.position = game.tile_corner(p)
 		selection_frame.size = game.building_size(p, game.world.building_state(p, "line", game.world.building_state(p, "site", {})).kind)
@@ -512,10 +599,10 @@ func sync_dynamic() -> void:
 	hover_frame.position = game.tile_corner(hover)
 	hover_frame.size = Vector2.ONE * game.CELL
 	if is_instance_valid(hovered) and hovered != $GroundInput and hovered.input_pickable:
-		var bounds := pick_bounds(hovered)
+		var hover_bounds := pick_bounds(hovered)
 		hover_frame.show()
-		hover_frame.position = bounds.position
-		hover_frame.size = bounds.size
+		hover_frame.position = hover_bounds.position
+		hover_frame.size = hover_bounds.size
 	if get_viewport().gui_get_hovered_control() != null:
 		hover_frame.hide()
 		hovered = null
@@ -523,7 +610,7 @@ func sync_dynamic() -> void:
 	preview.visible = (game.interaction.tool == "move_drill" or game.interaction.tool in game.BUILDING_KINDS) and game.cache.visible_tiles.has(hover) and get_viewport().gui_get_hovered_control() == null
 	if preview.visible:
 		configure_blueprint(preview, hover, preview_kind)
-	preview.modulate = Color(1, 1, 1, 0.5) if game.building_space_valid(hover, preview_kind) else Color(1, 0.4, 0.3, 0.5)
+		preview.modulate = Color(1, 1, 1, 0.5) if game.building_space_valid(hover, preview_kind) else Color(1, 0.4, 0.3, 0.5)
 	if game.interaction.belt_drawing or game.interaction.building_drawing or game.interaction.tool in game.BELT_KINDS or game.interaction.tool in game.LINE_KINDS or game.interaction.tool in game.BARRIER_KINDS:
 		preview.hide()
 	sync_belt_preview()
@@ -538,11 +625,15 @@ func sync_dynamic() -> void:
 		var value: float = game.interaction.brush_fee if game.interaction.tool == "fee" else game.interaction.brush_wage
 		drag_frame.modulate = RateSelector.color_for(int(value)) if game.interaction.tool in ["wage", "fee"] else (Color("#e39d90") if game.interaction.tool in ["cancel", "demolish"] else Color("#e3d29d"))
 
-func sync_loose_items() -> void:
+func sync_loose_items(cells: Dictionary) -> void:
 	var present: Dictionary = {}
-	for p in game.world.ground_items:
+	var sampled: Dictionary = {}
+	for p in cells:
+		if not shown_cells.has_point(p) or not game.cache.visible_tiles.has(p): continue
 		if not game.building_kind_at(p).is_empty(): continue
-		var item = game.first_loose_item(p)
+		sampled[p] = true
+		if pending_stock.has(p) or not item_samples.has(p): item_samples[p] = game.first_loose_item(p)
+		var item = item_samples[p]
 		if item == null: continue
 		present[p] = true
 		if not item_nodes.has(p):
@@ -551,22 +642,22 @@ func sync_loose_items() -> void:
 			connect_pick(node, -1, p)
 			item_nodes[p] = node
 		var node: Area2D = item_nodes[p]
+		if node.has_meta("item") and is_same(node.get_meta("item"), item): continue
+		node.set_meta("item", item)
 		var sprite: Sprite2D = node.get_node("Sprite")
 		sprite.texture = Art.item_texture(item)
 		sprite.scale = Vector2.ONE * 26.0 / sprite.texture.get_width()
 		node.position = game.tile_center(p)
-		node.visible = game.cache.visible_tiles.has(p)
-		node.input_pickable = node.visible
 	for p in item_nodes.keys():
-		if present.has(p): continue
-		if hovered == item_nodes[p]: hovered = null
-		item_nodes[p].free()
-		item_nodes.erase(p)
+		if not present.has(p): retire_node(item_nodes, p)
+	for p in item_samples.keys():
+		if not sampled.has(p): item_samples.erase(p)
 
 func on_transaction(worker_id: int, item, buying: bool) -> void:
 	if not initialized or not worker_nodes.has(worker_id): return
 	var w: Dictionary = game.world.worker(worker_id)
 	if w.is_empty() or not game.cache.visible_tiles.has(Vector2i(w.pos.round())): return
+	if not get_viewport_rect().has_point(get_global_transform_with_canvas() * game.tile_center(w.pos)): return
 	worker_nodes[worker_id].show_transaction(item, buying)
 
 func sync_wages() -> void:
@@ -575,7 +666,7 @@ func sync_wages() -> void:
 	var active: Dictionary = {}
 	var screen := get_viewport_rect().grow(48)
 	var fees: bool = game.interaction.tool == "fee"
-	var targets: Array = game.fee_targets() if fees else game.wage_targets()
+	var targets: Array = game.fee_targets(nearby_buildings) if fees else game.wage_targets(nearby_buildings)
 	for target in targets:
 		var p: Vector2i = target.position
 		var key := "%s:%s:%s" % [game.interaction.tool, target.kind, p]
@@ -616,10 +707,12 @@ func sync_belt_preview() -> void:
 	var cells: Array = plan.keys()
 	# Preview changed joins on neighboring existing tracks as well as new tiles.
 	for p in plan:
+		if not shown_cells.has_point(p): continue
 		for direction in game.DIRS:
 			var neighbor: Vector2i = p + direction
 			if not cells.has(neighbor) and not game.belt_data(neighbor).is_empty():
 				cells.append(neighbor)
+	cells = cells.filter(func(p): return shown_cells.has_point(p) and game.cache.visible_tiles.has(p))
 	while belt_previews.size() < cells.size():
 		var art := BeltArt.new()
 		$Overlays.add_child(art)
@@ -639,12 +732,13 @@ func sync_building_preview() -> void:
 	var positions: Array[Vector2i] = []
 	if game.interaction.building_drawing and game.interaction.tool not in game.LINE_KINDS and game.interaction.tool not in game.BARRIER_KINDS:
 		positions.assign(game.building_row())
+	var valid: bool = game.building_batch_valid(positions, game.interaction.tool) if game.interaction.building_drawing else false
+	positions = positions.filter(func(p): return shown_cells.has_point(p) and game.cache.visible_tiles.has(p))
 	while building_previews.size() < positions.size():
 		var sprite := Sprite2D.new()
 		sprite.centered = false
 		$Overlays.add_child(sprite)
 		building_previews.append(sprite)
-	var valid: bool = game.building_batch_valid(positions, game.interaction.tool) if game.interaction.building_drawing else false
 	for i in building_previews.size():
 		var sprite := building_previews[i]
 		sprite.visible = i < positions.size()
@@ -660,11 +754,14 @@ func sync_barrier_preview() -> void:
 			positions.assign(game.building_row())
 		elif game.cache.visible_tiles.has(game.mouse_tile()) and get_viewport().gui_get_hovered_control() == null:
 			positions.append(game.mouse_tile())
-	var joined: Dictionary = {}
-	for p in game.world.building_positions("station") + game.world.building_positions("site"):
-		if game.building_kind(p) in game.BARRIER_KINDS and not game.world.building_state(p, "site", {}).get("cancelled", false): joined[p] = true
-	for p in positions: joined[p] = true
+	if positions.is_empty():
+		for art in barrier_previews: art.hide()
+		return
+	var joined := nearby_barriers.duplicate()
+	for p in positions:
+		if shown_cells.grow(1).has_point(p): joined[p] = true
 	var valid: bool = game.building_batch_valid(positions, kind) and game.can_plan_building(kind) if not positions.is_empty() else false
+	positions = positions.filter(func(p): return shown_cells.has_point(p) and game.cache.visible_tiles.has(p))
 	for i in positions.size():
 		if i < barrier_previews.size() and barrier_previews[i].kind != kind:
 			barrier_previews[i].free()
@@ -695,7 +792,10 @@ func line_cell_map(positions: Dictionary) -> Dictionary:
 
 func line_port_map() -> Dictionary:
 	var ports := {"high_line": {}, "low_line": {}}
-	for p in game.world.building_positions("station") + game.world.building_positions("belt"):
+	for id in nearby_buildings:
+		var entity = game.world.buildings[id]
+		if not entity.in_group("station") and not entity.in_group("belt"): continue
+		var p: Vector2i = game.world.building_map.origin(id)
 		var kind: String = game.building_kind(p)
 		if kind == "transformer":
 			for wire in game.LINE_KINDS:
@@ -741,17 +841,14 @@ func sync_line_preview() -> void:
 			positions.assign(game.building_row())
 		elif game.cache.visible_tiles.has(game.mouse_tile()) and get_viewport().gui_get_hovered_control() == null:
 			positions.append(game.mouse_tile())
-	var plan: Dictionary = {}
-	for entity in game.world.buildings_in("line"):
-		plan[game.world.building_map.origin(entity.id)] = entity.state
-	for p in game.world.building_positions("site"):
-		if game.world.building_state(p, "site").kind in game.LINE_KINDS:
-			plan[p] = game.world.building_state(p, "site")
+	if positions.is_empty():
+		for art in line_previews: art.hide()
+		return
+	var plan := nearby_lines.duplicate()
 	for p in positions:
 		if not plan.has(p) or plan[p].kind != game.interaction.tool:
 			plan[p] = {"kind": game.interaction.tool, "axis": game.interaction.building_axis}
 	var cells := line_cell_map(plan) if not positions.is_empty() else {}
-	var ports := line_port_map() if not positions.is_empty() else {}
 	var affected: Array = positions.duplicate()
 	for p in positions:
 		for cell in game.building_cells(p, game.interaction.tool, game.interaction.building_axis):
@@ -762,8 +859,10 @@ func sync_line_preview() -> void:
 	var index := 0
 	var valid: bool = game.building_batch_valid(positions, game.interaction.tool, game.interaction.building_axis) if not positions.is_empty() else false
 	for p in affected:
-		var masks := line_connection_masks(p, plan[p], cells, ports)
+		if not shown_cells.grow(1).has_point(p): continue
+		var masks := line_connection_masks(p, plan[p], cells, nearby_ports)
 		for offset in masks:
+			if not shown_cells.has_point(p + offset) or not game.cache.visible_tiles.has(p + offset): continue
 			if index == line_previews.size():
 				var art := BeltArt.new(plan[p].kind)
 				$Overlays.add_child(art)

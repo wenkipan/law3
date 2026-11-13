@@ -20,7 +20,6 @@
 [ext_resource type="Texture2D" path="res://assets/icons/speed-4.svg" id="18_qccye"]
 [ext_resource type="Script" path="res://scripts/view/inspector_icons.gd" id="19_flipt"]
 [ext_resource type="Texture2D" path="res://assets/icons/move.svg" id="20_uorui"]
-[ext_resource type="Texture2D" path="res://assets/icons/slaughter.svg" id="21_wi3kw"]
 [ext_resource type="Script" path="res://scripts/view/alert_rail.gd" id="22_ka0sb"]
 [ext_resource type="Script" path="res://scripts/view/research_panel.gd" id="23_7r3ka"]
 
@@ -615,17 +614,6 @@ fit_to_longest_item = false
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
-
-[node name="Slaughter" type="Button" parent="Screen/EntityPanel/VBoxContainer0/ProductionControls" unique_id=1183984218]
-unique_name_in_owner = true
-visible = false
-custom_minimum_size = Vector2(46, 36)
-layout_mode = 2
-tooltip_text = "屠宰：完成当前产毛后执行，不自动补羊"
-focus_mode = 0
-theme_override_constants/icon_max_width = 24
-icon = ExtResource("21_wi3kw")
-expand_icon = true
 
 [node name="RemoveOrder" type="Button" parent="Screen/EntityPanel/VBoxContainer0/ProductionControls" unique_id=1865805457]
 unique_name_in_owner = true

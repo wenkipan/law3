@@ -10,7 +10,9 @@ func run(t) -> void:
 	check_finite_mining(t)
 	check_supply(t)
 	check_local_inventory(t)
+	check_wild_food_sites(t)
 	check_farming(t)
+	check_barn(t)
 	check_research(t)
 	check_market_restock(t)
 	check_power(t)
@@ -172,9 +174,32 @@ func check_local_inventory(t) -> void:
 			var expected: float = recipe[item] + g.building_materials(kind).get(item, 0)
 			t.near(g.stock_at(g.BASE, item), expected, "Recovery returns unused ingredients without refunding the consumed batch")
 
+func check_wild_food_sites(t) -> void:
+	var g = t.game
+	for entry in [["farm", "wheat", "farming"], ["hunting_ground", "meat", "hunting"], ["gathering_garden", "berries", "gathering"]]:
+		var kind: String = entry[0]
+		var item: String = entry[1]
+		t.fixtures.scenario("Food workplaces require a matching wild cell within the full footprint: " + kind, 0, false, 1020, false)
+		t.fixtures.wild(P + Vector2i.ONE, item)
+		t.fixtures.wild(Q, "meat" if item != "meat" else "berries")
+		t.fixtures.wild(Q + Vector2i.ONE, item)
+		t.fixtures.resident("construction", g.BASE)
+		t.fixtures.resident(entry[2], P + Vector2i(0, 4))
+		t.fixtures.building_materials(kind)
+		t.check(not g.place_building(P - Vector2i(0, 4), kind), "Empty ground is not a food source")
+		t.check(not g.place_building(Q, kind), "Matching wild food does not authorize covering a different wild resource")
+		t.check(g.place_building(P, kind), "A matching non-origin tile qualifies even before any research")
+		t.advance_until(func(): return g.world.has_building(P, "station"), 190, "The occupied resource cell does not block supplied construction")
+		if kind == "farm": continue # Water and harvest stages are covered separately.
+		var amount: int = g.PRODUCTS[kind].amount
+		g.adjust_production(P, 2)
+		t.advance_until(func(): return g.stock_at(P, item) >= amount * 2, 200, "The specialist produces repeated batches into the workplace, not a personal inventory")
+		t.near(g.resource_activity(item, 1).produced, amount * 2, "Repeated production reports exactly the two ordered batches")
+
 func check_farming(t) -> void:
 	var g = t.game
 	t.fixtures.scenario("A specialized farmer completes watering, independent growth and harvest")
+	t.fixtures.wild(P + Vector2i.ONE, "wheat")
 	t.fixtures.resident("farming", P)
 	t.fixtures.station("farm", P)
 	t.fixtures.stock_recipe(g.BASE, {"raw_water": 4})
@@ -184,6 +209,16 @@ func check_farming(t) -> void:
 	t.near(g.world.workers[0].earned_today, 2, "Only watering and harvesting earn wages")
 	g.simulate(20)
 	t.near(g.stock_at(P, "wheat"), 8, "Growth does not create a second crop without another recipe")
+
+func check_barn(t) -> void:
+	var g = t.game
+	t.fixtures.scenario("A stocked barn still converts feed into wool, not meat")
+	t.fixtures.station("barn", P)
+	t.fixtures.resident("farming", P)
+	t.fixtures.stock_recipe(P, g.production_materials("barn"))
+	g.adjust_production(P, 1)
+	t.advance_until(func(): return g.stock_at(P, "wool") > 0, 300, "Feeding, wool growth and shearing remain available")
+	t.near(g.resource_activity("meat", 1).produced, 0, "A completed wool batch cannot introduce meat")
 
 func check_research(t) -> void:
 	var g = t.game

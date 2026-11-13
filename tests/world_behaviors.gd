@@ -8,7 +8,7 @@ func run(t) -> void:
 	check_construction(t)
 	check_cancellation(t)
 	check_private_property(t)
-	check_hidden_life(t)
+	check_unworked_wild_food(t)
 	check_barriers(t)
 	check_lifecycle(t)
 	check_snapshots(t)
@@ -139,29 +139,19 @@ func check_private_property(t) -> void:
 	t.near(resident.money, private_cash, "An unsupplied project cannot draw wages or receive private funds")
 	t.near(g.resource_inventory().money, 600 + private_cash, "Employment and waiting preserve actual currency")
 
-func check_hidden_life(t) -> void:
+func check_unworked_wild_food(t) -> void:
 	var g = t.game
 	var p := Vector2i(70, 30)
-	for item in ["berries", "meat"]:
-		t.fixtures.scenario("A wild cell yields one private portion despite competing residents: " + item)
-		# A target resolver must get past an earlier, unreachable resource of the same kind.
-		var blocked := p - Vector2i(20, 0)
-		t.fixtures.wild(blocked, item)
-		for direction in g.DIRS: t.fixtures.station("wall", blocked + direction)
-		t.fixtures.wild(p, item)
-		for i in 2:
-			t.fixtures.resident("hunting" if item == "meat" else "gathering", p + Vector2i(i, 0), "meat" if item == "meat" else "fruit")
-		g.update_fog()
-		t.check(g.tile_details(p).is_empty(), "An unseen resource cannot be inspected")
-		t.advance_until(func(): return g.resource_activity(item, 1).produced > 0, 60, "Independent harvesting can complete outside player sight")
-		t.near(g.resource_activity(item, 1).produced, 1, "A cell produces one portion, not a three-item batch or one per claimant")
-		t.near(g.player_inventory()[item], 0, "Wild personal harvest is not silently donated to the player")
-		t.near(g.world.wild_resources[blocked].stock, 1, "A sealed resource is not collected remotely instead of resolving a reachable target")
-		t.check(g.tile_details(p).is_empty(), "An independent harvest does not reveal player fog")
-		var saved: Dictionary = g.capture_snapshot()
-		t.check(saved.ok and g.restore_snapshot(saved.data).ok, "A depleted wild cell survives saving and loading")
-		g.simulate(60)
-		t.near(g.resource_activity(item, 1).produced, 1, "Saving or waiting cannot duplicate the depleted portion")
+	t.fixtures.scenario("Residents do not produce food directly from reachable wild patches")
+	for entry in [["berries", "gathering", "fruit", P], ["wheat", "gathering", "grain", P + Vector2i(2, 0)], ["meat", "hunting", "meat", p]]:
+		t.fixtures.wild(entry[3], entry[0])
+		t.fixtures.resident(entry[1], entry[3], entry[2])
+	g.update_fog()
+	t.check(g.tile_details(p).is_empty(), "An unseen resource cannot be inspected")
+	g.simulate(120)
+	for item in ["berries", "wheat", "meat"]:
+		t.near(g.resource_activity(item, 1).produced, 0, "A resident cannot directly harvest " + item)
+	t.check(g.tile_details(p).is_empty(), "An independent resident does not reveal player fog")
 	var before: int = g.world.workers.size()
 	var new_region := p + Vector2i(64, 64)
 	g.ensure_region(Rect2i(new_region, Vector2i.ONE))
@@ -199,6 +189,14 @@ func check_snapshots(t) -> void:
 	t.check(restored.ok, "The checkpoint restores ownership, finite resources and activities")
 	if not restored.ok: return
 	t.check(t.world_observations() == observed, "Restoring does not replay production, wages or needs")
+	g.simulate(2)
+	var nearby: Dictionary = t.world_observations()
+	t.check(g.restore_snapshot(saved.data).ok, "The same checkpoint can be used from another camera position")
+	g.world_view.camera.position = g.tile_center(g.BASE + Vector2i(128, -128))
+	g.world_view.camera.zoom = Vector2.ONE * 2.2
+	g.world_view.sync_dynamic()
+	g.simulate(2)
+	t.check(t.world_observations() == nearby, "Offscreen residents advance the same work, goods and payments")
 	t.advance_until(func(): return g.stock_at(P, 2) == 4, 180, "Restored mining continues to its finite end")
 	var path := "/tmp/law3-refactor-save.dat"
 	t.check(g.save_game(path).ok, "The same checkpoint codec supports file saves")

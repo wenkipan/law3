@@ -26,10 +26,6 @@ func _init(g, w: Dictionary, trigger := "select", responses_only := false) -> vo
 	var responding: bool = responses_only or not responses.is_empty()
 	if responding: choices = responses
 	if not responding:
-		if w.employer == null and w.skill in ["gathering", "hunting"] and not g.is_child(w):
-			for endpoint in g.world.smart_objects.query(Slots.Action.HARVEST, {"skill": w.skill, "available_to": w.id}):
-				var p: Vector2i = endpoint.position
-				if g.can_harvest(w, p): add(c, e, choices, "harvest", p, {"identity": endpoint.instance.source}, [endpoint.id])
 		for endpoint in g.world.smart_objects.query(Slots.Action.MARKET, {"items": w.items.keys()}):
 			var p: Vector2i = endpoint.position
 			for item in w.items:
@@ -56,7 +52,6 @@ func _init(g, w: Dictionary, trigger := "select", responses_only := false) -> vo
 
 static func intent_key(op: Dictionary) -> String:
 	match op.kind:
-		"harvest": return "harvest:" + op.data.identity.item
 		"purchase", "sell", "eat", "use_item": return op.kind + ":" + str(op.data.item)
 		"service": return "service:" + op.data.kind
 		"build", "produce", "operate", "mine", "payroll": return "labor"
@@ -203,7 +198,7 @@ static func work_options(c, e, choices: Array) -> void:
 					slots.append(Slots.key("mine", data.job))
 				add(c, e, choices, "operate", p, data, slots)
 			elif (g.PRODUCTS.has(kind) or kind == "research_bench") and b.growth <= 0 and g.has_production_order(p):
-				if b.task.is_empty() and not (kind == "barn" and b.slaughter) and not g.recipe_ready(p, g.station_materials(p)):
+				if b.task.is_empty() and not g.recipe_ready(p, g.station_materials(p)):
 					e.reject("produce", p, "missing_materials")
 					continue
 				add(c, e, choices, "produce", p, {"identity": b}, [endpoint.id])

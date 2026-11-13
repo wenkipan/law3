@@ -5,6 +5,7 @@ const SmartObjects = preload("res://scripts/simulation/smart_objects.gd")
 const Building = preload("res://scripts/entities/building.gd")
 const Storage = preload("res://scripts/entities/storage.gd")
 const BuildingMap = preload("res://scripts/building_map.gd")
+const ChunkIndex = preload("res://scripts/chunk_index.gd")
 const BLOCKING_KINDS := ["wall", "fence"]
 
 # Authoritative simulation state, explicitly encoded by persistence/world_snapshot.gd.
@@ -51,6 +52,18 @@ var recovery_timer := 0.0
 var pollution_operations: Dictionary = {}
 var research_progress: Dictionary = {}
 
+# Derived spatial lookups; no viewport or scene nodes belong to the world.
+var worker_chunks := ChunkIndex.new()
+var ground_chunks := ChunkIndex.new()
+var cargo_chunks := ChunkIndex.new()
+var building_revision := 0
+
+func rebuild_chunk_indexes() -> void:
+	for index in [worker_chunks, ground_chunks, cargo_chunks]: index.clear()
+	for w in workers: worker_chunks.place(w.id, Vector2i(w.pos.round()))
+	for p in ground_items: ground_chunks.place(p, p)
+	for id in belt_cargo: cargo_chunks.place(id, belt_cargo[id].to)
+
 func walkable(p: Vector2i) -> bool:
 	return terrain.has(p) and not water_sources.has(p) and building_state(p, "station").get("kind", "") not in BLOCKING_KINDS
 
@@ -66,6 +79,7 @@ func create_building(kind: String, p: Vector2i, cells: Array[Vector2i], settings
 	if ground_items.has(p):
 		ground_items[p].transfer_to(building.inventory)
 		ground_items.erase(p)
+		ground_chunks.remove(p)
 		smart_objects.unregister(StringName(SmartObjects.key("ground", p)))
 	refresh_interactions_at(p)
 	return building
@@ -76,6 +90,7 @@ func remove_building(building) -> void:
 	if not building.inventory.is_empty():
 		if not ground_items.has(p): ground_items[p] = Storage.new()
 		building.inventory.transfer_to(ground_items[p])
+		ground_chunks.place(p, p)
 	smart_objects.unregister(SmartObjects.building_id(building.id))
 	building_map.remove(building.id)
 	buildings.erase(building.id)
@@ -88,6 +103,7 @@ func move_building(building, target: Vector2i, cells: Array[Vector2i]) -> void:
 	refresh_interactions_at(origin)
 
 func refresh_interactions_at(p: Vector2i) -> void:
+	building_revision += 1
 	# A power line may share an origin with the primary storage container.
 	var primary = building_at(p)
 	for id in building_map.at_origin(p):
@@ -173,6 +189,7 @@ func storage_at(p: Vector2i, create := false):
 	if building != null: return building.inventory
 	if create and not ground_items.has(p):
 		ground_items[p] = Storage.new()
+		ground_chunks.place(p, p)
 		smart_objects.register_ground(p, ground_items[p].items)
 	return ground_items.get(p)
 
@@ -189,9 +206,11 @@ func inventories() -> Array:
 	return result
 
 func clear_buildings() -> void:
+	building_revision += 1
 	buildings.clear()
 	building_map.clear()
 	ground_items.clear()
+	ground_chunks.clear()
 	next_building_id = 0
 
 func reset(seed_value: int, base: Vector2i, starting_money: float) -> void:
@@ -207,6 +226,8 @@ func reset(seed_value: int, base: Vector2i, starting_money: float) -> void:
 	smart_objects.clear()
 	newborns.clear()
 	workers.clear()
+	worker_chunks.clear()
+	cargo_chunks.clear()
 	inventory_history.clear()
 	storage_at(base, true).add("money", starting_money)
 	next_cargo_id = 0

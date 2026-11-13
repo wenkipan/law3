@@ -1,9 +1,12 @@
 extends RefCounted
 
+const MapGenerator = preload("res://scripts/map_generator.gd")
+
 # Placement is authoritative; cell and origin lookup tables are derived indexes.
 var placements: Dictionary = {}
 var _cells: Dictionary = {}
 var _origins: Dictionary = {}
+var _chunks: Dictionary = {}
 
 func place(id: int, origin: Vector2i, cells: Array[Vector2i]) -> void:
 	remove(id)
@@ -18,6 +21,9 @@ func remove(id: int) -> void:
 		if _cells[cell].is_empty(): _cells.erase(cell)
 	_origins[placement.origin].erase(id)
 	if _origins[placement.origin].is_empty(): _origins.erase(placement.origin)
+	for chunk in footprint_chunks(placement.cells):
+		_chunks[chunk].erase(id)
+		if _chunks[chunk].is_empty(): _chunks.erase(chunk)
 	placements.erase(id)
 
 func origin(id: int) -> Vector2i:
@@ -29,15 +35,20 @@ func at_origin(p: Vector2i) -> Array:
 func at_cell(p: Vector2i) -> Array:
 	return _cells.get(p, [])
 
+func in_chunk(chunk: Vector2i) -> Dictionary:
+	return _chunks.get(chunk, {})
+
 func rebuild() -> void:
 	_cells.clear()
 	_origins.clear()
+	_chunks.clear()
 	for id in placements: index_placement(id)
 
 func clear() -> void:
 	placements.clear()
 	_cells.clear()
 	_origins.clear()
+	_chunks.clear()
 
 func index_placement(id: int) -> void:
 	var placement: Dictionary = placements[id]
@@ -46,3 +57,11 @@ func index_placement(id: int) -> void:
 	for cell in placement.cells:
 		if not _cells.has(cell): _cells[cell] = []
 		_cells[cell].append(id)
+	for chunk in footprint_chunks(placement.cells):
+		if not _chunks.has(chunk): _chunks[chunk] = {}
+		_chunks[chunk][id] = true
+
+func footprint_chunks(cells: Array) -> Dictionary:
+	var result: Dictionary = {}
+	for cell in cells: result[MapGenerator.chunk_at(cell)] = true
+	return result

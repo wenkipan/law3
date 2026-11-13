@@ -12,7 +12,7 @@ const Delivery = preload("res://scripts/simulation/evaluation/delivery.gd")
 const Slots = preload("res://scripts/simulation/smart_objects.gd")
 
 static var ACTIONS = {"eat": Life.meal, "sleep": Life.sleep, "rest": Life.rest,
-	"harvest": Economy.harvest, "sell": Economy.sell,
+	"sell": Economy.sell,
 	"use_item": Items.use, "purchase": Economy.purchase, "borrow": Economy.borrow,
 	"payroll": Economy.payroll, "mine": Labor.mining, "build": Labor.construction,
 	"produce": Labor.production, "operate": Labor.operation, "deliver": Delivery.evaluate}
@@ -35,7 +35,6 @@ var rejected: Array[Dictionary] = []
 var proposals: Array[Dictionary] = []
 var _work_facts: Array[Dictionary] = []
 var _work_ready := false
-var _harvest_income: Dictionary = {}
 
 func _init(facts) -> void:
 	context = facts
@@ -48,16 +47,6 @@ func _init(facts) -> void:
 	tracing = facts.game.ai_trace.watches(facts.worker.id)
 	resources.prepare()
 
-func harvest_income(item: String) -> float:
-	if _harvest_income.has(item): return _harvest_income[item]
-	var g = context.game
-	var value := 0.0
-	for p in g.world.smart_objects.positions(Slots.Action.MARKET, {"item": item}):
-		if context.path_to(p).is_empty(): continue
-		value = maxf(value, resources.income(minf(g.stock_at(p, "money"), g.market_price(p, item, true))))
-	_harvest_income[item] = value
-	return value
-
 func upper_bound(op: Dictionary) -> float:
 	# Unsupported bounds stay infinite and receive the ordinary, exact comparison.
 	var g = context.game
@@ -65,7 +54,6 @@ func upper_bound(op: Dictionary) -> float:
 	var use_hours := 0.0
 	var bed_hours := 0.0
 	match op.kind:
-		"harvest": use_hours = 1.0
 		"eat": use_hours = g.MEAL_SECONDS / g.HOUR_SECONDS
 		"purchase":
 			if not g.FOOD_RECOVERY.has(op.data.item): return INF
@@ -80,10 +68,6 @@ func upper_bound(op: Dictionary) -> float:
 	var travel_hours: float = environment.walk_hours(op.path)
 	var value := 0.0
 	match op.kind:
-		"harvest":
-			var item: String = op.data.identity.item
-			value += harvest_income(item) + needs.fatigue_gain(state.fatigue, -g.FATIGUE_PER_HOUR)
-			if g.eats(w, item): value += needs.food_gain(state.hunger + g.personal_food(w), g.FOOD_RECOVERY[item])
 		"sell": value += resources.income(op.data.amount * g.market_price(op.target, op.data.item, true)) + 0.02 * op.data.amount
 		"borrow": value += resources.income(minf(op.data.amount, g.stock_at(op.target, "money")))
 		"purchase":
@@ -159,8 +143,8 @@ func work_facts() -> Array[Dictionary]:
 		if not g.PRODUCTS.has(kind) or g.world.building_state(p, "station").growth > 0: continue
 		if context.path_to(p).is_empty() or not g.has_production_order(p): continue
 		var task: Dictionary = g.world.building_state(p, "station").task
-		if task.is_empty() and not (kind == "barn" and g.world.building_state(p, "station").slaughter) and not g.recipe_ready(p, g.production_materials(kind)): continue
-		var hours: float = maxf(0, task.seconds - task.progress) / g.HOUR_SECONDS if not task.is_empty() else (1.0 if kind in ["farm", "barn"] else g.PRODUCTS[kind].hours)
+		if task.is_empty() and not g.recipe_ready(p, g.station_materials(p)): continue
+		var hours: float = maxf(0, task.seconds - task.progress) / g.HOUR_SECONDS if not task.is_empty() else g.station_work_hours(p)
 		_work_facts.append({"kind": "produce", "target": p, "position": p, "station": kind, "contract": task, "hours": hours})
 	for endpoint in context.job_slots(Slots.Action.BUILD):
 		var p: Vector2i = endpoint.instance.position

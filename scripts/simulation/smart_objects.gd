@@ -223,6 +223,15 @@ func available(id: String, worker_id := -1) -> bool:
 func identity(id: String) -> int:
 	return slots.get(id, {}).get("identity", -1)
 
+func snapshot_claims() -> Dictionary:
+	# Pointer-held labor is a gesture, not a resumable resident activity.
+	var saved := slots.duplicate()
+	for id in slots:
+		if slots[id].owner >= -1: continue
+		saved[id] = slots[id].duplicate()
+		saved[id].merge({"owner": -1, "claim": 0, "occupied": false}, true)
+	return saved
+
 func acquire(ids: Array[String], worker_id: int) -> Array[Dictionary]:
 	# Validate the entire bundle before writing any slot (e.g. drill + mineral).
 	for id in ids:

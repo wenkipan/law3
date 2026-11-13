@@ -4,6 +4,9 @@ const Building = preload("res://scripts/entities/building.gd")
 
 signal personal_item_event(worker_id: int, kind: String, item: String, amount: float)
 signal transaction_completed(worker_id: int, item, buying: bool)
+signal terrain_cell_changed(cell: Vector2i)
+signal sight_changed(cells: Dictionary)
+signal presentation_stock_changed(cell: Vector2i)
 
 const CELL := 40.0
 const BASE := Vector2i(32, 13)
@@ -103,7 +106,6 @@ const SERVICES := {
 	"hospital": {"slot": "treat", "action": "诊疗", "hours": 1.0, "price": 4.0, "recovery": 50.0, "materials": {"medical": 1}},
 }
 const SHEEP_GROWTH_HOURS := 12.0
-const SHEEP_MEAT := 6
 const MEAT_HUNGER := 20.0
 const ITEM_USES := {
 	"bench": {"slot": "gun_uses", "uses": GUN_USES},
@@ -111,8 +113,9 @@ const ITEM_USES := {
 	"clothes": {"slot": "clothes", "uses": 72.0 * HOUR_SECONDS},
 	"tools": {"slot": "tools", "uses": 12},
 }
-const MEAT_PRODUCT := {"name": "肉", "unit": "份", "price": 1.0, "item": "meat"}
 const FARM_GROWTH_HOURS := 6.0
+const WILD_SITE_ITEMS := {"farm": "wheat", "hunting_ground": "meat", "gathering_garden": "berries"}
+const WILD_ITEM_NAMES := {"wheat": "野生小麦", "meat": "野生动物", "berries": "野生浆果"}
 const EFFECT_RADIUS := 3
 const FOUNTAIN_WATER := 10
 const LIGHT_BONUS := 0.2
@@ -149,6 +152,8 @@ const NEW_BUILDINGS := {
 	"pharmacy": {"name": "制药厂", "materials": {1: 8, "iron": 2}, "hours": 6.0, "size": Vector2i(3, 2)},
 	"hospital": {"name": "医院", "materials": {1: 10, "planks": 2}, "hours": 6.0, "size": Vector2i(3, 2)},
 	"farm": {"name": "农田", "materials": {1: 4}, "hours": 4.0, "size": Vector2i(4, 3)},
+	"hunting_ground": {"name": "猎场", "materials": {7: 4, 1: 2}, "hours": 3.0, "size": Vector2i(2, 2)},
+	"gathering_garden": {"name": "采集园", "materials": {7: 4}, "hours": 2.0, "size": Vector2i(2, 2)},
 	"power_plant": {"name": "燃煤发电站", "materials": {4: 12, 2: 6}, "hours": 8.0, "size": Vector2i(4, 3)},
 	"high_line": {"name": "粗电线", "materials": {2: 2}, "hours": 0.5},
 	"low_line": {"name": "普通电线", "materials": {2: 1}, "hours": 0.25},
@@ -163,7 +168,7 @@ const NEW_BUILDINGS := {
 	"canteen": {"name": "食堂", "materials": {1: 8, 4: 2}, "hours": 4.0, "size": Vector2i(2, 2)},
 }
 const FREIGHT_CAPACITY := 4
-const BUILDING_KINDS := ["recruitment_board", "market", "mine", "bed", "bench", "workbench", "pump", "purifier", "printer", "bank", "belt", "farm", "power_plant", "high_line", "low_line", "transformer", "grow_light", "fountain", "electric_belt", "drill", "manual_generator", "spotlight", "daylight", "canteen", "mill", "barn", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy", "chemical_plant", "soapworks", "bathhouse", "laundry", "pharmacy", "hospital", "storage_box", "research_bench", "wall", "fence", "door"]
+const BUILDING_KINDS := ["recruitment_board", "market", "mine", "bed", "bench", "workbench", "pump", "purifier", "printer", "bank", "belt", "farm", "hunting_ground", "gathering_garden", "power_plant", "high_line", "low_line", "transformer", "grow_light", "fountain", "electric_belt", "drill", "manual_generator", "spotlight", "daylight", "canteen", "mill", "barn", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy", "chemical_plant", "soapworks", "bathhouse", "laundry", "pharmacy", "hospital", "storage_box", "research_bench", "wall", "fence", "door"]
 # 生产批次的产物、工时与售价；原料见 production_materials，建材见 building_materials。
 const PRODUCTS := {
 	"mill": {"name": "面包", "unit": "份", "hours": 2.0, "amount": 8, "item": "bread", "materials": {"wheat": 4}},
@@ -178,6 +183,8 @@ const PRODUCTS := {
 	"soapworks": {"name": "清洁用品", "unit": "份", "hours": 2.0, "amount": 4, "item": "cleaner", "materials": {"chemicals": 2, "raw_water": 2}},
 	"pharmacy": {"name": "医疗用品", "unit": "份", "hours": 2.0, "amount": 4, "item": "medical", "materials": {"chemicals": 2, "raw_water": 2, "cloth": 1}},
 	"farm": {"name": "小麦", "unit": "份", "hours": 2.0, "amount": 8, "item": "wheat"},
+	"hunting_ground": {"name": "肉", "unit": "份", "hours": 1.0, "amount": 4, "item": "meat", "recovery_hours": 6.0, "recovery_name": "休猎"},
+	"gathering_garden": {"name": "浆果", "unit": "份", "hours": 1.0, "amount": 4, "item": "berries", "recovery_hours": 6.0, "recovery_name": "再生"},
 	"bench": {"name": "矿枪", "unit": "把", "hours": GUN_WORK_HOURS, "price": GUN_PRICE, "uses": GUN_USES, "durability": "gun_uses"},
 	"workbench": {"name": "背包", "unit": "个", "hours": BACKPACK_WORK_HOURS, "price": BACKPACK_PRICE, "uses": BACKPACK_USES, "durability": "backpack_uses"},
 	"pump": {"name": "原水", "unit": "份", "hours": WATER_WORK_HOURS, "amount": WATER_BATCH},
@@ -278,6 +285,7 @@ func reset_world(new_seed: int = -1) -> void:
 	cache.invalidate_delivery()
 	sample_inventory()
 	world_view.camera.position = tile_center(BASE)
+	world_view.camera.zoom = Vector2.ONE
 	update_fog()
 	update_ui()
 	world_view.rebuild(self)
@@ -285,9 +293,8 @@ func reset_world(new_seed: int = -1) -> void:
 
 func capture_snapshot() -> Dictionary:
 	if simulating: return WorldSnapshot.failure("Wait until the simulation step is complete.", "busy")
-	stop_player_work()
-	interaction.action_press.clear()
-	return WorldSnapshot.capture(self)
+	return WorldSnapshot.capture(world, {"powered_devices": cache.powered_devices,
+		"ready_drills": cache.ready_drills, "power_output": cache.power_output, "visible_tiles": cache.visible_tiles})
 
 func restore_snapshot(data: PackedByteArray) -> Dictionary:
 	if simulating: return WorldSnapshot.failure("Wait until the simulation step is complete.", "busy")
@@ -299,6 +306,7 @@ func restore_snapshot(data: PackedByteArray) -> Dictionary:
 	var next_cache := WorldCache.new()
 	next_cache.rebuild(restored.world, Rect2i(BASE - Vector2i(4, 2), Vector2i(9, 5)), restored.sample)
 	restored.world.rebuild_interactions(self)
+	restored.world.rebuild_chunk_indexes()
 	world_view.initialized = false
 	world = restored.world
 	cache = next_cache
@@ -310,17 +318,11 @@ func restore_snapshot(data: PackedByteArray) -> Dictionary:
 	alert_targets.clear()
 	world.smart_objects.tracing = ai_trace.enabled
 	world.smart_objects.traced.connect(trace_smart_object)
+	var session_paused := interaction.paused_by_player
 	interaction.reset()
-	interaction.speed = restored.view.speed
-	interaction.paused_by_player = restored.view.paused
-	interaction.pollution_visible = restored.view.pollution
-	interaction.brush_wage = restored.view.brush_wage
-	interaction.wage_filter = restored.view.wage_filter
-	interaction.brush_fee = restored.view.get("brush_fee", 1.0)
-	interaction.fee_filter = restored.view.get("fee_filter", "all")
-	interaction.view_origin = MapGenerator.chunk_at(Vector2i(restored.view.center.floor())) * MapGenerator.CHUNK_SIZE
-	world_view.camera.position = (restored.view.center - Vector2(interaction.view_origin)) * CELL
-	world_view.camera.zoom = Vector2.ONE * restored.view.zoom
+	interaction.paused_by_player = session_paused
+	world_view.camera.position = tile_center(BASE)
+	world_view.camera.zoom = Vector2.ONE
 	ai_trace.reset(self)
 	hud.reset_screen()
 	hud.sync_speed()
@@ -377,7 +379,6 @@ func ensure_region(area: Rect2i) -> void:
 				var chunk := Rect2i(index * MapGenerator.CHUNK_SIZE, Vector2i.ONE * MapGenerator.CHUNK_SIZE)
 				for p in world.building_positions("station"):
 					if building_kind(p) == "drill" and chunk.grow(DRILL_RADIUS).has_point(p): cache.mining_drills[p] = true
-			world_view.refresh_chunk(index)
 
 func wild_resource(item: String) -> Dictionary:
 	return {"item": item, "stock": 1, "task": {}}
@@ -398,6 +399,7 @@ func create_worker(p: Vector2i, days := CHILD_DAYS, producer := -1) -> Dictionar
 		"mood": WorkerMood.new(), "loan_principal": 0.0, "loan_interest": 0.0, "loan_day": 0, "loan_bank": null,
 		"unloaded_this_trip": 0, "payroll": 0.0}
 	world.workers.append(worker)
+	world.worker_chunks.place(id, p)
 	ai_trace.record(self, worker, "simulation", "spawn")
 	return worker
 
@@ -465,11 +467,8 @@ func personal_food(w: Dictionary) -> float:
 func eats(w: Dictionary, item) -> bool:
 	return item in DIETS[w.diet]
 
-func can_harvest(w: Dictionary, p: Vector2i) -> bool:
-	var resource: Dictionary = world.wild_resources.get(p, {})
-	if resource.is_empty() or resource.stock <= 0 or w.employer != null or is_child(w): return false
-	var skill := "hunting" if resource.item == "meat" else "gathering"
-	return w.skill == skill and w.items.get(resource.item, 0) < 12
+func can_hand_harvest(p: Vector2i) -> bool:
+	return world.wild_resources.get(p, {}).get("stock", 0) > 0 and world.building_map.at_cell(p).is_empty()
 
 func mine_deposit(p: Vector2i):
 	for cell in building_cells(p, building_kind(p)):
@@ -480,7 +479,7 @@ func deplete_deposit(cell: Vector2i) -> void:
 	world.deposits[cell] = maxi(0, world.deposits.get(cell, 0) - 1)
 	if world.deposits[cell] == 0:
 		world.terrain[cell] = 0
-		world_view.block_changed(cell)
+		terrain_cell_changed.emit(cell)
 
 func market_price(p: Vector2i, item, buying := false) -> float:
 	var market: Dictionary = world.building_state(p, "station", {})
@@ -761,6 +760,7 @@ func place_belt_path(path: Array[Vector2i], line_kind := "belt") -> bool:
 		var data := belt_data(p)
 		data.direction = plan[p].direction
 		data.inputs = plan[p].inputs
+	world.building_revision += 1
 	cache.invalidate_delivery()
 	return true
 
@@ -836,6 +836,7 @@ func load_belt(w: Dictionary, delivery: Dictionary, p: Vector2i) -> bool:
 	delivery.on_belt = true
 	world.belt_cargo[world.next_cargo_id] = {"delivery": delivery, "worker": w.get("id", -1),
 		"from": p, "to": p, "progress": 0.0, "fee": fee}
+	world.cargo_chunks.place(world.next_cargo_id, p)
 	world.next_cargo_id += 1
 	return true
 
@@ -854,6 +855,7 @@ func simulate_belts(delta: float) -> void:
 		if delivery_building_at(cargo.to) == cargo.delivery.target and cargo.progress >= 1.0:
 			complete_delivery(cargo.delivery, cargo.fee)
 			world.belt_cargo.erase(id)
+			world.cargo_chunks.remove(id)
 	# Resolve against a snapshot so dictionary order cannot move cargo several cells at once.
 	var occupied := belt_occupancy()
 	var requests: Dictionary = {}
@@ -893,6 +895,7 @@ func simulate_belts(delta: float) -> void:
 		cargo.from = chosen
 		cargo.to = target
 		cargo.progress = minf(cargo.progress - 1.0, delta * BELT_SPEED)
+		world.cargo_chunks.place(id, target)
 
 func contract(hours: float) -> Dictionary:
 	return {"progress": 0.0, "seconds": hours * HOUR_SECONDS}
@@ -1061,14 +1064,17 @@ func building_space_valid(p: Vector2i, kind: String, planned_axis := Vector2i.RI
 		return false
 	if kind == "pump" and not near_water_source(p):
 		return false
-	if kind == "mine":
-		var found := false
-		for cell in building_cells(p, kind):
-			if world.deposits.get(cell, 0) > 0 and world.terrain.get(cell, 0) not in [5, 6]: found = true
-		if not found: return false
+	var required_item: String = WILD_SITE_ITEMS.get(kind, "")
+	var found_source := kind != "mine" and required_item.is_empty()
 	for cell in building_cells(p, kind, planned_axis):
-		if not in_bounds(cell) or not cache.visible_tiles.has(cell) or world.water_sources.has(cell) or world.wild_resources.get(cell, {}).get("stock", 0) > 0:
+		if not in_bounds(cell) or not cache.visible_tiles.has(cell) or world.water_sources.has(cell):
 			return false
+		var resource: Dictionary = world.wild_resources.get(cell, {})
+		if resource.get("stock", 0) > 0:
+			if resource.item != required_item: return false
+			found_source = true
+		if kind == "mine" and world.deposits.get(cell, 0) > 0 and world.terrain.get(cell, 0) not in [5, 6]:
+			found_source = true
 		for id in world.building_map.at_cell(cell):
 			var building = world.buildings[id]
 			var other: String = building.kind
@@ -1079,7 +1085,7 @@ func building_space_valid(p: Vector2i, kind: String, planned_axis := Vector2i.RI
 			if kind in LINE_KINDS and kind == other and origin != p:
 				continue
 			return false
-	return true
+	return found_source
 
 func site_cleared(p: Vector2i) -> bool:
 	for cell in building_cells(p, building_kind(p)):
@@ -1338,8 +1344,6 @@ func production_station(kind: String) -> Dictionary:
 	if kind == "recruitment_board":
 		result.merge({"recruitment_elapsed": 0.0, "recruitment_cost": DEFAULT_RECRUITMENT_COST})
 	if kind == "market": result.merge({"buy_prices": {}, "sell_prices": {}})
-	if kind == "barn":
-		result.merge({"sheep": 1, "slaughter": false})
 	if kind == "research_bench":
 		result.merge({"research": "", "research_tasks": {}})
 	return result
@@ -1409,11 +1413,6 @@ func research_recipe_text(project: String, _p = null) -> String:
 	var definition: Dictionary = Technology.PROJECTS[project]
 	return "每点  %sh\n%s" % [String.num(definition.hours, 2), material_requirements_text(definition.materials)]
 
-func request_slaughter(p: Vector2i) -> void:
-	if building_kind(p) == "barn" and world.has_building(p, "station") and world.building_state(p, "station").sheep > 0:
-		world.building_state(p, "station").slaughter = true
-		supply_changed(p)
-
 # 日产量跨天保留，完成量按完成当天计入；缺产不累积，销售库存不增加配额。
 # 已开工或正在生长的批次完成后才检查新配额；打印仓使用有限待制数量。
 func has_production_order(p: Vector2i, manual := false) -> bool:
@@ -1421,8 +1420,6 @@ func has_production_order(p: Vector2i, manual := false) -> bool:
 	if not manual and bench.get("wage", WAGE_PER_HOUR) == 0: return false
 	if bench.kind == "research_bench":
 		return not bench.task.is_empty() or research_can_start(bench.research)
-	if bench.kind == "barn" and (bench.sheep <= 0 or bench.slaughter):
-		return bench.sheep > 0
 	if not bench.task.is_empty() or bench.growth > 0:
 		return true
 	var kind := building_kind(p)
@@ -1450,12 +1447,9 @@ func product_item(kind: String):
 func shop_goods(p: Vector2i) -> Array:
 	return MARKET_GOODS if building_kind(p) == "market" and building_open(p) else []
 
-func sale_product(p: Vector2i, item = null) -> Dictionary:
-	return MEAT_PRODUCT if item == "meat" else PRODUCTS.get(building_kind(p), {})
-
 func sale_price(p: Vector2i, item = null) -> float:
 	if building_kind(p) == "market": return market_price(p, item)
-	return fee_settings(p).get("fee", sale_product(p, item).get("price", 0.0)) * (1.0 + LIGHT_BONUS if has_powered_effect(Vector2(p), "spotlight") else 1.0)
+	return fee_settings(p).get("fee", PRODUCTS.get(building_kind(p), {}).get("price", 0.0)) * (1.0 + LIGHT_BONUS if has_powered_effect(Vector2(p), "spotlight") else 1.0)
 
 func fee_kind(kind: String) -> String:
 	if kind == "bed": return "bed"
@@ -1465,13 +1459,12 @@ func fee_kind(kind: String) -> String:
 func default_fee(kind: String) -> float:
 	if kind == "bed": return BED_PRICE
 	if SERVICES.has(kind): return SERVICES[kind].price
-	if kind == "barn": return MEAT_PRODUCT.price
 	return PRODUCTS.get(kind, {}).get("price", 0.0)
 
 func fee_unit(kind: String) -> String:
 	if kind == "bed": return "货币 / %.0fh" % BED_LEASE_HOURS
 	if SERVICES.has(kind): return "货币 / 次"
-	return "货币 / " + ("份" if kind == "barn" else PRODUCTS.get(kind, {}).get("unit", "件"))
+	return "货币 / " + PRODUCTS.get(kind, {}).get("unit", "件")
 
 func fee_settings(p) -> Dictionary:
 	var building = world.building_at(p)
@@ -1506,9 +1499,10 @@ func set_fee_filter(value: String) -> void:
 	interaction.fee_filter = value
 	hud.sync_wage_brush()
 
-func fee_targets() -> Array[Dictionary]:
+func fee_targets(ids = null) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
-	for building in world.buildings.values():
+	for id in (world.buildings if ids == null else ids):
+		var building = world.buildings[id]
 		var p: Vector2i = world.building_map.origin(building.id)
 		var kind := fee_kind(building.kind)
 		if interaction.fee_filter != "all" and interaction.fee_filter != kind: continue
@@ -1575,9 +1569,10 @@ func set_wage_filter(value: String) -> void:
 func wage_target_kind(p, mining: bool) -> String:
 	return "build" if world.has_building(p, "site") else "mine" if building_kind(p) in ["mine", "drill"] else "station"
 
-func wage_targets() -> Array[Dictionary]:
+func wage_targets(ids = null) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
-	for building in world.buildings.values():
+	for id in (world.buildings if ids == null else ids):
+		var building = world.buildings[id]
 		var p: Vector2i = world.building_map.origin(building.id)
 		var kind := wage_target_kind(p, false)
 		if interaction.wage_filter != "all" and interaction.wage_filter != kind: continue
@@ -1692,6 +1687,7 @@ func simulate_workers(delta: float) -> void:
 		w.mood.advance(delta / HOUR_SECONDS, w.buffs.mood_bonus(w))
 		w.hunger = maxf(0.0, w.hunger - hunger_decay(w) * delta / DAY_SECONDS)
 		var experience: Dictionary = w.activity.tick(self, w, delta)
+		world.worker_chunks.place(w.id, Vector2i(w.pos.round()))
 		if not experience.is_empty():
 			experience.worker = w
 			experience.pos = w.pos
@@ -1811,6 +1807,7 @@ func remove_worker(w: Dictionary) -> void:
 		if w.equipment[item] > 0: record_resource_use(item, 1)
 	if interaction.selected_worker == w.id: clear_entity_selection()
 	world.workers.erase(w)
+	world.worker_chunks.remove(w.id)
 
 func assign_bed(p: Vector2i, worker_id: int) -> void:
 	if not world.has_building(p, "bed") or worker_id < -1 or (worker_id >= 0 and world.worker(worker_id).is_empty()):
@@ -1928,26 +1925,22 @@ func _process(delta: float) -> void:
 
 # The starting point, owned buildings and employees reveal current sight only.
 func update_fog() -> void:
-	var changed := cache.visible_tiles.duplicate()
-	cache.visible_tiles.clear()
-	var sources: Array[Vector2i] = [BASE]
-	for building in world.buildings.values():
-		if building.phase == WorldState.Building.Phase.BUILT and building.state.get("owner", "player") == "player":
-			sources.append(world.building_map.origin(building.id))
+	if cache.sight_building_revision != world.building_revision:
+		cache.sight_building_revision = world.building_revision
+		cache.sight_buildings = {BASE: true}
+		for building in world.buildings.values():
+			if building.phase == WorldState.Building.Phase.BUILT and building.state.get("owner", "player") == "player":
+				cache.sight_buildings[world.building_map.origin(building.id)] = true
+	var sources := cache.sight_buildings.duplicate()
 	for w in world.workers:
-		if w.employer != null: sources.append(Vector2i(w.pos.round()))
+		if w.employer != null: sources[Vector2i(w.pos.round())] = true
 	for origin in sources:
-		ensure_region(Rect2i(origin - Vector2i.ONE * VISION_RADIUS, Vector2i.ONE * (VISION_RADIUS * 2 + 1)))
-		for y in range(-VISION_RADIUS, VISION_RADIUS + 1):
-			for x in range(-VISION_RADIUS, VISION_RADIUS + 1):
-				var target := origin + Vector2i(x, y)
-				if not in_bounds(target) or x * x + y * y > VISION_RADIUS * VISION_RADIUS:
-					continue
-				cache.visible_tiles[target] = true
-	changed.merge(cache.visible_tiles, true)
+		if not cache.sight_origins.has(origin):
+			ensure_region(Rect2i(origin - Vector2i.ONE * VISION_RADIUS, Vector2i.ONE * (VISION_RADIUS * 2 + 1)))
+	var changed := cache.update_sight(sources, VISION_RADIUS, world.terrain)
 	for w in world.workers:
-		if cache.visible_tiles.has(Vector2i(w.pos.round())): world.known_people[w.id] = true
-	world_view.sync_fog(changed)
+		if not world.known_people.has(w.id) and cache.visible_tiles.has(Vector2i(w.pos.round())): world.known_people[w.id] = true
+	if not changed.is_empty(): sight_changed.emit(changed)
 
 
 func designate(a: Vector2i, b: Vector2i, cancel := false) -> int:
@@ -2000,8 +1993,7 @@ func tile_details(p: Vector2i) -> Dictionary:
 		return {"title": "水源", "text": "不可通行\n可供抽水与灌溉"}
 	if world.wild_resources.get(p, {}).get("stock", 0) > 0:
 		var resource: Dictionary = world.wild_resources[p]
-		var title: String = {"berries": "浆果丛", "wheat": "野生谷物", "meat": "野生动物"}[resource.item]
-		return {"title": title, "text": "%s × %d\n%s · 1h" % [item_name(resource.item), resource.stock, "狩猎" if resource.item == "meat" else "采集"]}
+		return {"title": WILD_ITEM_NAMES[resource.item], "text": "%s × %d\n%s · 1h" % [item_name(resource.item), resource.stock, "狩猎" if resource.item == "meat" else "采集"]}
 	var ore: int = world.terrain[p]
 	if ore == 0:
 		return {"title": "空地", "text": "可通行"}
@@ -2025,7 +2017,6 @@ func building_fee_text(kind: String, p = null) -> String:
 	if kind == "bed": return "使用费  %s 货币 / %.0fh" % [String.num(base_fee(p) if p != null else BED_PRICE, 1), BED_LEASE_HOURS]
 	if SERVICES.has(kind): return "收费  %s 货币 / 次" % String.num(base_fee(p) if p != null else SERVICES[kind].price, 1)
 	if kind in BELT_KINDS: return "采矿运费  %s 货币 / 块" % String.num(BELT_FEE, 1)
-	if kind == "barn": return "肉售价  %s 货币 / 份" % String.num(sale_price(p, "meat") if p != null else MEAT_PRODUCT.price, 1)
 	if PRODUCTS.get(kind, {}).has("price"):
 		return "售价  %s 货币 / %s" % [String.num(sale_price(p) if p != null else PRODUCTS[kind].price, 1), PRODUCTS[kind].unit]
 	return ""
@@ -2043,9 +2034,13 @@ func product_recipe_text(kind: String, p = null) -> String:
 	elif not production_materials(kind).is_empty():
 		recipe += "\n原料  " + material_requirements_text(production_materials(kind))
 	if kind == "farm":
-		recipe += "\n浇水 1h · 生长 6h · 收割 1h"
+		recipe += "\n浇水 1h · 生长 %.0fh · 收割 1h" % FARM_GROWTH_HOURS
 	if kind == "barn":
 		recipe += "\n喂养 1h · 产毛 %.0fh · 剪毛 1h" % SHEEP_GROWTH_HOURS
+	if product.has("recovery_hours"):
+		recipe += " · %s %.0fh" % [product.recovery_name, product.recovery_hours]
+	if WILD_SITE_ITEMS.has(kind):
+		recipe += "\n建于" + WILD_ITEM_NAMES[WILD_SITE_ITEMS[kind]]
 	return recipe
 
 func building_effects_text(kind: String, p = null, include_fee := true) -> String:
@@ -2091,8 +2086,6 @@ func product_effects_text(kind: String, p = null, include_fee := true) -> String
 	var fee := building_fee_text(kind, p) if include_fee else ""
 	var prefix := fee + "\n" if fee != "" else ""
 	if kind == "soapworks": return "用于洗衣房与澡堂 · 转移污染减半"
-	if kind == "barn":
-		return prefix + "建成带 1 只羊\n屠宰 1h → 肉 ×%d\n饱食 +%.0f" % [SHEEP_MEAT, MEAT_HUNGER]
 	if kind in ["tailor", "brewery", "smithy"]:
 		var effect: String = {
 			"tailor": "穿着 %.0fh · 洁净时心情 +%.0f\n吸收污染上限 50 · 污染削弱心情加成" % [ITEM_USES.clothes.uses / HOUR_SECONDS, WorkerBuffs.CLOTHES_MOOD],
@@ -2136,7 +2129,7 @@ func start_player_work(p: Vector2i, on_ground: bool) -> bool:
 			if deposit == null: return false
 			data.job = deposit
 			keys.append(SmartObjects.key("mine", deposit))
-	elif on_ground and world.wild_resources.get(p, {}).get("stock", 0) > 0:
+	elif on_ground and can_hand_harvest(p):
 		kind = "harvest"
 		source = world.wild_resources[p]
 		keys.append(SmartObjects.key("harvest", p))
@@ -2205,7 +2198,6 @@ func begin_player_drag(p: Vector2i, item) -> bool:
 	stop_player_work()
 	interaction.action_press.clear()
 	goods.origin = p
-	goods.position = p
 	world.player_cargo = goods
 	interaction.item_dragging = true
 	update_ui()
@@ -2263,10 +2255,7 @@ func load_player_cargo(p: Vector2i) -> float:
 	return 0.0
 
 func update_player_pointer(screen_position: Vector2) -> void:
-	var cell := world_cell(get_global_transform_with_canvas().affine_inverse() * screen_position)
-	if interaction.item_dragging:
-		world.player_cargo.position = cell
-	elif not interaction.action_press.is_empty():
+	if not interaction.item_dragging and not interaction.action_press.is_empty():
 		var press := interaction.action_press
 		if press.has("item") and screen_position.distance_to(press.screen) >= 6:
 			begin_player_drag(press.target, press.item)
@@ -2624,6 +2613,7 @@ func delivery_receiver_id(p: Vector2i) -> int:
 func supply_changed(p: Vector2i, affects_market := true) -> void:
 	cache.supply_receivers[p] = true
 	if affects_market: cache.market_supply_changed = true
+	presentation_stock_changed.emit(p)
 
 func research_supply_changed() -> void:
 	for p in research_stations(): supply_changed(p, false)
@@ -2686,8 +2676,6 @@ func delivery_requirements(p: Vector2i, manual := false) -> Dictionary:
 		return requested
 	if b.kind == "research_bench":
 		return station_materials(p) if b.task.is_empty() and research_can_start(b.research) else {}
-	if b.kind == "barn" and (b.sheep <= 0 or b.slaughter):
-		return {}
 	if PRODUCTS.has(b.kind) and has_production_order(p) and b.task.is_empty() and b.growth <= 0:
 		return production_materials(b.kind)
 	if b.kind == "power_plant":
@@ -2779,6 +2767,7 @@ func claim_delivery_tasks(w: Dictionary, plan: Dictionary) -> bool:
 		var task: Dictionary = tasks[i]
 		task.handle = claims[i]
 		task.owner = w.id
+		if task.bound and not task.picked: presentation_stock_changed.emit(task.source)
 		if not task.bound:
 			task.source = plan.source
 			task.item = items[i]
@@ -2849,7 +2838,7 @@ func simulate_growth(delta: float) -> void:
 		if bench.growth <= 0:
 			continue
 		bench.growth = maxf(0.0, bench.growth - delta * (2.0 if bench.kind == "farm" and has_powered_effect(Vector2(p), "grow_light") else 1.0))
-		if bench.growth == 0:
+		if bench.growth == 0 and bench.kind in ["farm", "barn"]:
 			bench.harvest = true
 			bench.task = contract(1.0)
 
@@ -3166,8 +3155,6 @@ func sample_inventory() -> void:
 
 # Domain operations own all material, production and payment writes.
 func work_available(record: ActivityRecord, w: Dictionary, source_identity: Dictionary) -> bool:
-	if record.kind == "harvest":
-		return can_harvest(w, record.target) and work_target_available(record, source_identity)
 	if not can_work(w, record.kind, building_kind(record.target)): return false
 	if not can_take_job(w, record.target) or w.employer != world.building_at(record.target).id: return false
 	return work_target_available(record, source_identity)
@@ -3176,9 +3163,9 @@ func work_target_available(record: ActivityRecord, source_identity: Dictionary, 
 	var p := record.target
 	match record.kind:
 		"harvest":
-			return world.wild_resources.get(p, {}).get("stock", 0) > 0 and is_same(world.wild_resources[p], source_identity)
+			return manual and can_hand_harvest(p) and is_same(world.wild_resources[p], source_identity)
 		"mine":
-			return world.deposits.get(p, 0) > 0 and world.terrain.get(p, 0) in SmartObjectDefinitions.MINERALS and world.mining_contracts.has(p) and is_same(world.mining_contracts[p], source_identity)
+			return manual and world.deposits.get(p, 0) > 0 and world.terrain.get(p, 0) in SmartObjectDefinitions.MINERALS and world.mining_contracts.has(p) and is_same(world.mining_contracts[p], source_identity)
 		"build":
 			return world.has_building(p, "site") and is_same(world.building_state(p, "site"), source_identity) and not world.building_state(p, "site").get("cancelled", false) and site_cleared(p) and site_supplied(p)
 		"produce":
@@ -3197,8 +3184,7 @@ func prepare_work(record: ActivityRecord) -> Dictionary:
 		var p: Vector2i = record.target
 		var bench: Dictionary = world.building_state(p, "station")
 		if bench.task.is_empty():
-			var slaughter: bool = bench.kind == "barn" and bench.slaughter
-			if record.kind == "produce" and not slaughter:
+			if record.kind == "produce":
 				var recipe := station_materials(p)
 				if not recipe_ready(p, recipe):
 					return {}
@@ -3209,7 +3195,6 @@ func prepare_work(record: ActivityRecord) -> Dictionary:
 				bench.task.research = bench.research
 				bench.research_tasks[bench.research] = bench.task
 				research_supply_changed()
-			if slaughter: bench.task.slaughter = true
 			supply_changed(p)
 	if record.kind == "build": return world.building_state(record.target, "site")
 	if record.kind == "mine": return world.mining_contracts[record.target]
@@ -3220,9 +3205,6 @@ func begin_work(record: ActivityRecord, w: Dictionary, segment: Dictionary, sour
 	if not work_available(record, w, source_identity): return false
 	var task := prepare_work(record)
 	if task.is_empty(): return false
-	if record.kind == "harvest":
-		segment.merge({"task": task, "goal": task.seconds, "rate": w.buffs.work_rate(self, w, "produce", ""), "kind": "", "labor": 0.0, "fatigue_factor": 1.0}, true)
-		return true
 	var kind := building_kind(record.target) if record.kind in ["produce", "operate"] else ""
 	if not task.has("reward"):
 		task.reward = task.seconds / HOUR_SECONDS * labor_wage(record.kind, record.target, task)
@@ -3268,11 +3250,9 @@ func complete_work(record: ActivityRecord, w: Dictionary) -> void:
 		"harvest":
 			var resource: Dictionary = world.wild_resources[p]
 			var amount := world.harvest_wild_resource(p)
-			if w.is_empty(): add_stock(p, resource.item, amount)
-			else: w.items[resource.item] = w.items.get(resource.item, 0) + amount
+			add_stock(p, resource.item, amount)
 			record_resource_output(resource.item, amount)
-			if not w.is_empty(): personal_item_event.emit(w.id, "gain", resource.item, amount)
-			world_view.block_changed(p)
+			terrain_cell_changed.emit(p)
 		"mine":
 			complete_extraction(p, p, w)
 			remove_mining_contract(p)
@@ -3328,12 +3308,6 @@ func complete_product(p: Vector2i, operator: Dictionary) -> void:
 	elif bench.kind == "printer":
 		world.newborns.append({"position": p + Vector2i.RIGHT, "producer": operator.get("id", -1), "copy": operator})
 		bench.queue -= 1
-	elif bench.task.get("slaughter", false):
-		bench.sheep = 0
-		bench.slaughter = false
-		bench.daily_output = 0
-		add_stock(p, "meat", SHEEP_MEAT)
-		record_resource_output("meat", SHEEP_MEAT)
 	elif bench.kind in ["farm", "barn"] and not bench.harvest:
 		bench.growth = (FARM_GROWTH_HOURS if bench.kind == "farm" else SHEEP_GROWTH_HOURS) * HOUR_SECONDS
 	else:
@@ -3342,6 +3316,7 @@ func complete_product(p: Vector2i, operator: Dictionary) -> void:
 		bench.produced_today += amount
 		record_resource_output(product_item(bench.kind), amount)
 		bench.harvest = false
+		bench.growth = PRODUCTS[bench.kind].get("recovery_hours", 0.0) * HOUR_SECONDS
 	bench.task = {}
 	supply_changed(p)
 

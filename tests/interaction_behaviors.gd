@@ -9,6 +9,7 @@ func run(t) -> void:
 	await check_fog(t)
 	await check_player_construction(t)
 	await check_player_harvest_resume(t)
+	await check_garden_recovery(t)
 	await check_player_batches(t)
 	await check_drag_recovery(t)
 	await check_player_operation(t)
@@ -46,17 +47,23 @@ func check_tactical_pause(t) -> void:
 	t.near(g.world.day_elapsed, paused_time, "Closing a modal window does not release the player's tactical pause")
 	await t.input.click(g.hud.speed_buttons[4].get_global_rect().get_center())
 	var snapshot: Dictionary = g.capture_snapshot()
-	g.toggle_pause()
 	g.set_speed(1)
+	g.world_view.camera.zoom = Vector2.ONE * 0.45
+	g.world_view.camera.position = g.tile_center(g.BASE + Vector2i(96, 32))
+	g.interaction.pollution_visible = true
+	var other_view: Dictionary = g.capture_snapshot()
+	t.check(snapshot.ok and other_view.ok and snapshot.data == other_view.data,
+		"Changing the camera, overlay and speed while paused leaves the serialized world identical")
 	var restored: Dictionary = g.restore_snapshot(snapshot.data)
 	t.check(restored.ok, "A paused planning snapshot restores without replaying work or transactions")
 	paused_time = g.world.day_elapsed
 	await t.tree.create_timer(0.2, true, false, true).timeout
-	t.near(g.world.day_elapsed, paused_time, "Loading restores tactical pause before any new simulation tick")
+	t.near(g.world.day_elapsed, paused_time, "Loading does not release the current session's tactical pause")
 	await t.input.press_key(KEY_SPACE)
 	var elapsed_before: float = g.world.day_elapsed
 	await t.tree.create_timer(0.25, true, false, true).timeout
-	t.check(g.world.day_elapsed > elapsed_before + 0.5, "Resuming a saved 4x game restores its accelerated calendar")
+	var advanced: float = g.world.day_elapsed - elapsed_before
+	t.check(advanced > 0.10 and advanced < 0.55, "Resuming uses the current session's 1x speed, not the speed at the checkpoint")
 	g.get_node("SimulationTick").set_physics_process(false)
 	g.set_speed(1)
 
@@ -140,6 +147,45 @@ func check_player_harvest_resume(t) -> void:
 	t.near(g.stock_at(source, "berries"), 1, "A second short hold completes the same harvest without restarting it")
 	await t.input.hold_world(g.tile_center(source), g.HOUR_SECONDS * 1.2)
 	t.near(g.resource_activity("berries", 1).produced, 1, "Trying again cannot collect a depleted resource twice")
+
+func check_garden_recovery(t) -> void:
+	var g = t.game
+	t.fixtures.scenario("A wild food workplace protects its resource and enforces recovery even for manual labor", 0, false, 1020, false)
+	var kind := "gathering_garden"
+	var patch := P + Vector2i.ONE
+	var supplies := P + Vector2i(-2, 0)
+	t.fixtures.wild(patch, "berries")
+	t.fixtures.stock_recipe(supplies, g.building_materials(kind))
+	var hunting_ground := P + Vector2i(3, 0)
+	t.fixtures.wild(hunting_ground + Vector2i.ONE, "meat")
+	t.fixtures.station("hunting_ground", hunting_ground)
+	await t.input.choose_building(kind)
+	await t.input.click_world(g.tile_center(P))
+	t.check(g.world.has_building(P, "site"), "The food toolbar places a garden blueprint over the berry patch")
+	await t.input.close_build_tray()
+	await t.input.hold_world(g.tile_center(patch), g.HOUR_SECONDS * 1.1)
+	t.near(g.resource_inventory().berries, 0, "Holding over the blueprint cannot pick the natural resource underneath")
+	t.check(g.cancel_site(patch) and g.place_building(P, kind), "Cancelling an empty food blueprint leaves the patch available for a new one")
+	var route: Array[Vector2i] = [supplies, P]
+	await t.input.drag_world(route)
+	await t.input.hold_world(g.tile_center(P), (g.building_hours(kind) + 0.1) * g.HOUR_SECONDS)
+	t.check(g.world.has_building(P, "station"), "Delivered wood lets the player build the garden")
+	if not g.world.has_building(P, "station"): return
+	var recipe: Dictionary = g.PRODUCTS[kind]
+	g.adjust_production(P, 2)
+	var batch_time: float = (recipe.hours + 0.1) * g.HOUR_SECONDS
+	await t.input.hold_world(g.tile_center(P), batch_time)
+	t.near(g.stock_at(P, "berries"), recipe.amount, "One finished manual batch adds berries to the garden inventory")
+	await t.input.click_world(g.tile_center(patch))
+	t.check(g.interaction.selected_entity == P, "Clicking the covered patch opens the garden's live details")
+	await t.input.screenshot("/tmp/law3-input-food-sites.png")
+	var saved: Dictionary = g.capture_snapshot()
+	t.check(saved.ok and g.restore_snapshot(saved.data).ok, "A garden recovering between batches can be restored")
+	await t.input.hold_world(g.tile_center(P), batch_time)
+	t.near(g.stock_at(P, "berries"), recipe.amount, "Neither manual labor nor restoration skips the recovery interval")
+	g.simulate(recipe.recovery_hours * g.HOUR_SECONDS)
+	await t.input.hold_world(g.tile_center(P), batch_time)
+	t.near(g.stock_at(P, "berries"), recipe.amount * 2, "The same site yields another batch after recovery")
 
 func check_player_batches(t) -> void:
 	var g = t.game
@@ -352,6 +398,12 @@ func check_fog(t) -> void:
 	await t.input.settle()
 	await t.input.click_world(g.tile_center(far) + Vector2(0, -7))
 	t.check(g.interaction.selected_worker >= 0, "A new player building reveals the existing resident rather than generating a replacement")
+	var selected: int = g.interaction.selected_worker
+	g.world_view.camera.position = g.tile_center(g.BASE + Vector2i(96, 32))
+	await t.input.settle()
+	g.world_view.camera.position = g.tile_center(far)
+	await t.input.click_world(g.tile_center(far) + Vector2(0, -7))
+	t.check(selected >= 0 and g.interaction.selected_worker == selected, "Returning to a previously offscreen area can pick the same resident")
 	await t.input.click_world(g.tile_center(far + Vector2i.DOWN))
 	t.check(g.interaction.selected_tile == far + Vector2i.DOWN and not g.tile_details(far + Vector2i.DOWN).is_empty(), "A visible resource opens its live terrain details")
 	await t.input.screenshot("/tmp/law3-input-world.png")

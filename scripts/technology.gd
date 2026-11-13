@@ -1,7 +1,7 @@
 extends RefCounted
 
 # Each point is a local material batch and paid labor, never a warehouse item.
-const INITIAL_BUILDINGS := ["recruitment_board", "market", "mine", "bed", "farm", "mill", "pump", "purifier", "storage_box", "research_bench", "wall", "fence", "door"]
+const INITIAL_BUILDINGS := ["recruitment_board", "market", "mine", "bed", "farm", "hunting_ground", "gathering_garden", "mill", "pump", "purifier", "storage_box", "research_bench", "wall", "fence", "door"]
 const PROJECTS := {
 	"tools": {"name": "工具制造", "points": 8, "hours": 2.0, "materials": {2: 1, 4: 1}, "unlocks": ["bench", "workbench"], "requires": [], "position": Vector2i(0, 2)},
 	"logistics": {"name": "基础物流", "points": 8, "hours": 1.0, "materials": {1: 1, 4: 1}, "unlocks": ["belt"], "requires": [], "position": Vector2i(0, 0)},
