@@ -1,5 +1,6 @@
 extends Button
 
+const Art = preload("res://scripts/view/art.gd")
 const UITheme = preload("res://assets/ui_theme.tres")
 var game: Node
 var kind := "bed"
@@ -24,15 +25,22 @@ func _make_custom_tooltip(_for_text: String) -> Object:
 	content.add_child(HSeparator.new())
 	var requirements := RichTextLabel.new()
 	requirements.name = "Requirements"
-	requirements.bbcode_enabled = true
 	requirements.fit_content = true
 	requirements.scroll_active = false
 	requirements.custom_minimum_size.x = 240
 	requirements.add_theme_font_size_override("normal_font_size", 14)
-	requirements.text = "%s\n工时  %s 小时\n工资  %s 货币" % [
-		game.material_requirements_text(game.building_materials(kind), true, true), String.num(game.building_hours(kind), 2),
-		String.num(game.building_hours(kind) * game.WAGE_PER_HOUR, 2)]
 	content.add_child(requirements)
+	var recipe: Dictionary = game.building_materials(kind)
+	var available: Dictionary = game.player_inventory()
+	for item in recipe:
+		var stock := int(maxf(0.0, available.get(item, 0.0)))
+		requirements.add_image(Art.item_texture(item), 22, 22)
+		requirements.push_color(Color("#A9D9B5") if stock >= recipe[item] else Color("#ED9C89"))
+		requirements.add_text("  " + game.material_requirement_line(item, recipe[item], stock))
+		requirements.pop()
+		requirements.newline()
+	var hours: float = game.building_hours(kind)
+	requirements.add_text("工时  %s 小时\n工资  %s 货币" % [String.num(hours, 2), String.num(hours * game.WAGE_PER_HOUR, 2)])
 	var effects_text: String = game.building_effects_text(kind)
 	if effects_text != "":
 		content.add_child(HSeparator.new())

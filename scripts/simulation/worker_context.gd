@@ -7,13 +7,13 @@ var origin: Vector2i
 var paths: Dictionary = {}
 var proposal_order := 0
 
-func job_slots(action: int) -> Array:
-	var filters := {"skill": worker.skill, "available_to": worker.id}
+func job_slots() -> Array:
+	var filters := {"domain": Slots.Definitions.Domain.BUILDING, "available_to": worker.id}
 	if worker.employer != null:
 		var building = game.world.buildings.get(worker.employer)
 		if building == null: return []
 		filters.instance = Slots.building_id(building.id)
-	return game.world.smart_objects.query(action, filters)
+	return game.world.smart_objects.query(worker.skill, filters)
 
 func shopping_items() -> Array:
 	return game.MARKET_GOODS.filter(func(item): return game.wants_item(worker, item))

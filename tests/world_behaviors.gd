@@ -16,11 +16,11 @@ func run(t) -> void:
 func check_lifecycle(t) -> void:
 	var g = t.game
 	t.fixtures.scenario("Death releases employment without giving personal property to the player")
-	var elder: Dictionary = t.fixtures.resident("processing", P, "grain", {"wheat": 3})
+	var elder: Dictionary = t.fixtures.resident("operations", P, "grain", {"wheat": 3})
 	elder.age_days = 44.98
 	elder.money = 3.0
 	g.add_stock(g.BASE, "money", -3)
-	t.fixtures.resident("processing", P + Vector2i.RIGHT)
+	t.fixtures.resident("operations", P + Vector2i.RIGHT)
 	t.fixtures.station("workbench", P)
 	g.adjust_production(P, 1)
 	t.advance_until(func(): return g.world.workers.size() == 1, 15, "The elderly resident reaches the existing lifespan boundary")
@@ -114,7 +114,7 @@ func check_cancellation(t) -> void:
 	t.fixtures.scenario("Cancelling a project recovers goods, not its unfilled recipe", 1)
 	t.fixtures.stock_recipe(g.BASE, {1: 1})
 	t.fixtures.station("storage_box", Vector2i(35, 11))
-	t.fixtures.resident("transport", Vector2i(35, 12))
+	t.fixtures.resident("building_logistics", Vector2i(35, 12))
 	t.check(g.place_building(P, "bed"), "Partial stock does not prevent blueprint placement")
 	t.advance_until(func(): return g.storage_contents(g.BASE).get(1, 0) < 1, 30, "The goods actually leave storage before cancellation, not just its available stock")
 	t.near(g.stock_at(P, 1), 0, "The goods are still in transit when the player cancels")
@@ -128,7 +128,7 @@ func check_cancellation(t) -> void:
 func check_private_property(t) -> void:
 	var g = t.game
 	t.fixtures.scenario("Personal inventory is not player construction stock")
-	var resident: Dictionary = t.fixtures.resident("construction", g.BASE, "fruit", {1: 100})
+	var resident: Dictionary = t.fixtures.resident("building_logistics", g.BASE, "fruit", {1: 100})
 	resident.money = 10.0
 	var private_cash: float = resident.money
 	t.check(g.place_building(P, "bed"), "A blueprint may be placed with no player construction stock")
@@ -143,7 +143,7 @@ func check_unworked_wild_food(t) -> void:
 	var g = t.game
 	var p := Vector2i(70, 30)
 	t.fixtures.scenario("Residents do not produce food directly from reachable wild patches")
-	for entry in [["berries", "gathering", "fruit", P], ["wheat", "gathering", "grain", P + Vector2i(2, 0)], ["meat", "hunting", "meat", p]]:
+	for entry in [["berries", "farming", "fruit", P], ["wheat", "farming", "grain", P + Vector2i(2, 0)], ["meat", "farming", "meat", p]]:
 		t.fixtures.wild(entry[3], entry[0])
 		t.fixtures.resident(entry[1], entry[3], entry[2])
 	g.update_fog()

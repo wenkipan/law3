@@ -14,30 +14,40 @@ func run(t) -> void:
 	check_farming(t)
 	check_barn(t)
 	check_research(t)
-	check_market_restock(t)
+	check_market_stock(t)
 	check_power(t)
 
-func check_market_restock(t) -> void:
+func check_market_stock(t) -> void:
 	var g = t.game
-	for kind in ["mine", "sawmill"]:
-		t.fixtures.scenario("Local output joins market stock through actual employee transport: " + kind)
-		t.fixtures.station("market", g.BASE)
-		t.fixtures.resident("trade", g.BASE)
-		t.fixtures.resident("mining" if kind == "mine" else "processing", P)
-		t.fixtures.station(kind, P)
-		var item = 2 if kind == "mine" else g.product_item(kind)
-		if kind == "mine":
-			t.fixtures.deposit(P, 2, 2)
-		else:
-			t.fixtures.stock_recipe(P, g.production_materials(kind))
-			g.adjust_production(P, 1)
-		t.advance_until(func(): return g.stock_at(g.BASE, item) == 2, 150, "Produced goods physically reach the market warehouse")
-		t.near(g.resource_inventory()[item], 2, "Restocking neither duplicates nor consumes the output")
+	t.fixtures.scenario("Market shelves and production supply remain separate")
+	t.fixtures.station("market", g.BASE)
+	t.fixtures.station("mill", P)
+	t.fixtures.station("storage_box", Q)
+	t.fixtures.resident("operations", g.BASE, "fruit")
+	t.fixtures.resident("operations", P, "fruit")
+	t.fixtures.resident("building_logistics", Q, "fruit")
+	var source := Q + Vector2i.DOWN
+	var recipe: Dictionary = g.production_materials("mill")
+	var wheat: int = recipe.wheat
+	t.fixtures.stock_recipe(g.BASE, recipe)
+	t.fixtures.stock_recipe(source, recipe)
+	g.adjust_production(P, 1)
+	t.advance_until(func(): return g.stock_at(P, "bread") > 0, 120, "The mill can still receive real inputs and produce")
+	g.adjust_production(P, 1)
+	g.simulate(60)
+	t.near(g.stock_at(g.BASE, "wheat"), wheat, "The mill cannot draw ingredients from market shelves")
+	t.near(g.stock_at(source, "wheat"), 0, "The mill uses ordinary supply stock instead")
+	t.near(g.stock_at(g.BASE, "bread"), 0, "The market does not automatically take the mill's finished product")
+	t.near(g.stock_at(P, "bread"), g.PRODUCTS.mill.amount, "Finished goods remain where produced")
+	t.check(g.demolish_building(P), "A mill with stock can still be demolished")
+	t.advance_until(func(): return not g.world.has_building(P, "site"), 180, "Normal demolition recovery still works with a market on the starting point")
+	t.near(g.stock_at(g.BASE, "bread"), 0, "Returning recovered stock to the starting point does not list it for sale")
+	t.near(g.player_inventory().bread, g.PRODUCTS.mill.amount, "Demolition preserves all recovered bread")
 
 func check_single_employee(t) -> void:
 	var g = t.game
 	t.fixtures.scenario("A resident has one skill and one persistent building employer")
-	t.fixtures.resident("processing", P)
+	t.fixtures.resident("operations", P)
 	t.fixtures.resident("mining", Q)
 	for p in [P, Q]:
 		t.fixtures.station("workbench", p)
@@ -45,14 +55,14 @@ func check_single_employee(t) -> void:
 	t.advance_until(func(): return g.stock_at(P, "workbench") + g.stock_at(Q, "workbench") >= 1, 100, "A qualified resident can produce at one of the workshops")
 	g.simulate(50)
 	t.near(g.stock_at(P, "workbench") + g.stock_at(Q, "workbench"), 1, "A single employee cannot also fill another building or substitute for another skill")
-	t.fixtures.resident("processing", Q)
+	t.fixtures.resident("operations", Q)
 	t.advance_until(func(): return g.stock_at(P, "workbench") + g.stock_at(Q, "workbench") == 2, 100, "Another qualified resident can fill the remaining vacancy")
 	t.check(g.world.workers[1].earned_today == 0, "An incompatible skill never earns workshop wages")
 
 func check_closure(t) -> void:
 	var g = t.game
 	t.fixtures.scenario("Zero wage closes a building and settles only completed labor")
-	t.fixtures.resident("processing", P)
+	t.fixtures.resident("operations", P)
 	t.fixtures.station("sawmill", P)
 	t.fixtures.stock_recipe(P, {7: 1})
 	g.adjust_production(P, 1)
@@ -73,8 +83,8 @@ func check_closure(t) -> void:
 func check_completed_job(t) -> void:
 	var g = t.game
 	t.fixtures.scenario("A completed blueprint becomes a specialized workplace across a save")
-	t.fixtures.resident("construction", P)
-	t.fixtures.resident("processing", Q)
+	t.fixtures.resident("building_logistics", P)
+	t.fixtures.resident("operations", Q)
 	t.fixtures.building_materials("workbench")
 	t.check(g.place_building(P, "workbench"), "The player can commission the real workshop")
 	t.advance_until(func(): return g.world.has_building(P, "station"), 180, "Construction completes before production is requested")
@@ -98,7 +108,7 @@ func check_finite_mining(t) -> void:
 		if kind == "drill":
 			var plant := Vector2i(25, 11)
 			t.fixtures.station("manual_generator", plant)
-			t.fixtures.resident("power", plant)
+			t.fixtures.resident("operations", plant)
 			t.fixtures.cable(Vector2i(27, 11))
 		t.check(g.world.walkable(P), "A mineral does not block walking")
 		t.check(not g.building_space_valid(Q, "mine"), "A mine requires a mineral footprint")
@@ -122,17 +132,25 @@ func check_finite_mining(t) -> void:
 func check_supply(t) -> void:
 	var g = t.game
 	for belt_delivery in [false, true]:
-		t.fixtures.scenario("A building employee supplies its own real recipe: belt " + str(belt_delivery))
-		t.fixtures.resident("processing", P)
+		t.fixtures.scenario("Only logistics residents supply a production recipe: belt " + str(belt_delivery))
+		t.fixtures.resident("operations", P)
 		t.fixtures.station("purifier", P)
-		t.fixtures.stock_recipe(g.BASE, {"raw_water": 4})
+		var source := Vector2i(32, 13)
+		t.fixtures.stock_recipe(source, {"raw_water": 4})
+		t.fixtures.station("storage_box", Q)
+		t.fixtures.resident("building_logistics", Q)
 		if belt_delivery:
 			for x in range(29, 33):
 				t.fixtures.belt(Vector2i(x, 13), Vector2i.LEFT if x > 29 else Vector2i.UP)
 			t.fixtures.belt(Vector2i(29, 12), Vector2i.UP)
+		g.set_wage(Q, 0)
 		g.adjust_production(P, 1)
+		g.simulate(45)
+		t.near(g.stock_at(source, "raw_water"), 4, "An operator cannot take a hauling task to supply their own workplace")
+		t.near(g.stock_at(P, "clean_water"), 0, "A production order cannot pull stock from a remote source")
+		g.set_wage(Q, 1)
 		if belt_delivery:
-			t.advance_until(func(): return not g.world.belt_cargo.is_empty(), 60, "The employee physically loads the connected transport line")
+			t.advance_until(func(): return not g.world.belt_cargo.is_empty(), 90, "The logistics worker physically loads the connected transport line")
 		t.advance_until(func(): return g.stock_at(P, "clean_water") == 4, 150, "Ingredients arrive physically before the batch can finish")
 		t.near(g.resource_inventory().raw_water, 0, "A recipe consumes only the four actual delivered units")
 		t.near(g.world.workers[0].earned_today, 1, "Supply does not invent an additional production wage")
@@ -143,9 +161,9 @@ func check_local_inventory(t) -> void:
 	for kind in ["sawmill", "purifier"]:
 		t.fixtures.scenario("Local ingredients and products survive production, saving and recovery: " + kind)
 		t.fixtures.station(kind, P)
-		t.fixtures.resident("processing", P)
+		t.fixtures.resident("operations", P)
 		t.fixtures.station("storage_box", Q)
-		t.fixtures.resident("transport", Q)
+		t.fixtures.resident("building_logistics", Q)
 		var recipe: Dictionary = g.production_materials(kind)
 		var product = g.product_item(kind)
 		var amount: int = 1 + g.PRODUCTS[kind].get("amount", 1)
@@ -176,15 +194,15 @@ func check_local_inventory(t) -> void:
 
 func check_wild_food_sites(t) -> void:
 	var g = t.game
-	for entry in [["farm", "wheat", "farming"], ["hunting_ground", "meat", "hunting"], ["gathering_garden", "berries", "gathering"]]:
+	for entry in [["farm", "wheat"], ["hunting_ground", "meat"], ["gathering_garden", "berries"]]:
 		var kind: String = entry[0]
 		var item: String = entry[1]
 		t.fixtures.scenario("Food workplaces require a matching wild cell within the full footprint: " + kind, 0, false, 1020, false)
 		t.fixtures.wild(P + Vector2i.ONE, item)
 		t.fixtures.wild(Q, "meat" if item != "meat" else "berries")
 		t.fixtures.wild(Q + Vector2i.ONE, item)
-		t.fixtures.resident("construction", g.BASE)
-		t.fixtures.resident(entry[2], P + Vector2i(0, 4))
+		t.fixtures.resident("building_logistics", g.BASE)
+		t.fixtures.resident("farming", P + Vector2i(0, 4))
 		t.fixtures.building_materials(kind)
 		t.check(not g.place_building(P - Vector2i(0, 4), kind), "Empty ground is not a food source")
 		t.check(not g.place_building(Q, kind), "Matching wild food does not authorize covering a different wild resource")
@@ -202,7 +220,7 @@ func check_farming(t) -> void:
 	t.fixtures.wild(P + Vector2i.ONE, "wheat")
 	t.fixtures.resident("farming", P)
 	t.fixtures.station("farm", P)
-	t.fixtures.stock_recipe(g.BASE, {"raw_water": 4})
+	t.fixtures.stock_recipe(P, {"raw_water": 4})
 	g.adjust_production(P, 1)
 	t.advance_until(func(): return g.stock_at(P, "wheat") == 8, 200, "Watering and harvest produce the actual crop")
 	t.near(g.resource_inventory().raw_water, 0, "A crop consumes one local water recipe")
@@ -224,7 +242,7 @@ func check_research(t) -> void:
 	var g = t.game
 	t.fixtures.scenario("Qualified researchers cooperate without spending beyond the last point", 0, false, 1020, false)
 	for p in [P, Q]:
-		t.fixtures.resident("research", p)
+		t.fixtures.resident("operations", p)
 		t.fixtures.station("research_bench", p)
 		t.fixtures.research_materials(p, "tools", 2)
 	g.world.research_progress.tools = g.Technology.PROJECTS.tools.points - 1
@@ -239,7 +257,7 @@ func check_power(t) -> void:
 	var g = t.game
 	t.fixtures.scenario("Power labor still obeys the physical circuit and employee qualification")
 	var plant := Vector2i(25, 11)
-	t.fixtures.resident("power", plant)
+	t.fixtures.resident("operations", plant)
 	t.fixtures.station("manual_generator", plant)
 	t.fixtures.station("grow_light", Vector2i(29, 11))
 	for x in [27, 28]: t.fixtures.cable(Vector2i(x, 11))

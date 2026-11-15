@@ -7,6 +7,16 @@ const ItemScene = preload("res://scenes/item.tscn")
 const BeltArt = preload("res://scripts/view/belt_art.gd")
 const BarrierArt = preload("res://scripts/view/barrier_art.gd")
 const RateSelector = preload("res://scripts/view/rate_selector.gd")
+const WorkTypes = preload("res://scripts/simulation/work_types.gd")
+const LABOR_ICONS := {
+	WorkTypes.MINING: "pickaxe", WorkTypes.FARMING: "crops",
+	WorkTypes.LOGISTICS: "freight", WorkTypes.MEDICINE: "medical",
+	WorkTypes.OPERATIONS: "tools",
+}
+const FACILITY_LABOR_ICONS := {
+	"research_bench": "research", "market": "market", "bank": "bank",
+	"power_plant": "electricity", "manual_generator": "electricity", "transformer": "electricity",
+}
 var game: Node
 var camera := Camera2D.new()
 var initialized := false
@@ -43,6 +53,7 @@ var pending_sight: Dictionary = {}
 var pending_stock: Dictionary = {}
 var shown_cells := Rect2i()
 var shortage_zoom := 0.0
+var shortage_speed := 0.0
 var layout_cells := Rect2i()
 var building_revision := -1
 var layout_revision := 0
@@ -114,9 +125,8 @@ func sync_alert_highlights() -> void:
 
 func _ready() -> void:
 	add_child(camera)
-	var tiles := Art.tile_set("res://assets/world/terrain-atlas.svg", 10)
-	$TerrainBackground.tile_set = tiles
-	$Blocks.tile_set = Art.tile_set("res://assets/world/surface-resources.svg", 10)
+	$TerrainBackground.tile_set = Art.tile_set("res://assets/world/terrain-atlas.svg", 1)
+	$Blocks.tile_set = Art.tile_set(Art.SURFACE_ATLAS, 10)
 	$Fog.tile_set = Art.tile_set("res://assets/world/fog-atlas.svg", 1)
 	$Overlays/Orders.tile_set = Art.tile_set("res://assets/world/order.svg", 1)
 	$Pollution.tile_set = Art.tile_set("res://assets/world/pollution-atlas.svg", 11)
@@ -208,19 +218,21 @@ func block_changed(p: Vector2i) -> void:
 
 func sync_surface(chunk: Dictionary, p: Vector2i, local: Vector2i, revealed: bool) -> void:
 	if revealed:
-		var material: int = game.world.terrain.get(p, 0)
+		var water_source: bool = game.world.water_sources.has(p)
+		var material: int = game.MapGenerator.WATER_BLOCK if water_source else game.world.terrain.get(p, 0)
 		if chunk.background.get_cell_source_id(local) == -1: chunk.background.set_cell(local, 0, Vector2i.ZERO)
 		if material == 0:
 			if chunk.blocks.get_cell_source_id(local) != -1: chunk.blocks.erase_cell(local)
 		elif chunk.blocks.get_cell_atlas_coords(local) != Vector2i(material, 0):
 			chunk.blocks.set_cell(local, 0, Vector2i(material, 0))
 		var texture: Texture2D
-		if game.world.water_sources.has(p):
+		if water_source:
 			texture = Art.texture("res://assets/world/water-source.svg")
 		else:
 			var resource: Dictionary = game.world.wild_resources.get(p, {})
 			if resource.get("stock", 0) > 0:
-				texture = Art.texture("res://assets/world/%s.svg" % {"berries": "wild-berries", "wheat": "wild-grain", "meat": "wild-animal"}[resource.item])
+				texture = Art.item_texture("meat") if resource.item == "meat" else Art.texture(
+					"res://assets/world/%s.svg" % {"berries": "wild-berries", "wheat": "wild-grain"}[resource.item])
 		if texture != null:
 			if not chunk.surfaces.has(p):
 				var sprite: Sprite2D = Sprite2D.new() if chunk.surface_pool.is_empty() else chunk.surface_pool.pop_back()
@@ -228,7 +240,7 @@ func sync_surface(chunk: Dictionary, p: Vector2i, local: Vector2i, revealed: boo
 				chunk.surfaces[p] = sprite
 				sprite.position = (Vector2(local) + Vector2.ONE * 0.5) * game.CELL
 				sprite.show()
-			chunk.surfaces[p].texture = texture
+			if chunk.surfaces[p].texture != texture: chunk.surfaces[p].texture = texture
 			return
 	else:
 		chunk.background.erase_cell(local)
@@ -426,6 +438,11 @@ func sync_building_layout() -> void:
 
 func sync_buildings(nearby_workers: Array[Dictionary]) -> void:
 	sync_building_layout()
+	var demand_area := shown_cells
+	for id in nearby_buildings:
+		var placement: Dictionary = game.world.building_map.placements[id]
+		demand_area = demand_area.expand(placement.origin)
+	var deliveries: Dictionary = game.world.smart_objects.delivery_demands(demand_area)
 	var open_doors: Dictionary = {}
 	if not nearby_barriers.is_empty():
 		for w in nearby_workers:
@@ -466,8 +483,9 @@ func sync_buildings(nearby_workers: Array[Dictionary]) -> void:
 			node.set_size(game.building_size(p, kind))
 			if line: node.set_line_connections(line_masks[p])
 			if kind in game.BELT_KINDS: node.set_belt_connections(game.belt_connections(p), game.belt_direction_at(p))
-		if fresh or moved or pending_stock.has(p) or node.input_pickable != can_pick: sync_shortages(node, p)
-		if layout_changed or shortage_zoom != camera.zoom.x: node.position_shortage(camera.zoom.x)
+		sync_demands(node, entity, deliveries.get(id, {}), can_pick)
+		if layout_changed or shortage_zoom != camera.zoom.x or shortage_speed != Engine.time_scale:
+			node.position_shortage(camera.zoom.x)
 		node.input_pickable = can_pick
 		node.set_operating(game.cache.powered_devices.has(p) or game.cache.power_output.get(p, 0.0) > 0)
 		if kind in game.BARRIER_KINDS and (layout_changed or kind == "door"):
@@ -476,22 +494,23 @@ func sync_buildings(nearby_workers: Array[Dictionary]) -> void:
 				if nearby_barriers.has(p + game.DIRS[i]): mask |= 1 << i
 			node.set_barrier_connections(mask, open_doors.has(p))
 	shortage_zoom = camera.zoom.x
+	shortage_speed = Engine.time_scale
 	for nodes in [line_nodes, building_nodes]:
 		for id in nodes.keys():
 			if not shown.has(id): retire_node(nodes, id)
 
-func sync_shortages(node: Area2D, p: Vector2i) -> void:
+func sync_demands(node: Area2D, entity, deliveries: Dictionary, can_pick: bool) -> void:
 	var amounts: Dictionary = {}
-	var items: Array = []
-	if game.cache.visible_tiles.has(p):
-		if game.world.has_building(p, "site"):
-			amounts = game.alerts.blueprint_shortages(game, p)
-			items = amounts.keys()
-			if items.is_empty() and not game.world.building_state(p, "site").get("cancelled", false):
-				items = ["tools"]
-		else:
-			items = game.alerts.production_shortages(game, p)
-	node.set_shortages(items, amounts)
+	var entries: Array = []
+	if can_pick and not entity.state.get("cancelled", false):
+		for item in deliveries:
+			entries.append(item)
+			if entity.in_group("site"): amounts[item] = ceili(deliveries[item] - 0.000001)
+		var work_type: String = game.world.smart_objects.building_labor_demand(entity.id)
+		if work_type != "":
+			var icon: String = "tools" if entity.in_group("site") else FACILITY_LABOR_ICONS.get(entity.kind, LABOR_ICONS[work_type])
+			entries.append(StringName(icon))
+	node.set_shortages(entries, amounts)
 
 func sync_belt_cargo(ids: Dictionary) -> void:
 	var shown: Dictionary = {}

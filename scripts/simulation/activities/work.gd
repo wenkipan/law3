@@ -4,6 +4,7 @@ var segment: Dictionary = {}
 var fatigue_factor := 1.0
 
 func enter(g, w: Dictionary, proposal) -> bool:
+	if w.skill != proposal.kind: return false
 	if not super.enter(g, w, proposal): return false
 	return g.employ(w, record.target)
 

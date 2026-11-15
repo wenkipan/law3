@@ -9,13 +9,11 @@ const Items = preload("res://scripts/simulation/evaluation/items.gd")
 const Labor = preload("res://scripts/simulation/evaluation/labor.gd")
 const Economy = preload("res://scripts/simulation/evaluation/economy.gd")
 const Delivery = preload("res://scripts/simulation/evaluation/delivery.gd")
-const Slots = preload("res://scripts/simulation/smart_objects.gd")
+const WorkTypes = preload("res://scripts/simulation/work_types.gd")
 
 static var ACTIONS = {"eat": Life.meal, "sleep": Life.sleep, "rest": Life.rest,
-	"sell": Economy.sell,
 	"use_item": Items.use, "purchase": Economy.purchase, "borrow": Economy.borrow,
-	"payroll": Economy.payroll, "mine": Labor.mining, "build": Labor.construction,
-	"produce": Labor.production, "operate": Labor.operation, "deliver": Delivery.evaluate}
+	"payroll": Economy.payroll}
 static var SERVICES = {"hospital": Life.treatment, "bathhouse": Life.bath, "laundry": Life.laundry}
 static var SERVICE_EFFECTS = {"hospital": Life.treatment_effects, "bathhouse": Life.bath_effects, "laundry": Life.laundry_effects}
 static var ITEM_EFFECTS = {"meat": Items.food, "ale": Items.ale, "clothes": Items.clothing,
@@ -63,12 +61,11 @@ func upper_bound(op: Dictionary) -> float:
 			var passive: float = g.FOUNTAIN_RECOVERY_PER_HOUR if g.has_powered_effect(Vector2(op.position), "fountain") else 0.0
 			if op.data.bed: bed_hours = minf(g.BED_LEASE_HOURS, state.fatigue / (g.BED_RECOVERY_PER_HOUR + passive))
 			use_hours = bed_hours + maxf(0, state.fatigue - bed_hours * (g.BED_RECOVERY_PER_HOUR + passive)) / (g.SLEEP_RECOVERY_PER_HOUR + passive)
-		"sell", "borrow": pass
+		"borrow": pass
 		_: return INF
 	var travel_hours: float = environment.walk_hours(op.path)
 	var value := 0.0
 	match op.kind:
-		"sell": value += resources.income(op.data.amount * g.market_price(op.target, op.data.item, true)) + 0.02 * op.data.amount
 		"borrow": value += resources.income(minf(op.data.amount, g.stock_at(op.target, "money")))
 		"purchase":
 			var best := -INF
@@ -101,6 +98,8 @@ func upper_bound(op: Dictionary) -> float:
 	return value / (1.0 + Parameters.TIME_COST * weighted_hours) + w.activity.inertia_bonus(op) + 0.00000001
 
 func evaluate(op: Dictionary) -> Dictionary:
+	if WorkTypes.NAMES.has(op.kind):
+		return Delivery.evaluate(self, op) if op.data.method == "deliver" else Labor.evaluate(self, op)
 	if op.kind == "service": return SERVICES[op.data.kind].call(self, op)
 	return ACTIONS[op.kind].call(self, op)
 
@@ -130,27 +129,24 @@ func work_facts() -> Array[Dictionary]:
 	if _work_ready: return _work_facts
 	_work_ready = true
 	var g = context.game
-	for endpoint in context.job_slots(Slots.Action.WORK):
+	for endpoint in context.job_slots():
 		var p: Vector2i = endpoint.instance.position
 		if not g.can_take_job(context.worker, p): continue
 		var kind: String = endpoint.instance.definition.kind
-		if not g.can_work(context.worker, "operate" if kind in g.OPERATED_KINDS else "produce", kind): continue
-		if context.path_to(p).is_empty(): continue
-		if endpoint.instance.definition.work_activity == &"operate":
-			if g.operation_needed(p) and (kind != "drill" or g.cache.ready_drills.has(p)):
-				_work_facts.append({"kind": "operate", "target": p, "position": p, "station": kind, "contract": g.world.building_state(p, "station").task, "hours": 1.0})
+		var offer: Dictionary = g.world.smart_objects.labor_offer(endpoint, context.worker.id)
+		if offer.has("reason"): continue
+		if offer.method == "build":
+			var approach: Array[Vector2i] = g.construction_route(context.origin, p) if kind in g.WorldState.BLOCKING_KINDS else context.path_to(p)
+			if approach.is_empty(): continue
+			var site: Dictionary = offer.identity
+			_work_facts.append({"method": offer.method, "target": p, "station": "", "contract": site, "hours": maxf(0, site.seconds - site.progress) / g.HOUR_SECONDS})
 			continue
-		if not g.PRODUCTS.has(kind) or g.world.building_state(p, "station").growth > 0: continue
-		if context.path_to(p).is_empty() or not g.has_production_order(p): continue
-		var task: Dictionary = g.world.building_state(p, "station").task
-		if task.is_empty() and not g.recipe_ready(p, g.station_materials(p)): continue
-		var hours: float = maxf(0, task.seconds - task.progress) / g.HOUR_SECONDS if not task.is_empty() else g.station_work_hours(p)
-		_work_facts.append({"kind": "produce", "target": p, "position": p, "station": kind, "contract": task, "hours": hours})
-	for endpoint in context.job_slots(Slots.Action.BUILD):
-		var p: Vector2i = endpoint.instance.position
-		if not g.can_take_job(context.worker, p): continue
-		if g.site_cleared(p) and g.site_supplied(p) and not context.path_to(p).is_empty():
-			_work_facts.append({"kind": "build", "target": p, "position": p, "station": "", "contract": g.world.building_state(p, "site"), "hours": maxf(0, g.world.building_state(p, "site").seconds - g.world.building_state(p, "site").progress) / g.HOUR_SECONDS})
+		if context.path_to(p).is_empty(): continue
+		var task: Dictionary = offer.identity.task
+		var hours: float = 1.0
+		if offer.method == "produce":
+			hours = maxf(0, task.seconds - task.progress) / g.HOUR_SECONDS if not task.is_empty() else g.station_work_hours(p)
+		_work_facts.append({"method": offer.method, "target": p, "position": p, "station": kind, "contract": task, "hours": hours})
 	return _work_facts
 
 func work_hours() -> float:

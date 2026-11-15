@@ -43,11 +43,10 @@ func advance_item() -> void:
 
 func show_item() -> void:
 	var item = items[index]
-	icon.texture = Art.item_texture(item)
-	quantity.text = str(amounts[item]) if amounts.has(item) else ""
+	icon.texture = Art.texture("res://assets/icons/%s.svg" % item) if item is StringName else Art.item_texture(item)
+	quantity.text = str(amounts[item]) if item is not StringName and amounts.has(item) else ""
 
 func sync_zoom(zoom: float) -> void:
-	if not visible: return
 	scale = Vector2.ONE / maxf(zoom, 0.1)
 	# UI feedback uses real time, independently of simulation speed and pause.
 	breath.speed_scale = 1.0 / Engine.time_scale

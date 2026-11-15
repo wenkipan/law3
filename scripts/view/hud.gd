@@ -232,10 +232,9 @@ func update_entity_panel() -> void:
 		market_target = next_market
 	if market_controls.visible:
 		for item in market_inputs:
-			for i in 2:
-				var input: SpinBox = market_inputs[item][i]
-				var price: float = game.market_price(p, item, i == 0)
-				if not input.get_line_edit().has_focus() and not is_equal_approx(input.value, price): input.set_value_no_signal(price)
+			var input: SpinBox = market_inputs[item]
+			var price: float = game.market_price(p, item)
+			if not input.get_line_edit().has_focus() and not is_equal_approx(input.value, price): input.set_value_no_signal(price)
 	fee_details.text = game.building_fee_text(game.building_kind(p), p) if game.interaction.selected_worker < 0 and game.interaction.selected_tile == null else ""
 	fee_controls.visible = not fee_details.text.is_empty()
 	fee_selector.visible = fee_controls.visible and not game.fee_settings(p).is_empty()
@@ -375,7 +374,7 @@ func update_entity_panel() -> void:
 		entity_title.text = game.building_name(belt_kind)
 		var destination = game.belt_destination(p)
 		var status := "未连接建筑"
-		if destination != null:
+		if destination != null and not game.is_built_market(destination):
 			status = "通往" + game.building_name(game.building_kind(destination))
 		entity_details.text = status + "\n\n" + game.building_effects_text(belt_kind, p, false)
 		if belt_kind == "electric_belt":
@@ -708,22 +707,18 @@ func build_ui(controller: Node) -> void:
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.tooltip_text = game.item_name(item)
 		row.add_child(icon)
-		var inputs: Array = []
-		for buying in [true, false]:
-			var price := SpinBox.new()
-			price.min_value = 0 if buying else 1
-			price.max_value = game.MAX_WAGE
-			price.step = 1
-			price.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			price.custom_minimum_size.x = 88
-			price.prefix = "↓" if buying else "↑"
-			price.tooltip_text = "收购价 · 0 停止收购" if buying else "出售价"
-			price.value_changed.connect(func(value: float):
-				if market_target != null: game.set_market_price(market_target, item, value, buying))
-			row.add_child(price)
-			inputs.append(price)
+		var price := SpinBox.new()
+		price.min_value = 1
+		price.max_value = game.MAX_WAGE
+		price.step = 1
+		price.custom_minimum_size.x = 88
+		price.prefix = "↑"
+		price.tooltip_text = "出售价"
+		price.value_changed.connect(func(value: float):
+			if market_target != null: game.set_market_price(market_target, item, value))
+		row.add_child(price)
 		market_controls.add_child(row)
-		market_inputs[item] = inputs
+		market_inputs[item] = price
 	effect_icons.show_quantities = false
 	%InspectorClose.pressed.connect(game.clear_entity_selection)
 	move_drill.pressed.connect(func(): game.begin_drill_move(game.interaction.selected_entity))

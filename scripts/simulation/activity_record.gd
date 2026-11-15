@@ -1,19 +1,19 @@
 extends RefCounted
 
-# Chosen intent only. Query paths, scores, slots and live object bindings belong
-# to the proposal or executor, never to this record.
+# Concrete action. Scoring, paths and slot claims do not change its work type.
+const WorkTypes = preload("res://scripts/simulation/work_types.gd")
 const PARAMETER_KEYS := {
-	"sell": ["item", "amount"],
 	"payroll": ["employer"],
-	"mine": ["job"],
-	"operate": ["job"],
 	"purchase": ["kind", "item", "amount"],
 	"use_item": ["item"],
 	"service": ["kind"],
 	"eat": ["amount", "item", "canteen"],
 	"sleep": ["bed"],
 	"borrow": ["amount"],
-	"deliver": ["mined"],
+}
+const WORK_PARAMETERS := {
+	"build": [], "produce": ["project"], "operate": ["job"],
+	"deliver": ["mined"], "mine": [], "harvest": [],
 }
 
 var _values: Dictionary
@@ -23,13 +23,19 @@ var kind: String:
 var target: Vector2i:
 	get: return _values.target
 	set(_value): reject_write()
+var method: String:
+	get: return _values.data.get("method", "")
 var data: Dictionary:
 	get: return _values.data
 	set(_value): reject_write()
 
 func _init(activity: String, entity: Vector2i, details: Dictionary) -> void:
 	var parameters: Dictionary = {}
-	for key in PARAMETER_KEYS.get(activity, []):
+	var fields: Array = PARAMETER_KEYS.get(activity, [])
+	if WorkTypes.NAMES.has(activity):
+		parameters.method = details.method
+		fields = WORK_PARAMETERS[details.method]
+	for key in fields:
 		if details.has(key):
 			parameters[key] = details[key]
 	parameters.make_read_only()

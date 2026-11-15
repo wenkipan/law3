@@ -5,6 +5,7 @@ const Evaluation = preload("res://scripts/simulation/activity_evaluation.gd")
 const Parameters = preload("res://scripts/simulation/activity_parameters.gd")
 const Slots = preload("res://scripts/simulation/smart_objects.gd")
 const Intent = preload("res://scripts/simulation/activity_intent.gd")
+const WorkTypes = preload("res://scripts/simulation/work_types.gd")
 
 var evaluation
 var intents: Dictionary = {}
@@ -25,15 +26,6 @@ func _init(g, w: Dictionary, trigger := "select", responses_only := false) -> vo
 		if w.activity.response_reason(g, w, option.kind, option.data) != "": responses.append(option)
 	var responding: bool = responses_only or not responses.is_empty()
 	if responding: choices = responses
-	if not responding:
-		for endpoint in g.world.smart_objects.query(Slots.Action.MARKET, {"items": w.items.keys()}):
-			var p: Vector2i = endpoint.position
-			for item in w.items:
-				if item not in g.MARKET_GOODS: continue
-				if g.market_price(p, item, true) <= 0: continue
-				var keep := ceili(maxf(0, g.MAX_HUNGER - w.hunger) / g.FOOD_RECOVERY[item]) if g.eats(w, item) else 0
-				var amount := mini(w.items[item] - keep, floori(g.stock_at(p, "money") / g.market_price(p, item, true)))
-				if amount > 0: add(c, e, choices, "sell", p, {"item": item, "amount": amount, "identity": endpoint.instance.source})
 	var work: Array = []
 	if not responding: work_options(c, e, work)
 	if w.payroll > 0.000001:
@@ -51,10 +43,11 @@ func _init(g, w: Dictionary, trigger := "select", responses_only := false) -> vo
 		intents[id].pending.append(op)
 
 static func intent_key(op: Dictionary) -> String:
+	if WorkTypes.NAMES.has(op.kind): return "delivery" if op.data.method == "deliver" else "labor"
 	match op.kind:
-		"purchase", "sell", "eat", "use_item": return op.kind + ":" + str(op.data.item)
+		"purchase", "eat", "use_item": return op.kind + ":" + str(op.data.item)
 		"service": return "service:" + op.data.kind
-		"build", "produce", "operate", "mine", "payroll": return "labor"
+		"payroll": return "labor"
 	return op.kind
 
 func next_option():
@@ -75,8 +68,6 @@ func next_option():
 	return best.option
 
 static func add(c, e, choices: Array, kind: String, p: Vector2i, data: Dictionary = {}, slots: Array[String] = [], scoring: Dictionary = {}):
-	if kind in ["mine", "build", "produce", "operate"] and not c.game.can_take_job(c.worker, scoring.get("target", p)):
-		return null
 	for id in slots:
 		if not c.game.world.smart_objects.available(id, c.worker.id):
 			e.reject(kind, p, "slot_unavailable", {"slot": id, "owner": c.game.world.smart_objects.owner(id)})
@@ -161,58 +152,33 @@ static func work_options(c, e, choices: Array) -> void:
 		e.reject("work", null, "cargo_commitment_or_capacity")
 		return
 	if is_same(w.carry, 0):
-		for endpoint in c.job_slots(Slots.Action.BUILD):
+		for endpoint in c.job_slots():
 			var p: Vector2i = endpoint.instance.position
 			if not g.can_take_job(w, p): continue
-			if g.world.building_state(p, "site").get("cancelled", false) or not g.site_cleared(p) or not g.site_supplied(p):
-				e.reject("build", p, "cancelled" if g.world.building_state(p, "site").get("cancelled", false) else "footprint_blocked" if not g.site_cleared(p) else "missing_materials")
+			var data: Dictionary = g.world.smart_objects.labor_offer(endpoint, w.id)
+			if data.has("reason"):
+				e.reject(endpoint.definition.action, p, data.reason, {"method": endpoint.definition.method})
 				continue
 			var position: Vector2i = p
-			if g.world.building_state(p, "site").kind in g.WorldState.BLOCKING_KINDS:
+			if data.method == "build" and endpoint.instance.definition.kind in g.WorldState.BLOCKING_KINDS:
 				var approach: Array[Vector2i] = g.construction_route(c.origin, p)
 				if approach.is_empty():
-					e.reject("build", p, "no_reachable_neighbor")
+					e.reject(endpoint.definition.action, p, "no_reachable_neighbor")
 					continue
 				position = approach.back()
-			add(c, e, choices, "build", position, {"identity": endpoint.instance.source}, [endpoint.id], {"target": p})
-		for endpoint in c.job_slots(Slots.Action.WORK):
-			var p: Vector2i = endpoint.instance.position
-			if not g.can_take_job(w, p): continue
-			var b: Dictionary = endpoint.instance.source
-			var kind: String = endpoint.instance.definition.kind
-			if endpoint.instance.definition.work_activity == &"operate":
-				if not g.operation_needed(p):
-					e.reject("operate", p, "operation_not_needed_or_disconnected")
-					continue
-				var slots: Array[String] = [endpoint.id]
-				var data := {"identity": b, "job": null}
-				if kind == "drill":
-					# Waiting at an unpowered drill must not consume the generation crew.
-					if not g.cache.ready_drills.has(p):
-						e.reject("operate", p, "drill_power_unavailable")
-						continue
-					data.job = g.drill_target(p, w.id)
-					if data.job == null:
-						e.reject("operate", p, "no_available_deposit")
-						continue
-					slots.append(Slots.key("mine", data.job))
-				add(c, e, choices, "operate", p, data, slots)
-			elif (g.PRODUCTS.has(kind) or kind == "research_bench") and b.growth <= 0 and g.has_production_order(p):
-				if b.task.is_empty() and not g.recipe_ready(p, g.station_materials(p)):
-					e.reject("produce", p, "missing_materials")
-					continue
-				add(c, e, choices, "produce", p, {"identity": b}, [endpoint.id])
-			else:
-				e.reject("produce", p, "growing" if b.growth > 0 else "no_production_order")
+			var slots: Array[String] = [endpoint.id]
+			if data.get("job") != null: slots.append(Slots.key("mine", data.job))
+			add(c, e, choices, endpoint.definition.action, position, data, slots, {"target": p})
 
 static func delivery_options(c, e, choices: Array) -> void:
 	var g = c.game
 	var w: Dictionary = c.worker
+	if w.skill != WorkTypes.LOGISTICS: return
 	if not w.delivery_tasks.is_empty():
 		add_delivery(c, e, choices, w.delivery_tasks[0].source, w.delivery_tasks,
 			w.delivery_tasks.map(func(task): return task.item), w.delivery_tasks[0].get("mined", false))
 		return
-	var requests: Array = g.world.available_delivery_requests({"skill": w.skill} if w.employer == null else {})
+	var requests: Array = g.world.available_delivery_requests(w.skill)
 	if not is_same(w.carry, 0):
 		var count: int = choices.size()
 		held_deliveries(c, e, choices, requests)
@@ -221,7 +187,7 @@ static func delivery_options(c, e, choices: Array) -> void:
 			var receiver = null
 			var distance := 0
 			for target in g.world.smart_objects.positions(Slots.Action.STORE):
-				if g.world.has_building(target, "site") or g.delivery_building_at(target) != target: continue
+				if g.world.has_building(target, "site") or g.is_built_market(target) or g.delivery_building_at(target) != target: continue
 				var leg: Dictionary = g.delivery_route(c.origin, target)
 				if not leg.path.is_empty() and (receiver == null or leg.path.size() < distance):
 					receiver = target
@@ -282,6 +248,6 @@ static func add_delivery(c, e, choices: Array, source: Vector2i, tasks: Array, i
 	var picked: bool = mined or tasks[0].picked
 	var leg: Dictionary = c.game.delivery_route(c.origin if picked else source, tasks[0].target)
 	if not leg.path.is_empty():
-		add(c, e, choices, "deliver", leg.stop if picked else source,
-			{"source": source, "tasks": tasks.duplicate(), "items": items, "mined": mined}, [],
+		add(c, e, choices, tasks[0].kind, leg.stop if picked else source,
+			{"method": tasks[0].method, "source": source, "tasks": tasks.duplicate(), "items": items, "mined": mined}, [],
 			{"target": tasks[0].target, "onward": [] if picked else leg.path})

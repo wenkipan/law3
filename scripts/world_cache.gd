@@ -19,7 +19,7 @@ var ready_drills: Dictionary = {}
 var power_output: Dictionary = {}
 var power_graph: Dictionary = {}
 var power_nodes: Dictionary = {}
-var power_signature := 0
+var power_building_revision := -1
 var pollution := Pollution.new()
 var delivery_dirty := true
 var delivery_receivers: Dictionary = {}
@@ -27,7 +27,6 @@ var belt_next: Dictionary = {}
 var belt_destinations: Dictionary = {}
 var receiver_belts: Dictionary = {}
 var supply_receivers: Dictionary = {}
-var market_supply_changed := false
 var mining_drills: Dictionary = {}
 
 func reset(seed_value: int, starting_area: Rect2i) -> void:
@@ -38,7 +37,7 @@ func reset(seed_value: int, starting_area: Rect2i) -> void:
 		collection.clear()
 	sight_ready = false
 	sight_building_revision = -1
-	power_signature = 0
+	power_building_revision = -1
 	pollution.clear()
 	invalidate_delivery()
 	delivery_receivers.clear()
@@ -46,7 +45,6 @@ func reset(seed_value: int, starting_area: Rect2i) -> void:
 	belt_destinations.clear()
 	receiver_belts.clear()
 	supply_receivers.clear()
-	market_supply_changed = false
 	mining_drills.clear()
 
 func update_sight(origins: Dictionary, radius: int, terrain: Dictionary) -> Dictionary:

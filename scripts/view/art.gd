@@ -1,6 +1,8 @@
 extends RefCounted
 
 static var textures: Dictionary = {}
+const SURFACE_ATLAS := "res://assets/world/surface-resources.svg"
+const SURFACE_TILE_SIZE := 40
 const WORLD_BUILDINGS := ["farm", "power_plant", "chemical_plant", "barn", "smelter", "sawmill",
 	"brewery", "hospital", "bathhouse", "soapworks", "pharmacy", "bank",
 	"mill", "weaver", "smithy", "laundry", "canteen"]
@@ -11,7 +13,7 @@ static func building_texture(kind: String, blueprint := false) -> Texture2D:
 
 static func item_texture(item) -> Texture2D:
 	if item in ["money", "berries"]: return texture("res://assets/icons/%s.svg" % item)
-	var icons := {0: "blocks", "raw_water": "raw-water", "wheat": "wheat", 3: "coal",
+	var icons := {0: "blocks", "wheat": "wheat",
 		"clean_water": "water", "bench": "mining-gun", "workbench": "backpack",
 		"wool": "wool", "cloth": "cloth", "clothes": "clothes", "ale": "ale",
 		"iron": "iron", "planks": "planks", "tools": "tools", "meat": "meat", "loan": "loan",
@@ -21,9 +23,11 @@ static func item_texture(item) -> Texture2D:
 	var key := "item:" + str(item)
 	if not textures.has(key):
 		var atlas := AtlasTexture.new()
-		if item is int:
-			atlas.atlas = texture("res://assets/world/terrain-atlas.svg")
-			atlas.region = Rect2(item * 40, 0, 40, 40)
+		if item is int or item == "raw_water":
+			var column: int = item if item is int else 9
+			atlas.atlas = texture(SURFACE_ATLAS)
+			atlas.region = Rect2(column * SURFACE_TILE_SIZE, 0, SURFACE_TILE_SIZE, SURFACE_TILE_SIZE)
+			atlas.filter_clip = true
 		elif item == "bread":
 			atlas.atlas = texture("res://assets/world/miner-parts.svg")
 			atlas.region = Rect2(160, 0, 32, 32)
@@ -41,10 +45,10 @@ static func texture(path: String) -> Texture2D:
 
 static func tile_set(path: String, columns: int) -> TileSet:
 	var result := TileSet.new()
-	result.tile_size = Vector2i(40, 40)
+	result.tile_size = Vector2i.ONE * SURFACE_TILE_SIZE
 	var atlas := TileSetAtlasSource.new()
 	atlas.texture = texture(path)
-	atlas.texture_region_size = Vector2i(40, 40)
+	atlas.texture_region_size = result.tile_size
 	for x in columns:
 		atlas.create_tile(Vector2i(x, 0))
 	result.add_source(atlas, 0)

@@ -15,7 +15,7 @@ var labor_seconds := 0.0
 var experience: Dictionary = {}
 
 func enter(g, w: Dictionary, proposal) -> bool:
-	record = ActivityRecord.new(proposal.kind, proposal.target, proposal.data)
+	record = proposal.record
 	var identity = proposal.data.get("identity")
 	if identity is Dictionary:
 		source_identity = identity
@@ -31,7 +31,9 @@ func valid(g, _w: Dictionary) -> bool:
 	return true
 
 func matches_option(proposal) -> bool:
-	return proposal != null and record.kind == proposal.kind and record.target == proposal.target and record.data.get("job") == proposal.data.get("job")
+	return (proposal != null and record.kind == proposal.kind and record.target == proposal.target
+		and record.method == proposal.record.method and record.data.get("job") == proposal.data.get("job")
+		and record.data.get("project") == proposal.data.get("project"))
 
 func exit(g, _w: Dictionary, _reason: String) -> void:
 	g.world.smart_objects.release(handles)

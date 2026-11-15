@@ -17,8 +17,8 @@ var definitions := Definitions.new()
 var instances: Dictionary = {}
 var endpoints: Dictionary = {}
 var _actions: Dictionary = {}
+var _domains: Dictionary = {}
 var _types: Dictionary = {}
-var _skills: Dictionary = {}
 var _items: Dictionary = {}
 var _materials: Dictionary = {}
 var _locations: Dictionary = {}
@@ -26,6 +26,7 @@ var _instances: Dictionary = {}
 var _orders: Dictionary = {}
 var _next_order := 0
 var _building_open: Callable
+var _labor_offer: Callable
 
 static func key(kind: String, p: Vector2i) -> String:
 	return "%s:%d:%d" % [kind, p.x, p.y]
@@ -46,9 +47,10 @@ func clear() -> void:
 func configure(game) -> void:
 	definitions.configure(game)
 	_building_open = game.building_open
+	_labor_offer = game.labor_offer
 
 func clear_derived() -> void:
-	for collection in [instances, endpoints, _actions, _types, _skills, _items, _materials, _locations, _instances, _orders]: collection.clear()
+	for collection in [instances, endpoints, _actions, _domains, _types, _items, _materials, _locations, _instances, _orders]: collection.clear()
 	_next_order = 0
 
 func begin_rebuild() -> void:
@@ -74,7 +76,7 @@ func register_building(entity, p: Vector2i, primary: bool) -> void:
 	for interaction in definition.interactions:
 		if interaction.action == Action.STORE and not primary: continue
 		var materials: Array = []
-		if interaction.action in [Action.WORK, Action.BUILD, Action.SERVICE]:
+		if interaction.method != "" or interaction.action == Action.SERVICE:
 			materials = entity.state.materials.keys() if blueprint else definition.materials.keys()
 			if entity.kind == "research_bench" and not blueprint:
 				materials = Technology.PROJECTS.get(entity.state.get("research", ""), {}).get("materials", {}).keys()
@@ -100,14 +102,9 @@ func register_point(kind: String, p: Vector2i, source: Dictionary, definition, i
 	var interaction = definition.interactions[0]
 	publish(key(interaction.name, p), object, interaction, p, items)
 
-func register_delivery(task: Dictionary, skill: String) -> void:
+func register_delivery(task: Dictionary) -> void:
 	var id := delivery_key(task)
-	var definition = definitions.requests[skill]
-	var previous = instances.get(StringName(id))
-	# Redirecting actual freight changes its searchable location, not its claim.
-	if previous != null and is_same(previous.source, task) and previous.definition != definition:
-		remove_endpoint(id)
-		previous.definition = definition
+	var definition = definitions.delivery
 	var object = bind_instance(StringName(id), definition, task, task.target)
 	var item = task.item if task.bound else task.requested_item
 	var items: Array = Definitions.MINERALS if is_same(item, 0) else [item]
@@ -159,8 +156,8 @@ func index_entry(index: Dictionary, value, endpoint, adding: bool) -> void:
 
 func index_endpoint(endpoint, adding: bool) -> void:
 	index_entry(_actions, endpoint.definition.action, endpoint, adding)
+	index_entry(_domains, endpoint.instance.definition.domain, endpoint, adding)
 	index_entry(_types, endpoint.instance.definition.kind, endpoint, adding)
-	if endpoint.definition.skill != &"": index_entry(_skills, endpoint.definition.skill, endpoint, adding)
 	for item in endpoint.items: index_entry(_items, item, endpoint, adding)
 	for item in endpoint.materials: index_entry(_materials, item, endpoint, adding)
 	index_entry(_locations, MapGenerator.chunk_at(endpoint.position), endpoint, adding)
@@ -173,10 +170,10 @@ func remove_endpoint(id: String) -> void:
 	endpoint.instance.slot_ids.erase(id)
 	endpoints.erase(id)
 
-func query(action: int, filters: Dictionary = {}) -> Array:
+func query(action: String, filters: Dictionary = {}) -> Array:
 	var buckets: Array = [_actions.get(action, {})]
 	if filters.has("type"): buckets.append(_types.get(StringName(filters.type), {}))
-	if filters.has("skill"): buckets.append(_skills.get(StringName(filters.skill), {}))
+	if filters.has("domain"): buckets.append(_domains.get(filters.domain, {}))
 	if filters.has("item"): buckets.append(_items.get(filters.item, {}))
 	if filters.has("material"): buckets.append(_materials.get(filters.material, {}))
 	if filters.has("instance"): buckets.append(_instances.get(StringName(filters.instance), {}))
@@ -212,10 +209,34 @@ func query(action: int, filters: Dictionary = {}) -> Array:
 	result.sort_custom(func(a, b): return a.order < b.order)
 	return result
 
-func positions(action: int, filters: Dictionary = {}) -> Array[Vector2i]:
+func positions(action: String, filters: Dictionary = {}) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
 	for endpoint in query(action, filters): result.append(endpoint.position)
 	return result
+
+func labor_offer(endpoint, worker_id = null) -> Dictionary:
+	return _labor_offer.call(endpoint, worker_id)
+
+func building_labor_demand(id: int) -> String:
+	var object = instances.get(building_id(id))
+	if object == null: return ""
+	for slot_id in object.slot_ids:
+		var endpoint = endpoints[slot_id]
+		if endpoint.definition.method != "" and not labor_offer(endpoint).has("reason"):
+			return endpoint.definition.action
+	return ""
+
+func delivery_demands(area: Rect2i) -> Dictionary:
+	# Include claimed and belt shipments: a request is outstanding until delivery.
+	var by_receiver: Dictionary = {}
+	var action: String = definitions.delivery.interactions[0].action
+	for endpoint in query(action, {"domain": Definitions.Domain.REQUEST, "area": area}):
+		var task: Dictionary = endpoint.instance.source
+		if task.receiver_id < 0: continue
+		if not by_receiver.has(task.receiver_id): by_receiver[task.receiver_id] = {}
+		var goods: Dictionary = by_receiver[task.receiver_id]
+		goods[task.requested_item] = goods.get(task.requested_item, 0.0) + task.amount
+	return by_receiver
 
 func available(id: String, worker_id := -1) -> bool:
 	return slots.has(id) and (slots[id].owner == -1 or slots[id].owner == worker_id)

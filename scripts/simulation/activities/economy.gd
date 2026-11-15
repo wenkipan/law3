@@ -8,7 +8,7 @@ func valid(g, w: Dictionary) -> bool:
 	if not super.valid(g, w):
 		return false
 	match record.kind:
-		"purchase", "sell":
+		"purchase":
 			return g.world.has_building(record.target, "station") and is_same(g.world.building_state(record.target, "station"), source_identity) and g.building_open(record.target)
 		"borrow":
 			return g.world.has_building(record.target, "bank")
@@ -24,7 +24,6 @@ func tick(g, w: Dictionary, delta: float) -> String:
 		return "running"
 	match record.kind:
 		"purchase": g.purchase(w, record.target, record.data.amount, record.data.item)
-		"sell": g.market_sale(w, record.target, record.data.item, record.data.amount)
 		"borrow": g.borrow(w, record.target, record.data.amount)
 		"payroll": g.collect_payroll(w, record.target)
 	return "success"

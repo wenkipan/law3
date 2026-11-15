@@ -149,7 +149,7 @@ func components(w: Dictionary) -> Dictionary:
 		activity.merge({"phase": a.phase, "age": a.age, "elapsed": a.elapsed,
 			"destination": cell(a.destination), "path_remaining": a.path.size(),
 			"claims": a.handles.duplicate(true), "drink_elapsed": w.activity.drink_elapsed})
-		if a.record.kind == "deliver":
+		if a.record.method == "deliver":
 			activity.receiver = cell(a.receiver)
 			activity.task = delivery_task(a.task)
 	return {"position": [w.pos.x, w.pos.y],
@@ -180,7 +180,7 @@ static func proposal(option) -> Dictionary:
 
 static func activity_record(value) -> Dictionary:
 	var result := {"kind": value.kind, "target": cell(value.target)}
-	for key in ["amount", "bed", "kind", "mined"]:
+	for key in ["amount", "bed", "kind", "method", "mined", "project"]:
 		if value.data.has(key):
 			result["product" if key == "kind" else key] = value.data[key]
 	for key in ["job", "canteen", "source", "target"]:

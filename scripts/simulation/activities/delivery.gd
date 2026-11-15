@@ -17,11 +17,11 @@ func enter(g, w: Dictionary, proposal) -> bool:
 	return true
 
 func valid(g, w: Dictionary) -> bool:
-	return (not mined or not is_same(w.carry, 0)) and g.world.delivery_tasks.has(task) and task.bound and not task.get("on_belt", false) and task.owner == w.id and g.world.smart_objects.valid(task.handle)
+	return w.skill == task.kind and (not mined or not is_same(w.carry, 0)) and g.world.delivery_tasks.has(task) and task.bound and not task.get("on_belt", false) and task.owner == w.id and g.world.smart_objects.valid(task.handle)
 
 func matches_option(proposal) -> bool:
 	# Pickup, transport and redirected routes still fulfill the same concrete task.
-	return proposal.kind == "deliver" and proposal.data.tasks.has(task)
+	return proposal.kind == task.kind and proposal.record.method == task.method and proposal.data.tasks.has(task)
 
 func tick(g, w: Dictionary, delta: float) -> String:
 	# Replan for receiver or connection changes, never temporary entry occupancy.

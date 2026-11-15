@@ -88,7 +88,8 @@ const WORKER_COLORS := [Color("#d6ba72"), Color("#a4cbb5"), Color("#d99987")]
 const STARTING_MONEY := 600.0
 const PLAYER_OPERATOR := -2
 const HOLD_DELAY := 0.25
-const SKILLS := {"gathering": "采集", "hunting": "狩猎", "mining": "采矿", "construction": "建造", "farming": "农业", "processing": "加工", "trade": "商贸", "transport": "运输", "power": "电力", "research": "科研", "medicine": "医疗"}
+const WorkTypes = preload("res://scripts/simulation/work_types.gd")
+const SKILLS := WorkTypes.NAMES
 const DIETS := {"fruit": ["berries"], "meat": ["meat"], "grain": ["wheat", "bread"]}
 const FOOD_RECOVERY := {"berries": 20.0, "meat": 20.0, "wheat": 20.0, "bread": 30.0}
 const MINING_DAYS := 10.0
@@ -129,7 +130,7 @@ const OPERATED_KINDS := ["power_plant", "manual_generator", "transformer", "dril
 const DUTY_KINDS := ["market", "storage_box", "bank", "bathhouse", "laundry", "hospital"]
 const BARRIER_KINDS := ["wall", "fence", "door"]
 const NEW_BUILDINGS := {
-	"recruitment_board": {"name": "招工木牌", "materials": {7: 4}, "hours": 2.0, "size": Vector2i.ONE},
+	"recruitment_board": {"name": "招工木牌", "materials": {7: 3}, "hours": 2.0, "size": Vector2i.ONE},
 	"market": {"name": "市场", "materials": {7: 6, 1: 4}, "hours": 4.0, "size": Vector2i(3, 2)},
 	"mine": {"name": "矿场", "materials": {7: 4, 1: 4}, "hours": 4.0, "size": Vector2i(2, 2)},
 	"wall": {"name": "墙", "materials": {1: 2}, "hours": 0.5, "size": Vector2i.ONE},
@@ -230,6 +231,7 @@ var alerts := WorldAlerts.new()
 var alert_targets: Dictionary = {}
 var interaction := InteractionState.new()
 var simulating := false
+var supply_sync_queued := false
 # A mouse gesture owns temporary claims; work progress stays on the world target.
 var player_work: Dictionary = {}
 
@@ -312,7 +314,7 @@ func restore_snapshot(data: PackedByteArray) -> Dictionary:
 	cache = next_cache
 	for building in world.buildings.values():
 		var p := world.building_map.origin(building.id)
-		supply_changed(p, false)
+		supply_changed(p)
 		if building.kind == "drill" and building.in_group("station"): cache.mining_drills[p] = true
 	alerts.reset()
 	alert_targets.clear()
@@ -419,24 +421,23 @@ func hunger_decay(w: Dictionary) -> float:
 	return HUNGER_DECAY_PER_DAY * (0.5 if is_child(w) else 1.0)
 
 func work_skill(kind: String) -> String:
-	return SmartObjectDefinitions.work_skill(kind)
-
-func can_work(w: Dictionary, activity: String, station := "") -> bool:
-	if is_child(w) and not (activity == "produce" and station in SmartObjectDefinitions.CHILD_WORK_KINDS): return false
-	return w.skill == ("construction" if activity == "build" else "mining" if activity == "mine" else work_skill(station))
+	return SmartObjectDefinitions.JOB_TYPES.get(kind, "")
 
 func job_settings(p) -> Dictionary:
 	var building = world.building_at(p)
 	return building.state if building != null and (building.in_group("site") or has_job(building.kind)) else {}
 
 func has_job(kind: String) -> bool:
-	return SmartObjectDefinitions.JOB_SKILLS.has(kind)
+	return SmartObjectDefinitions.JOB_TYPES.has(kind)
 
 func can_take_job(w: Dictionary, p: Vector2i) -> bool:
 	if not world.has_building(p, "site") and not has_job(building_kind(p)): return false
 	var settings := job_settings(p)
-	var activity := "build" if world.has_building(p, "site") else "produce"
-	return not settings.is_empty() and settings.get("owner", "player") == "player" and not settings.get("cancelled", false) and settings.get("wage", WAGE_PER_HOUR) > 0 and settings.get("employee", -1) in [-1, w.id] and (w.employer == null or w.employer == world.building_at(p).id) and can_work(w, activity, building_kind(p))
+	var site := world.has_building(p, "site")
+	var kind := building_kind(p)
+	if w.skill != (WorkTypes.LOGISTICS if site else work_skill(kind)): return false
+	if is_child(w) and (site or kind not in SmartObjectDefinitions.CHILD_WORK_KINDS): return false
+	return not settings.is_empty() and settings.get("owner", "player") == "player" and not settings.get("cancelled", false) and settings.get("wage", WAGE_PER_HOUR) > 0 and settings.get("employee", -1) in [-1, w.id] and (w.employer == null or w.employer == world.building_at(p).id)
 
 func employ(w: Dictionary, p: Vector2i) -> bool:
 	if not can_take_job(w, p): return false
@@ -481,36 +482,23 @@ func deplete_deposit(cell: Vector2i) -> void:
 		world.terrain[cell] = 0
 		terrain_cell_changed.emit(cell)
 
-func market_price(p: Vector2i, item, buying := false) -> float:
-	var market: Dictionary = world.building_state(p, "station", {})
-	var prices: Dictionary = market.get("buy_prices" if buying else "sell_prices", {})
-	return prices.get(item, 1.0 if buying else 2.0)
+func is_built_market(p) -> bool:
+	return world.building_state(p, "station").get("kind") == "market"
 
-func market_sale(w: Dictionary, p: Vector2i, item, requested: int) -> int:
-	if building_kind(p) != "market" or not building_open(p) or w.pos.distance_to(Vector2(p)) > 0.01 or item not in MARKET_GOODS: return 0
-	var price := market_price(p, item, true)
-	if price <= 0: return 0
-	var keep := ceili(maxf(0, MAX_HUNGER - w.hunger) / FOOD_RECOVERY[item]) if eats(w, item) else 0
-	var count := mini(requested, mini(maxi(0, w.items.get(item, 0) - keep), floori(stock_at(p, "money") / price)))
-	if count <= 0: return 0
-	w.items[item] -= count
-	add_stock(p, item, count)
-	add_stock(p, "money", -count * price)
-	# Goods sales are not wages and do not repay a labor-income loan.
-	w.money += count * price
-	personal_item_event.emit(w.id, "gain", "money", count * price)
-	transaction_completed.emit(w.id, item, false)
-	return count
+func market_price(p: Vector2i, item) -> float:
+	return world.building_state(p, "station").get("sell_prices", {}).get(item, 2.0)
 
-func set_market_price(p: Vector2i, item, value: float, buying: bool) -> bool:
-	if building_kind(p) != "market" or not world.has_building(p, "station") or item not in MARKET_GOODS or not is_finite(value): return false
-	world.building_state(p, "station")["buy_prices" if buying else "sell_prices"][item] = snappedf(clampf(value, 0.0 if buying else 1.0, MAX_WAGE), 1.0)
+func set_market_price(p: Vector2i, item, value: float) -> bool:
+	if not is_built_market(p) or item not in MARKET_GOODS or not is_finite(value): return false
+	world.building_state(p, "station").sell_prices[item] = snappedf(clampf(value, 1.0, MAX_WAGE), 1.0)
 	return true
 
 func can_deliver(w: Dictionary, source: Vector2i, target: Vector2i) -> bool:
+	if w.skill != WorkTypes.LOGISTICS or is_child(w): return false
 	if not w.delivery_tasks.is_empty(): return true
 	if w.employer != null:
-		return w.employer in [delivery_receiver_id(source), delivery_receiver_id(target)] or (w.skill == "transport" and building_open(world.building_map.origin(w.employer)))
+		var employer: Vector2i = world.building_map.origin(w.employer)
+		return w.employer in [delivery_receiver_id(source), delivery_receiver_id(target)] or (building_kind(employer) == "storage_box" and building_open(employer))
 	return can_take_job(w, target)
 
 func food_cash_shortfall(w: Dictionary) -> float:
@@ -805,7 +793,11 @@ func finish_belt_drag(screen_position: Vector2) -> void:
 func complete_delivery(delivery: Dictionary, fee := 0.0) -> void:
 	if not world.delivery_tasks.has(delivery):
 		return
-	put_goods(delivery.target, delivery)
+	var target: Vector2i = delivery.target
+	# Recovery deliveries to the starting point must not put goods up for sale.
+	if is_built_market(target) and not is_same(delivery.item, "money"):
+		target = market_spill_cell(target)
+	put_goods(target, delivery)
 	if delivery.get("mined", false):
 		world.delivered += int(delivery.amount)
 		if delivery.target == BASE:
@@ -961,21 +953,19 @@ func production_materials(kind: String) -> Dictionary:
 	return {}
 
 func return_materials(payment: Dictionary, location := BASE) -> void:
+	if is_built_market(location): location = market_spill_cell(location)
 	for item in payment:
 		add_stock(location, item, payment[item])
 		record_resource_output(item, payment[item])
 
-func material_requirements_text(recipe: Dictionary, show_stock := false, colored := false) -> String:
+func material_requirement_line(item, amount: int, stock := -1) -> String:
+	var label := "方块" if is_same(item, 0) else item_name(item)
+	return "%s  %d / %d" % [label, stock, amount] if stock >= 0 else "%s × %d" % [label, amount]
+
+func material_requirements_text(recipe: Dictionary) -> String:
 	var lines: Array[String] = []
-	var available := player_inventory() if show_stock else {}
-	for ore in recipe:
-		var amount: int = recipe[ore]
-		var stock := int(maxf(0.0, available.get(ore, 0.0)))
-		var label: String = "方块" if is_same(ore, 0) else item_name(ore)
-		var line := "%s  %d / %d" % [label, stock, amount] if show_stock else "%s × %d" % [label, amount]
-		if colored:
-			line = "[color=%s]%s[/color]" % ["#A9D9B5" if stock >= amount else "#ED9C89", line]
-		lines.append(line)
+	for item in recipe:
+		lines.append(material_requirement_line(item, recipe[item]))
 	return "\n".join(lines)
 
 func building_blocks(kind: String) -> int:
@@ -1251,7 +1241,7 @@ func demolish_building(p: Vector2i, line := false) -> bool:
 			var active = worker.activity.active
 			if active == null: continue
 			var record: ActivityRecord = active.record
-			var uses_building: bool = record.target == origin and record.kind in ["produce", "operate", "purchase", "payroll", "borrow", "service"]
+			var uses_building: bool = record.target == origin and (record.method in ["produce", "operate"] or record.kind in ["purchase", "payroll", "borrow", "service"])
 			uses_building = uses_building or (record.kind == "sleep" and record.data.get("bed", false) and record.target == origin)
 			uses_building = uses_building or (record.kind == "eat" and record.data.get("canteen") == origin)
 			if uses_building: worker.activity.exit(self, worker, "cancelled")
@@ -1322,11 +1312,11 @@ func redirect_site_deliveries(origin: Vector2i) -> void:
 		if not shipment.bound:
 			remove_delivery_task(shipment)
 		elif shipment.picked:
-			supply_changed(origin, false)
+			supply_changed(origin)
 			shipment.target = BASE if shipment.source == origin or delivery_building_at(shipment.source) != shipment.source else shipment.source
 			shipment.receiver_id = delivery_receiver_id(shipment.target)
 			world.register_delivery(shipment)
-			supply_changed(shipment.target, false)
+			supply_changed(shipment.target)
 			# Carriers and belts replan against the shipment's current receiver.
 		else:
 			if shipment.owner >= 0:
@@ -1343,7 +1333,7 @@ func production_station(kind: String) -> Dictionary:
 	var result := {"kind": kind, "owner": "player", "employee": -1, "wage": WAGE_PER_HOUR, "queue": 0, "daily_output": 0, "produced_today": 0, "task": {}, "growth": 0.0, "harvest": false, "water_day": 0}
 	if kind == "recruitment_board":
 		result.merge({"recruitment_elapsed": 0.0, "recruitment_cost": DEFAULT_RECRUITMENT_COST})
-	if kind == "market": result.merge({"buy_prices": {}, "sell_prices": {}})
+	if kind == "market": result.sell_prices = {}
 	if kind == "research_bench":
 		result.merge({"research": "", "research_tasks": {}})
 	return result
@@ -1390,7 +1380,7 @@ func assign_research(p: Vector2i, project: String) -> bool:
 	bench.research = project
 	bench.task = bench.research_tasks.get(project, {})
 	world.refresh_interactions_at(p)
-	supply_changed(p, false)
+	supply_changed(p)
 	update_ui()
 	return true
 
@@ -1445,7 +1435,7 @@ func product_item(kind: String):
 	return PRODUCTS.get(kind, {}).get("item", {"pump": "raw_water", "purifier": "clean_water"}.get(kind, kind))
 
 func shop_goods(p: Vector2i) -> Array:
-	return MARKET_GOODS if building_kind(p) == "market" and building_open(p) else []
+	return MARKET_GOODS if is_built_market(p) and building_open(p) else []
 
 func sale_price(p: Vector2i, item = null) -> float:
 	if building_kind(p) == "market": return market_price(p, item)
@@ -1670,13 +1660,14 @@ func simulate(delta: float) -> void:
 					world.building_state(p, "station").produced_today = 0
 					supply_changed(p)
 				elif kind == "fountain":
-					supply_changed(p, false)
+					supply_changed(p)
 			for w in world.workers:
 				w.earned_today = 0
 				w.eaten_today = 0
 				w.bed_spent_today = 0.0
 				w.shop_spent_today = 0.0
-		alerts.refresh(self)
+	sync_delivery_tasks()
+	alerts.refresh(self)
 	simulating = false
 
 func simulate_workers(delta: float) -> void:
@@ -1772,6 +1763,7 @@ func remove_worker(w: Dictionary) -> void:
 	w.activity.exit(self, w, "death")
 	if w.employer != null: release_employee(world.building_map.origin(w.employer), false)
 	var p := Vector2i(w.pos.round())
+	var drop := market_spill_cell(p) if is_built_market(p) else p
 	var goods: Dictionary = w.items.duplicate()
 	goods.money = goods.get("money", 0.0) + w.money
 	goods.clean_water = goods.get("clean_water", 0.0) + w.water
@@ -1785,7 +1777,8 @@ func remove_worker(w: Dictionary) -> void:
 			continue
 		if not task.get("mined", false):
 			goods[task.item] = goods.get(task.item, 0.0) + task.amount
-			if is_same(task.item, "wastewater"): world.add_waste(p, task.get("pollution", 0.0))
+			if is_same(task.item, "wastewater"):
+				world.add_waste(drop, task.get("pollution", 0.0))
 		remove_delivery_task(task)
 	# Cargo already on a belt no longer needs its original carrier.
 	for cargo in world.belt_cargo.values():
@@ -1799,8 +1792,8 @@ func remove_worker(w: Dictionary) -> void:
 		if bed.assigned == w.id: bed.assigned = -1
 	for item in goods:
 		if goods[item] <= 0: continue
-		add_stock(p, item, goods[item])
-		if p != BASE: reserve_recovery_tasks(p, BASE, item, goods[item])
+		add_stock(drop, item, goods[item])
+		if drop != BASE: reserve_recovery_tasks(drop, BASE, item, goods[item])
 	if w.gun_uses > 0: record_resource_use("bench", 1)
 	if w.backpack_uses > 0: record_resource_use("workbench", 1)
 	for item in w.equipment:
@@ -2111,36 +2104,26 @@ func stop_player_work() -> void:
 
 func start_player_work(p: Vector2i, on_ground: bool) -> bool:
 	if not cache.visible_tiles.has(p): return false
-	var kind := ""
-	var data: Dictionary = {}
-	var source: Dictionary = {}
-	var keys: Array[String] = []
+	var slot := ""
 	if not on_ground and world.has_building(p, "site"):
-		kind = "build"
-		source = world.building_state(p, "site")
-		keys.append(SmartObjects.key("build", p))
+		slot = "build"
 	elif not on_ground and world.has_building(p, "station") and has_job(building_kind(p)):
-		var definition = world.smart_objects.definitions.buildings[building_kind(p)]
-		kind = definition.work_activity
-		source = world.building_state(p, "station")
-		keys.append(SmartObjects.key("work", p))
-		if building_kind(p) == "drill":
-			var deposit = drill_target(p, PLAYER_OPERATOR)
-			if deposit == null: return false
-			data.job = deposit
-			keys.append(SmartObjects.key("mine", deposit))
+		slot = "work"
 	elif on_ground and can_hand_harvest(p):
-		kind = "harvest"
-		source = world.wild_resources[p]
-		keys.append(SmartObjects.key("harvest", p))
+		slot = "harvest"
 	elif on_ground and world.deposits.get(p, 0) > 0 and world.terrain.get(p, 0) in SmartObjectDefinitions.MINERALS:
-		kind = "mine"
+		slot = "mine"
 		ensure_mining_contract(p)
-		source = world.mining_contracts[p]
-		keys.append(SmartObjects.key("mine", p))
 	else:
 		return false
-	var record := ActivityRecord.new(kind, p, data)
+	var endpoint = world.smart_objects.endpoints.get(SmartObjects.key(slot, p))
+	if endpoint == null: return false
+	var data := world.smart_objects.labor_offer(endpoint, PLAYER_OPERATOR)
+	if data.has("reason"): return false
+	var keys: Array[String] = [endpoint.id]
+	if data.get("job") != null: keys.append(SmartObjects.key("mine", data.job))
+	var source: Dictionary = endpoint.instance.source
+	var record := ActivityRecord.new(endpoint.definition.action, p, data)
 	if not work_target_available(record, source, true): return false
 	var handles := world.smart_objects.acquire(keys, PLAYER_OPERATOR)
 	if handles.size() != keys.size(): return false
@@ -2223,6 +2206,8 @@ func finish_player_gesture(screen_position: Vector2, worker_id: int, entity) -> 
 			var amount: float = world.player_cargo.amount
 			if world.has_building(target, "site"):
 				amount = minf(amount, delivery_need(target, world.player_cargo.item, true))
+			elif is_built_market(target) and world.player_cargo.item not in MARKET_GOODS and not is_same(world.player_cargo.item, "money"):
+				amount = 0.0
 			if world.has_building(target, "belt") and not world.has_building(target, "site"):
 				amount = load_player_cargo(target)
 				world.player_cargo.pollution *= (world.player_cargo.amount - amount) / world.player_cargo.amount
@@ -2241,7 +2226,7 @@ func finish_player_gesture(screen_position: Vector2, worker_id: int, entity) -> 
 
 func load_player_cargo(p: Vector2i) -> float:
 	var target = belt_destination(p)
-	if target == null or belt_cargo_at(p) >= 0: return 0.0
+	if target == null or is_built_market(target) or belt_cargo_at(p) >= 0: return 0.0
 	var amount := minf(1.0, world.player_cargo.amount)
 	if world.has_building(target, "site"): amount = minf(amount, delivery_need(target, world.player_cargo.item, true))
 	if amount <= 0: return 0.0
@@ -2249,7 +2234,7 @@ func load_player_cargo(p: Vector2i) -> float:
 	task.merge({"source": world.player_cargo.origin, "item": world.player_cargo.item,
 		"amount": amount, "bound": true, "picked": true,
 		"pollution": world.player_cargo.pollution * amount / world.player_cargo.amount}, true)
-	supply_changed(target, false)
+	supply_changed(target)
 	if load_belt({}, task, p): return amount
 	remove_delivery_task(task)
 	return 0.0
@@ -2495,7 +2480,7 @@ func stock_at(p: Vector2i, item) -> float:
 func add_stock(p: Vector2i, item, amount: float) -> void:
 	if amount == 0.0: return
 	world.storage_at(p, true).add(item, amount)
-	supply_changed(p, item in MARKET_GOODS)
+	supply_changed(p)
 
 func stock_locations() -> Array:
 	var locations: Array = [BASE]
@@ -2515,12 +2500,20 @@ func take_goods(p: Vector2i, item, amount: float) -> Dictionary:
 	amount = minf(amount, available_at(p, item))
 	if amount <= 0: return {}
 	var goods: Dictionary = world.storage_at(p).take(item, amount)
-	supply_changed(p, item in MARKET_GOODS)
+	supply_changed(p)
 	return goods
 
 func put_goods(p: Vector2i, goods: Dictionary) -> void:
 	world.storage_at(p, true).put(goods)
-	supply_changed(p, goods.item in MARKET_GOODS)
+	supply_changed(p)
+
+func market_spill_cell(p: Vector2i) -> Vector2i:
+	var cells := building_cells(p, "market")
+	for cell in cells:
+		for direction in DIRS:
+			var neighbor: Vector2i = cell + direction
+			if world.walkable(neighbor) and world.building_map.at_cell(neighbor).is_empty(): return neighbor
+	return cells.back()
 
 func available_at(p: Vector2i, item) -> float:
 	if world.has_building(p, "station"):
@@ -2558,7 +2551,7 @@ func incoming(p: Vector2i, item) -> float:
 	return amount
 
 func delivery_request(target: Vector2i, item, receiver := -1) -> Dictionary:
-	return {"id": -1, "source": null, "target": target,
+	return {"kind": WorkTypes.LOGISTICS, "method": "deliver", "id": -1, "source": null, "target": target,
 		"item": item, "requested_item": item, "amount": 1.0, "owner": -1,
 		"bound": false, "picked": false, "receiver_id": receiver, "handle": {}}
 
@@ -2574,7 +2567,7 @@ func remove_delivery_task(task: Dictionary) -> void:
 	if task.owner >= 0: world.worker(task.owner).delivery_tasks.erase(task)
 	world.smart_objects.unregister(StringName(SmartObjects.delivery_key(task)))
 	world.delivery_tasks.erase(task)
-	if task.bound: supply_changed(task.target, false)
+	if task.bound: supply_changed(task.target)
 
 func reserve_recovery_tasks(source: Vector2i, target: Vector2i, item, amount: float) -> void:
 	# Recovery may include a fractional remainder of money or water; supply requests are always one.
@@ -2583,7 +2576,7 @@ func reserve_recovery_tasks(source: Vector2i, target: Vector2i, item, amount: fl
 		task.source = source
 		task.amount = minf(1.0, amount)
 		task.bound = true
-		supply_changed(target, false)
+		supply_changed(target)
 		task.pollution = world.take_waste(source, task.amount, stock_at(source, item)) if is_same(item, "wastewater") else 0.0
 		add_stock(source, item, -task.amount)
 		amount -= task.amount
@@ -2592,13 +2585,14 @@ func release_delivery_task(task: Dictionary) -> void:
 	if not world.delivery_tasks.has(task) or task.picked:
 		return
 	if task.bound:
-		add_stock(task.source, task.item, task.amount)
-		if is_same(task.item, "wastewater"): world.add_waste(task.source, task.get("pollution", 0.0))
+		var source: Vector2i = task.source
+		if is_built_market(source) and not is_same(task.item, "money"): source = market_spill_cell(source)
+		put_goods(source, task)
 	if task.owner >= 0: world.worker(task.owner).delivery_tasks.erase(task)
 	var claims: Array[Dictionary] = []
 	if not task.handle.is_empty(): claims.append(task.handle)
 	world.smart_objects.release(claims)
-	if task.bound: supply_changed(task.target, false)
+	if task.bound: supply_changed(task.target)
 	if task.receiver_id < 0:
 		remove_delivery_task(task)
 		return
@@ -2610,23 +2604,24 @@ func delivery_receiver_id(p: Vector2i) -> int:
 	var building = world.building_at(p)
 	return building.id if building != null else -1
 
-func supply_changed(p: Vector2i, affects_market := true) -> void:
+func supply_changed(p: Vector2i) -> void:
 	cache.supply_receivers[p] = true
-	if affects_market: cache.market_supply_changed = true
 	presentation_stock_changed.emit(p)
+	if not simulating and not supply_sync_queued:
+		supply_sync_queued = true
+		sync_supply_after_commands.call_deferred()
+
+func sync_supply_after_commands() -> void:
+	supply_sync_queued = false
+	sync_delivery_tasks()
 
 func research_supply_changed() -> void:
-	for p in research_stations(): supply_changed(p, false)
+	for p in research_stations(): supply_changed(p)
 
 func sync_delivery_tasks() -> void:
-	if cache.supply_receivers.is_empty() and not cache.market_supply_changed: return
+	if cache.supply_receivers.is_empty(): return
 	var dirty: Dictionary = cache.supply_receivers
 	cache.supply_receivers = {}
-	if cache.market_supply_changed:
-		for building in world.buildings.values():
-			if building.kind == "market" and building.in_group("station"):
-				dirty[world.building_map.origin(building.id)] = true
-	cache.market_supply_changed = false
 	var positions := dirty.keys()
 	positions.sort_custom(func(a, b): return delivery_receiver_id(a) < delivery_receiver_id(b))
 	var missing: Dictionary = {}
@@ -2659,21 +2654,6 @@ func delivery_requirements(p: Vector2i, manual := false) -> Dictionary:
 		return {}
 	var b: Dictionary = world.building_state(p, "station")
 	if b.get("wage", WAGE_PER_HOUR) == 0: return {}
-	if b.kind == "market":
-		var supply: Dictionary = {}
-		for source in stock_locations():
-			if source == p: continue
-			var storage = world.storage_at(source)
-			if storage == null: continue
-			for item in storage.items:
-				if storage.items[item] > 0 and item in MARKET_GOODS:
-					supply[item] = supply.get(item, 0.0) + available_at(source, item)
-		var requested: Dictionary = {}
-		for item in MARKET_GOODS:
-			var available: float = supply.get(item, 0.0)
-			if available > 0:
-				requested[item] = mini(8, floori(stock_at(p, item) + incoming(p, item) + available))
-		return requested
 	if b.kind == "research_bench":
 		return station_materials(p) if b.task.is_empty() and research_can_start(b.research) else {}
 	if PRODUCTS.has(b.kind) and has_production_order(p) and b.task.is_empty() and b.growth <= 0:
@@ -2705,7 +2685,7 @@ func delivery_task_accepts(task: Dictionary, item) -> bool:
 
 func claim_delivery_tasks(w: Dictionary, plan: Dictionary) -> bool:
 	var tasks: Array = plan.tasks
-	if tasks.is_empty(): return false
+	if tasks.is_empty() or w.skill != WorkTypes.LOGISTICS or is_child(w): return false
 	if not w.delivery_tasks.is_empty():
 		return tasks.size() == w.delivery_tasks.size() and tasks.all(func(task): return w.delivery_tasks.has(task) and world.delivery_tasks.has(task) and task.owner == w.id and world.smart_objects.valid(task.handle))
 	var target: Vector2i = tasks[0].target
@@ -2733,7 +2713,7 @@ func claim_delivery_tasks(w: Dictionary, plan: Dictionary) -> bool:
 			return false
 		if not world.delivery_tasks.has(task):
 			# Only newly carried goods can create an on-demand storage request.
-			if not mined_cargo or task.id != -1 or task.bound or task.amount != 1.0 or delivery_building_at(target) != target or world.has_building(target, "site"): return false
+			if not mined_cargo or task.id != -1 or task.bound or task.amount != 1.0 or delivery_building_at(target) != target or world.has_building(target, "site") or is_built_market(target): return false
 			if not is_same(task.requested_item, items[i]): return false
 		elif keys.has(SmartObjects.delivery_key(task)):
 			return false
@@ -2749,6 +2729,7 @@ func claim_delivery_tasks(w: Dictionary, plan: Dictionary) -> bool:
 	if not mined_cargo:
 		if amount > FREIGHT_CAPACITY + 0.000001: return false
 		for item in needed:
+			if is_built_market(plan.source) and not is_same(item, "money"): return false
 			if needed[item] > available_at(plan.source, item) + 0.000001: return false
 	# Materialize selected storage requests, never while evaluating alternatives.
 	tasks = tasks.duplicate()
@@ -2772,7 +2753,7 @@ func claim_delivery_tasks(w: Dictionary, plan: Dictionary) -> bool:
 			task.source = plan.source
 			task.item = items[i]
 			task.bound = true
-			supply_changed(task.target, false)
+			supply_changed(task.target)
 			task.picked = mined_cargo
 			task.mined = mined_cargo
 			task.carried_ore = mined_cargo
@@ -2853,7 +2834,7 @@ func has_powered_effect(p: Vector2, kind: String) -> bool:
 
 func drill_target(p: Vector2i, worker_id := -1):
 	var area := Rect2i(p - Vector2i.ONE * DRILL_RADIUS, Vector2i.ONE * (DRILL_RADIUS * 2 + 1))
-	for endpoint in world.smart_objects.query(SmartObjects.Action.MINE, {"items": [2, 3], "area": area, "available_to": worker_id}):
+	for endpoint in world.smart_objects.query(WorkTypes.MINING, {"domain": SmartObjectDefinitions.Domain.DEPOSIT, "items": [2, 3], "area": area, "available_to": worker_id}):
 		var target: Vector2i = endpoint.position
 		if world.terrain[target] in [5, 6]:
 			return target
@@ -2919,17 +2900,8 @@ func power_edge(graph: Dictionary, a: String, b: String, capacity: float) -> voi
 # Each segment and transformer has its own capacity. Residual paths share bottlenecks,
 # including intersecting low-voltage branches fed by several transformers.
 func rebuild_power_graph() -> void:
-	var signature_data: Array = []
-	for p in world.building_positions("line"):
-		signature_data.append([p, world.building_state(p, "line").kind, world.building_state(p, "line").get("axis", Vector2i.RIGHT)])
-	for p in world.building_positions("station"):
-		signature_data.append([p, world.building_state(p, "station").kind])
-	for p in world.building_positions("belt"):
-		signature_data.append([p, world.building_state(p, "belt").get("kind", "belt")])
-	var signature := hash(signature_data)
-	if signature == cache.power_signature and not cache.power_graph.is_empty():
-		return
-	cache.power_signature = signature
+	if cache.power_building_revision == world.building_revision: return
+	cache.power_building_revision = world.building_revision
 	cache.power_graph = {"source": {}}
 	cache.power_nodes.clear()
 	var cells: Dictionary = {}
@@ -2993,9 +2965,8 @@ func power_route(graph: Dictionary, source: String, target: String) -> Array[Str
 func operation_needed(p: Vector2i) -> bool:
 	if building_kind(p) in DUTY_KINDS: return true
 	if building_kind(p) == "mine": return mine_deposit(p) != null
-	if world.building_positions("line").is_empty():
-		return false
 	rebuild_power_graph()
+	if cache.power_graph.source.is_empty(): return false
 	var kind := building_kind(p)
 	if kind == "drill":
 		return power_demand(p) > 0 and not power_route(cache.power_graph, "source", power_key(p) + ":in").is_empty()
@@ -3154,14 +3125,43 @@ func sample_inventory() -> void:
 		world.inventory_history.pop_front()
 
 # Domain operations own all material, production and payment writes.
+func labor_offer(endpoint, worker_id) -> Dictionary:
+	var p: Vector2i = endpoint.instance.position
+	var method: String = endpoint.definition.method
+	var kind: String = endpoint.instance.definition.kind
+	var source: Dictionary = endpoint.instance.source
+	var manual := is_same(worker_id, PLAYER_OPERATOR)
+	if not manual and source.get("wage", WAGE_PER_HOUR) == 0: return {"reason": "closed"}
+	var data := {"method": method, "identity": source}
+	match method:
+		"build":
+			if source.get("cancelled", false): return {"reason": "cancelled"}
+			if not site_cleared(p): return {"reason": "footprint_blocked"}
+			if not site_supplied(p): return {"reason": "missing_materials"}
+		"operate":
+			if not operation_needed(p): return {"reason": "operation_not_needed_or_disconnected"}
+			data.job = null
+			if kind == "drill":
+				var claimed_demand: bool = worker_id == null and endpoint.state.owner != -1
+				if not manual and not claimed_demand and not cache.ready_drills.has(p): return {"reason": "drill_power_unavailable"}
+				# A demand remains visible while its assigned operator holds the deposit.
+				data.job = drill_target(p, endpoint.state.owner if worker_id == null else worker_id)
+				if data.job == null: return {"reason": "no_available_deposit"}
+		"produce":
+			if source.growth > 0: return {"reason": "growing"}
+			if not has_production_order(p, manual): return {"reason": "no_production_order"}
+			if source.task.is_empty() and not recipe_ready(p, station_materials(p)): return {"reason": "missing_materials"}
+			if kind == "research_bench": data.project = source.research
+	return data
+
 func work_available(record: ActivityRecord, w: Dictionary, source_identity: Dictionary) -> bool:
-	if not can_work(w, record.kind, building_kind(record.target)): return false
+	if w.skill != record.kind: return false
 	if not can_take_job(w, record.target) or w.employer != world.building_at(record.target).id: return false
 	return work_target_available(record, source_identity)
 
 func work_target_available(record: ActivityRecord, source_identity: Dictionary, manual := false) -> bool:
 	var p := record.target
-	match record.kind:
+	match record.method:
 		"harvest":
 			return manual and can_hand_harvest(p) and is_same(world.wild_resources[p], source_identity)
 		"mine":
@@ -3169,22 +3169,22 @@ func work_target_available(record: ActivityRecord, source_identity: Dictionary, 
 		"build":
 			return world.has_building(p, "site") and is_same(world.building_state(p, "site"), source_identity) and not world.building_state(p, "site").get("cancelled", false) and site_cleared(p) and site_supplied(p)
 		"produce":
-			return world.has_building(p, "station") and is_same(world.building_state(p, "station"), source_identity) and has_production_order(p, manual) and world.building_state(p, "station").growth <= 0
+			return world.has_building(p, "station") and is_same(world.building_state(p, "station"), source_identity) and (not record.data.has("project") or source_identity.research == record.data.project) and has_production_order(p, manual) and source_identity.growth <= 0
 		"operate":
 			return world.has_building(p, "station") and is_same(world.building_state(p, "station"), source_identity) and operation_needed(p) and (record.data.get("job") == null or (world.mining_contracts.has(record.data.job) and cache.ready_drills.has(p)))
 	return false
 
 # Both input paths create/resume the same batch and consume its recipe once.
 func prepare_work(record: ActivityRecord) -> Dictionary:
-	if record.kind == "harvest":
+	if record.method == "harvest":
 		var resource: Dictionary = world.wild_resources[record.target]
 		if resource.task.is_empty(): resource.task = contract(1.0)
 		return resource.task
-	if record.kind in ["produce", "operate"]:
+	if record.method in ["produce", "operate"]:
 		var p: Vector2i = record.target
 		var bench: Dictionary = world.building_state(p, "station")
 		if bench.task.is_empty():
-			if record.kind == "produce":
+			if record.method == "produce":
 				var recipe := station_materials(p)
 				if not recipe_ready(p, recipe):
 					return {}
@@ -3196,8 +3196,8 @@ func prepare_work(record: ActivityRecord) -> Dictionary:
 				bench.research_tasks[bench.research] = bench.task
 				research_supply_changed()
 			supply_changed(p)
-	if record.kind == "build": return world.building_state(record.target, "site")
-	if record.kind == "mine": return world.mining_contracts[record.target]
+	if record.method == "build": return world.building_state(record.target, "site")
+	if record.method == "mine": return world.mining_contracts[record.target]
 	if building_kind(record.target) == "drill": return world.mining_contracts[record.data.job]
 	return world.building_state(record.target, "station").task
 
@@ -3205,14 +3205,14 @@ func begin_work(record: ActivityRecord, w: Dictionary, segment: Dictionary, sour
 	if not work_available(record, w, source_identity): return false
 	var task := prepare_work(record)
 	if task.is_empty(): return false
-	var kind := building_kind(record.target) if record.kind in ["produce", "operate"] else ""
+	var kind := building_kind(record.target) if record.method in ["produce", "operate"] else ""
 	if not task.has("reward"):
-		task.reward = task.seconds / HOUR_SECONDS * labor_wage(record.kind, record.target, task)
+		task.reward = task.seconds / HOUR_SECONDS * labor_wage(record.method, record.target, task)
 		task.paid = 0.0
 	var goal: float = minf(task.seconds, (task.paid + w.payroll) / task.reward * task.seconds + task.get("volunteer_work", 0.0))
 	if goal <= task.progress + 0.0000001:
 		return false
-	var rate: float = w.buffs.work_rate(self, w, record.kind, kind)
+	var rate: float = w.buffs.work_rate(self, w, record.method, kind)
 	segment.merge({"task": task, "goal": goal, "rate": rate, "kind": kind, "labor": 0.0,
 		"fatigue_factor": w.buffs.fatigue_factor(self, w)}, true)
 	ai_trace.record(self, w, "labor", "started", {"reward": task.reward, "already_paid": task.paid,
@@ -3222,10 +3222,10 @@ func begin_work(record: ActivityRecord, w: Dictionary, segment: Dictionary, sour
 func perform_work(record: ActivityRecord, w: Dictionary, delta: float, segment: Dictionary) -> Dictionary:
 	var task: Dictionary = segment.task
 	var p = record.target
-	if record.kind == "operate" and building_kind(p) == "drill" and not cache.powered_devices.has(p):
+	if record.method == "operate" and building_kind(p) == "drill" and not cache.powered_devices.has(p):
 		return {"seconds": 0.0, "complete": false, "funding": false}
 	# Do not solidify a barrier around a passing worker, including between cell centers.
-	if record.kind == "build" and building_kind(p) in WorldState.BLOCKING_KINDS and minf(segment.goal, task.progress + delta * segment.rate) >= task.seconds - 0.0000001:
+	if record.method == "build" and building_kind(p) in WorldState.BLOCKING_KINDS and minf(segment.goal, task.progress + delta * segment.rate) >= task.seconds - 0.0000001:
 		for person in world.workers:
 			var offset: Vector2 = (person.pos - Vector2(p)).abs()
 			if offset.x < 0.75 and offset.y < 0.75:
@@ -3234,7 +3234,7 @@ func perform_work(record: ActivityRecord, w: Dictionary, delta: float, segment: 
 	if w.is_empty(): task.volunteer_work = task.get("volunteer_work", 0.0) + seconds * segment.rate
 	var complete: bool = task.progress >= task.seconds - 0.0000001
 	var funding: bool = not complete and task.progress >= segment.goal - 0.0000001
-	if record.kind in ["produce", "operate"] and seconds > 0:
+	if record.method in ["produce", "operate"] and seconds > 0:
 		Pollution.record_operation(world, p, building_kind(p), seconds / delta)
 	if complete:
 		task.progress = task.seconds
@@ -3246,7 +3246,7 @@ func perform_work(record: ActivityRecord, w: Dictionary, delta: float, segment: 
 
 func complete_work(record: ActivityRecord, w: Dictionary) -> void:
 	var p: Vector2i = record.target
-	match record.kind:
+	match record.method:
 		"harvest":
 			var resource: Dictionary = world.wild_resources[p]
 			var amount := world.harvest_wild_resource(p)
@@ -3342,6 +3342,12 @@ func complete_building(p: Vector2i) -> void:
 		building.inventory.add(item, -task.materials[item])
 		record_resource_use(item, task.materials[item])
 	building.complete(settings)
+	if building.kind == "market":
+		# Building over an existing stack does not put that stack up for sale.
+		var drop := market_spill_cell(p)
+		for item in building.inventory.contents():
+			if is_same(item, "money") or stock_at(p, item) <= 0: continue
+			put_goods(drop, take_goods(p, item, stock_at(p, item)))
 	world.refresh_interactions_at(p)
 	supply_changed(p)
 	if building.kind == "drill": cache.mining_drills[p] = true

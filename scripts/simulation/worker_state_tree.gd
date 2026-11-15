@@ -7,6 +7,7 @@ const Life = preload("res://scripts/simulation/activities/life.gd")
 const Economy = preload("res://scripts/simulation/activities/economy.gd")
 const Delivery = preload("res://scripts/simulation/activities/delivery.gd")
 const Slots = preload("res://scripts/simulation/smart_objects.gd")
+const WorkTypes = preload("res://scripts/simulation/work_types.gd")
 
 const STARVATION := 1
 const EXHAUSTION := 2
@@ -59,7 +60,7 @@ func tick(g, w: Dictionary, delta: float) -> Dictionary:
 		g.record_worker_time(w, action, delta)
 	if result != "running":
 		# A completed duty segment is a choice point, not a mandatory power outage.
-		if result == "success" and active.record.kind == "operate":
+		if result == "success" and active.record.method == "operate":
 			var choice = Selection.new(g, w, "period_completed").next_option()
 			if choice != null and active.matches_option(choice) and g.begin_work(active.record, w, active.segment, active.source_identity):
 				active.fatigue_factor = active.segment.fatigue_factor
@@ -124,11 +125,12 @@ func response_available(g, w: Dictionary) -> bool:
 	return false
 
 func activity_group(kind: String, data: Dictionary) -> String:
+	if WorkTypes.NAMES.has(kind):
+		if data.method != "deliver": return "labor"
+		# Unloading mined goods is a labor interlude, not a new preference.
+		return "labor" if data.get("mined", false) and inertia_group == "labor" else "delivery"
 	match kind:
-		"mine", "build", "produce", "operate", "payroll": return "labor"
-		"deliver":
-			# Unloading mined goods is a labor interlude, not a new preference.
-			return "labor" if data.get("mined", false) and inertia_group == "labor" else "delivery"
+		"payroll": return "labor"
 		"use_item":
 			if data.item in ["bench", "workbench", "tools", "clothes"] and inertia_group == "labor":
 				return "labor"
@@ -154,11 +156,12 @@ func select(g, w: Dictionary) -> void:
 	var option = selection.next_option()
 	while option != null:
 		var activity
-		match option.kind:
-			"build", "produce", "operate": activity = Work.new()
-			"eat", "sleep", "rest", "use_item", "service": activity = Life.new()
-			"purchase", "sell", "borrow", "payroll": activity = Economy.new()
-			"deliver": activity = Delivery.new()
+		if WorkTypes.NAMES.has(option.kind):
+			activity = Delivery.new() if option.record.method == "deliver" else Work.new()
+		else:
+			match option.kind:
+				"eat", "sleep", "rest", "use_item", "service": activity = Life.new()
+				"purchase", "borrow", "payroll": activity = Economy.new()
 		if activity.enter(g, w, option):
 			active = activity
 			remember_choice(option)
@@ -185,13 +188,14 @@ func report_action(g) -> String:
 		return "空闲"
 	if drink_elapsed >= 0:
 		return "吃饭"
-	match active.record.kind:
+	var record = active.record
+	match record.method if record.method != "" else record.kind:
 		"use_item": return "吃饭" if active.record.data.item in ["ale", "meat"] else "空闲"
 		"service": return "通勤" if active.phase == "approach" else "空闲"
 		"build": return "通勤" if active.phase == "approach" else "工作"
 		"produce", "operate":
 			if active.phase == "approach": return "通勤"
-			return "等待" if active.record.kind == "operate" and g.building_kind(active.record.target) == "drill" and not g.cache.powered_devices.has(active.record.target) else "工作"
+			return "等待" if record.method == "operate" and g.building_kind(record.target) == "drill" and not g.cache.powered_devices.has(record.target) else "工作"
 		"deliver": return "搬运"
 		"eat": return "吃饭"
 		"sleep": return "通勤" if active.phase == "approach" else "睡觉"
@@ -209,11 +213,7 @@ func presentation(g) -> Dictionary:
 	var p = a.record.target
 	result.path = a.path
 	result.progress = a.elapsed
-	match a.record.kind:
-		"sell":
-			result.state = "to_shop"
-			result.station = p
-			result.item = a.record.data.item
+	match a.record.method if a.record.method != "" else a.record.kind:
 		"use_item":
 			result.state = "use_item"
 			result.item = a.record.data.item

@@ -2,11 +2,6 @@ extends RefCounted
 
 const Labor = preload("res://scripts/simulation/evaluation/labor.gd")
 
-static func sell(e, op: Dictionary) -> Dictionary:
-	var f: Dictionary = e.environment.estimate(op, 0)
-	var cash: float = op.data.amount * e.context.game.market_price(op.target, op.data.item, true)
-	return e.result(f, {"income": e.resources.income(cash), "storage": 0.02 * op.data.amount})
-
 static func purchase(e, op: Dictionary) -> Dictionary:
 	var g = e.context.game
 	var item: String = op.data.item

@@ -127,15 +127,13 @@ func harvest_wild_resource(p: Vector2i) -> int:
 	return amount
 
 func register_delivery(task: Dictionary) -> void:
-	var kind: String = building_state(task.target).get("kind", "")
-	var skill: String = "construction" if has_building(task.target, "site") else SmartObjects.Definitions.JOB_SKILLS.get(kind, "")
-	smart_objects.register_delivery(task, skill)
+	smart_objects.register_delivery(task)
 
-func available_delivery_requests(filters: Dictionary) -> Array[Dictionary]:
+func available_delivery_requests(work_type: String) -> Array[Dictionary]:
 	var requests: Array[Dictionary] = []
-	for endpoint in smart_objects.query(SmartObjects.Action.DELIVERY, filters):
+	for endpoint in smart_objects.query(work_type, {"domain": SmartObjects.Definitions.Domain.REQUEST, "available_to": -1}):
 		var task: Dictionary = endpoint.instance.source
-		if endpoint.available_to(-1) and not task.get("on_belt", false) and task.owner == -1:
+		if not task.get("on_belt", false) and task.owner == -1:
 			requests.append(task)
 	return requests
 

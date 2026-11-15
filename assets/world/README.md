@@ -2,9 +2,10 @@
 
 Original, editable SVG game assets. No remote assets or runtime downloads.
 
-- `terrain-atlas.svg`: ten 40px tiles (background, sandstone, copper, coal,
-  granite, dense copper, dense coal, timber, iron and mineable water), used by
-  TileMapLayer atlas resources. Mineable water is distinct from `water-source.svg`.
+- `terrain-atlas.svg`: the first 40px tile supplies the plain terrain background.
+- `surface-resources.svg`: transparent 40px cells shared by the map's block
+  layer and the item icons. Dense copper and coal use a matching two-rock
+  variant; a water source uses the raw-water drop over `water-source.svg`.
 - `fog-atlas.svg`: one opaque tile for all ground outside current sight; no explored-map tint.
 - `miner-parts.svg`: 32px rig-part atlas; head, clothing, boots, arms, pickaxe,
   bread, hammer, carried ore. The arm cell is cropped into upper arm and forearm
@@ -62,10 +63,9 @@ Other buildings and compact toolbar illustrations remain under `assets/icons/`.
 World building texture selection is shared by previews and persistent building
 sprites through `scripts/view/art.gd`; cached textures are shared by all instances.
 
-The surface-economy revision adds `surface-resources.svg`, a transparent tile
-atlas of low deposits and timber, and `wild-animal.svg` for stationary wildlife
-resource cells. `wild-berries.svg` and `wild-grain.svg` show single-portion ground
-resources; consumed cells disappear. `gathering-basket.svg` and `hunting-bow.svg`
+Wildlife and the resulting meat share `../icons/meat.svg`: a game animal
+silhouette with a meat cut inside. `wild-berries.svg` and `wild-grain.svg` show
+single-portion ground resources; consumed cells disappear. `gathering-basket.svg` and `hunting-bow.svg`
 give gathering and hunting distinct transform-driven poses. Eating and item use
 show the actual item, while a second persistent hand prop shows settled trades.
 These resources do not imply blocked navigation. The market (120x80) and mine (80x80)

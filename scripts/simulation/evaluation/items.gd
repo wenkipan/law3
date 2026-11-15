@@ -34,7 +34,7 @@ static func mining_equipment(e, state: Dictionary, _amount := 1) -> Dictionary:
 	var hours := 0.0
 	var count := 0
 	for work in e.work_facts():
-		if work.kind != "mine": continue
+		if work.method != "mine": continue
 		hours += work.hours
 		count += 1
 		if count >= g.GUN_USES: break
@@ -47,7 +47,7 @@ static func production_equipment(e, state: Dictionary, _amount := 1) -> Dictiona
 	var hours := 0.0
 	var count := 0
 	for work in e.work_facts():
-		if work.kind != "produce" or not g.tool_work(g.building_kind(work.target)): continue
+		if work.method != "produce" or not g.tool_work(g.building_kind(work.target)): continue
 		hours += work.hours
 		count += 1
 		if count >= g.ITEM_USES.tools.uses: break
@@ -60,7 +60,7 @@ static func cargo_equipment(e, _state: Dictionary, _amount := 1) -> Dictionary:
 	var trips := 0
 	var saved := 0.0
 	for work in e.work_facts():
-		if work.kind != "mine": continue
+		if work.method != "mine": continue
 		trips += 1
 		if (trips + g.cargo_count(e.context.worker)) % 2 != 0: continue
 		var best: Array = []
@@ -100,10 +100,10 @@ static func prepared_work(e, item: String, state: Dictionary) -> float:
 	if w.payroll <= 0: return best
 	for work in e.work_facts():
 		if item == "meat": continue
-		if item in ["bench", "workbench"] and work.kind != "mine": continue
-		if item == "tools" and work.kind != "produce": continue
-		var rate: float = maxf(0.001, w.buffs.work_rate(g, w, work.kind, work.station))
-		var wage: float = g.labor_wage(work.kind, work.target, work.contract)
+		if item in ["bench", "workbench"] and work.method != "mine": continue
+		if item == "tools" and work.method != "produce": continue
+		var rate: float = maxf(0.001, w.buffs.work_rate(g, w, work.method, work.station))
+		var wage: float = g.labor_wage(work.method, work.target, work.contract)
 		var hours: float = minf(P.LABOR_EVALUATION_HOURS, minf(work.hours, w.payroll / wage) / rate)
 		var amount: float = hours * rate * wage
 		var income: float = e.resources.income(amount)

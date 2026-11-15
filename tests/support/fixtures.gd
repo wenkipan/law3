@@ -27,7 +27,7 @@ func scenario(label: String, population := 0, generated := false, seed_value := 
 	if researched:
 		for project in game.Technology.PROJECTS:
 			game.world.research_progress[project] = game.Technology.PROJECTS[project].points
-	for i in population: resident("construction", game.BASE + Vector2i(i, 3))
+	for i in population: resident("building_logistics", game.BASE + Vector2i(i, 3))
 	game.cache.invalidate_delivery()
 	game.update_fog()
 	game.world_view.rebuild(game)

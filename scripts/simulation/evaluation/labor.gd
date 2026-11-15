@@ -5,7 +5,7 @@ const Slots = preload("res://scripts/simulation/smart_objects.gd")
 
 static func task(e, op: Dictionary) -> Dictionary:
 	var g = e.context.game
-	match op.kind:
+	match op.data.method:
 		"mine": return g.world.mining_contracts[op.target]
 		"build": return g.world.building_state(op.target, "site")
 		"operate":
@@ -16,13 +16,14 @@ static func profile(e, op: Dictionary) -> Dictionary:
 	var g = e.context.game
 	var w: Dictionary = e.context.worker
 	var contract: Dictionary = task(e, op)
-	var kind: String = g.building_kind(op.target) if op.kind in ["produce", "operate"] else ""
+	var method: String = op.data.method
+	var kind: String = g.building_kind(op.target) if method in ["produce", "operate"] else ""
 	var seconds: float = contract.get("seconds", 0.0)
 	if seconds <= 0:
 		seconds = g.station_work_hours(op.target) * g.HOUR_SECONDS
 	var progress: float = contract.get("progress", 0.0)
-	var rate: float = maxf(0.001, w.buffs.work_rate(g, w, op.kind, kind))
-	var reward: float = seconds / g.HOUR_SECONDS * g.labor_wage(op.kind, op.target, contract)
+	var rate: float = maxf(0.001, w.buffs.work_rate(g, w, method, kind))
+	var reward: float = seconds / g.HOUR_SECONDS * g.labor_wage(method, op.target, contract)
 	var funding: float = op.get("funding", w.payroll if w.payroll > 0.000001 else g.PAYROLL_COLLECTION)
 	var goal: float = minf(seconds, (contract.get("paid", 0.0) + funding) / reward * seconds + contract.get("volunteer_work", 0.0)) if reward > 0 else seconds
 	# Bound the estimate without imposing an execution or interruption timer.
@@ -44,7 +45,7 @@ static func evaluate(e, op: Dictionary) -> Dictionary:
 		"fatigue": e.needs.fatigue_gain(e.state.fatigue, -work.hours * g.FATIGUE_PER_HOUR * work.fatigue_factor)}
 	var stress: float = w.mood.WORK_STRESS.get(work.station, 0.0) * work.hours
 	parts.mood = e.needs.mood_gain(e.state.mood, -stress, P.FORECAST_HOURS)
-	if op.kind == "mine":
+	if op.data.method == "mine":
 		var shortest: Array = []
 		for p in g.world.smart_objects.positions(Slots.Action.STORE):
 			var leg: Dictionary = g.delivery_route(op.position, p)
@@ -62,15 +63,3 @@ static func evaluate(e, op: Dictionary) -> Dictionary:
 	result.comparison_hours = comparison.hours
 	result.work = work
 	return result
-
-static func mining(e, op: Dictionary) -> Dictionary:
-	return evaluate(e, op)
-
-static func construction(e, op: Dictionary) -> Dictionary:
-	return evaluate(e, op)
-
-static func production(e, op: Dictionary) -> Dictionary:
-	return evaluate(e, op)
-
-static func operation(e, op: Dictionary) -> Dictionary:
-	return evaluate(e, op)

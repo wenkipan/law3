@@ -106,16 +106,6 @@ func missing(g: Node, p: Vector2i, item, amount: float) -> bool:
 		stock = g.stock_at(p, item)
 	return stock + 0.000001 < amount
 
-func blueprint_shortages(g: Node, p: Vector2i) -> Dictionary:
-	var missing_materials: Dictionary = {}
-	if not g.world.has_building(p, "site"): return missing_materials
-	var site: Dictionary = g.world.building_state(p, "site")
-	if site.get("cancelled", false): return missing_materials
-	for item in site.materials:
-		var amount := ceili(site.materials[item] - g.stock_at(p, item) - 0.000001)
-		if amount > 0: missing_materials[item] = amount
-	return missing_materials
-
 func production_shortages(g: Node, p: Vector2i) -> Array:
 	var items: Array = []
 	if not g.world.has_building(p, "station"): return items
