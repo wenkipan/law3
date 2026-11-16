@@ -125,7 +125,7 @@ func sync_alert_highlights() -> void:
 
 func _ready() -> void:
 	add_child(camera)
-	$TerrainBackground.tile_set = Art.tile_set("res://assets/world/terrain-atlas.svg", 1)
+	$TerrainBackground.tile_set = Art.tile_set("res://assets/world/biomes.svg", 5)
 	$Blocks.tile_set = Art.tile_set(Art.SURFACE_ATLAS, 10)
 	$Fog.tile_set = Art.tile_set("res://assets/world/fog-atlas.svg", 1)
 	$Overlays/Orders.tile_set = Art.tile_set("res://assets/world/order.svg", 1)
@@ -219,15 +219,20 @@ func block_changed(p: Vector2i) -> void:
 func sync_surface(chunk: Dictionary, p: Vector2i, local: Vector2i, revealed: bool) -> void:
 	if revealed:
 		var water_source: bool = game.world.water_sources.has(p)
-		var material: int = game.MapGenerator.WATER_BLOCK if water_source else game.world.terrain.get(p, 0)
-		if chunk.background.get_cell_source_id(local) == -1: chunk.background.set_cell(local, 0, Vector2i.ZERO)
-		if material == 0:
+		var material: int = 0 if water_source else game.world.terrain.get(p, 0)
+		var biome := Vector2i(game.biome_at(p), 0)
+		if chunk.background.get_cell_atlas_coords(local) != biome: chunk.background.set_cell(local, 0, biome)
+		if material == 0 or (material == 7 and game.biome_at(p) == game.MapGenerator.Biome.FOREST):
 			if chunk.blocks.get_cell_source_id(local) != -1: chunk.blocks.erase_cell(local)
 		elif chunk.blocks.get_cell_atlas_coords(local) != Vector2i(material, 0):
 			chunk.blocks.set_cell(local, 0, Vector2i(material, 0))
 		var texture: Texture2D
-		if water_source:
-			texture = Art.texture("res://assets/world/water-source.svg")
+		if game.oil_visible(p):
+			texture = Art.texture("res://assets/icons/oil.svg")
+		elif material == 7 and game.biome_at(p) == game.MapGenerator.Biome.FOREST:
+			texture = Art.texture("res://assets/world/tree.svg")
+		elif water_source:
+			texture = null
 		else:
 			var resource: Dictionary = game.world.wild_resources.get(p, {})
 			if resource.get("stock", 0) > 0:

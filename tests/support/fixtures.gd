@@ -11,12 +11,14 @@ func scenario(label: String, population := 0, generated := false, seed_value := 
 	scenario_name = label
 	print("CASE: ", label)
 	game.reset_world(seed_value)
+	if not generated: game.world.starting_point = Vector2i(32, 13)
+	game.world_view.camera.position = game.tile_center(game.BASE)
 	game.world.workers.clear()
 	game.world.known_people.clear()
 	game.world.next_worker_id = 0
 	game.world.clear_buildings()
 	for collection in [game.world.wild_resources, game.world.deposits,
-			game.world.mining_contracts, game.world.estates]:
+			game.world.mining_contracts, game.world.estates, game.world.forest_regrowth, game.world.oil_deposits]:
 		collection.clear()
 	game.world.delivery_tasks.clear()
 	game.world.smart_objects.clear()
@@ -32,10 +34,9 @@ func scenario(label: String, population := 0, generated := false, seed_value := 
 	game.update_fog()
 	game.world_view.rebuild(game)
 
-func resident(skill: String, p: Vector2i, diet := "grain", contents: Dictionary = {}) -> Dictionary:
+func resident(skill: String, p: Vector2i, _legacy_diet := "grain", contents: Dictionary = {}) -> Dictionary:
 	var person: Dictionary = game.create_worker(p)
 	person.skill = skill
-	person.diet = diet
 	person.hunger = 130.0
 	person.items = contents.duplicate()
 	return person
@@ -45,11 +46,13 @@ func clear_area(area: Rect2i) -> void:
 		for x in range(area.position.x, area.end.x):
 			var p := Vector2i(x, y)
 			game.world.terrain[p] = 0
+			game.world.biomes[p] = game.MapGenerator.Biome.PLAIN
 			game.world.water_sources.erase(p)
 			game.cache.navigation.set_point_solid(p, false)
 
 func station(kind: String, p: Vector2i) -> void:
 	clear_area(Rect2i(p, Vector2i(game.building_size(p, kind) / game.CELL)))
+	if game.REGION_BUILDINGS.has(kind): region(Rect2i(p, Vector2i(game.building_size(p, kind) / game.CELL)), game.REGION_BUILDINGS[kind])
 	var building = game.create_building(p, kind, game.production_station(kind))
 	if kind == "bank":
 		building.state.interest_received = 0.0
@@ -68,7 +71,12 @@ func materials(amount: int, ore := 1) -> void:
 		game.add_stock(game.BASE, mineral, -game.stock_at(game.BASE, mineral))
 	game.add_stock(game.BASE, ore, amount)
 
+func region(area: Rect2i, biome: int) -> void:
+	for y in range(area.position.y, area.end.y):
+		for x in range(area.position.x, area.end.x): game.world.biomes[Vector2i(x, y)] = biome
+
 func deposit(p: Vector2i, ore := 2, remaining := 3) -> void:
+	region(Rect2i(p, Vector2i(2, 2)), game.MapGenerator.Biome.FOREST if ore == 7 else game.MapGenerator.Biome.MOUNTAIN)
 	game.world.terrain[p] = ore
 	game.world.deposits[p] = remaining
 	game.cache.navigation.set_point_solid(p, false)

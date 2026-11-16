@@ -110,7 +110,7 @@ func response_available(g, w: Dictionary) -> bool:
 	if w.hunger <= Parameters.STARVATION_INTERRUPT:
 		if g.personal_food(w) > 0:
 			return true
-		for item in g.DIETS[w.diet]:
+		for item in g.FOOD_ITEMS:
 			for p in g.world.smart_objects.positions(Slots.Action.SHOP, {"item": item}):
 				if g.stock_at(p, item) > 0 and w.money >= g.sale_price(p, item) and not g.route(Vector2i(w.pos.round()), p).is_empty(): return true
 		if not g.has_debt(w) and w.loan_day != g.world.day:

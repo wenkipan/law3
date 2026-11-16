@@ -29,8 +29,8 @@ var receiver_belts: Dictionary = {}
 var supply_receivers: Dictionary = {}
 var mining_drills: Dictionary = {}
 
-func reset(seed_value: int, starting_area: Rect2i) -> void:
-	generator = MapGenerator.new(seed_value, starting_area)
+func reset(seed_value: int) -> void:
+	generator = MapGenerator.new(seed_value)
 	navigation.clear()
 	for collection in [visible_tiles, powered_devices, ready_drills, power_output,
 			power_graph, power_nodes, sight_origins, sight_coverage, sight_buildings]:
@@ -130,8 +130,8 @@ func sync_delivery(g) -> void:
 		receiver_belts[receiver].append(p)
 	delivery_dirty = false
 
-func rebuild(world, starting_area: Rect2i, sample: Dictionary) -> void:
-	reset(world.world_seed, starting_area)
+func rebuild(world, sample: Dictionary) -> void:
+	reset(world.world_seed)
 	for cell in world.terrain:
 		if world.walkable(cell):
 			navigation.set_point_solid(cell, false)

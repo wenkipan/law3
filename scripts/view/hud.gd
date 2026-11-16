@@ -7,7 +7,7 @@ const InspectorIcons = preload("res://scripts/view/inspector_icons.gd")
 const SaveStore = preload("res://scripts/persistence/save_store.gd")
 const BUILD_CATEGORIES := {
 	"food": {"name": "农业与食品", "icon": "wheat", "kinds": ["farm", "hunting_ground", "gathering_garden", "barn", "mill", "brewery", "grow_light"]},
-	"industry": {"name": "工业与装备", "icon": "tools", "kinds": ["mine", "drill", "smelter", "sawmill", "smithy", "weaver", "tailor", "bench", "workbench", "chemical_plant", "soapworks", "pharmacy"]},
+	"industry": {"name": "工业与装备", "icon": "tools", "kinds": ["mine", "logging_camp", "drill", "smelter", "sawmill", "smithy", "weaver", "tailor", "bench", "workbench", "chemical_plant", "soapworks", "pharmacy"]},
 	"water": {"name": "水务", "icon": "water", "kinds": ["pump", "purifier"]},
 	"power": {"name": "电力", "icon": "electricity", "kinds": ["manual_generator", "power_plant", "low_line", "high_line", "transformer"]},
 	"logistics": {"name": "物流", "icon": "freight", "kinds": ["market", "storage_box", "belt", "electric_belt"]},
@@ -321,7 +321,7 @@ func update_entity_panel() -> void:
 			state_name = "前往食堂"
 		var stage := "儿童" if game.is_child(w) else "老年" if w.age_days >= game.OLD_DAYS else "青年"
 		var employer: String = game.building_name(game.world.buildings[w.employer].kind) if w.employer != null else "未受雇"
-		entity_details.text = "存活 %.1f 天 · %s\n%s · %s类\n%s\n%s" % [w.age_days, stage, game.SKILLS[w.skill], {"fruit": "水果", "meat": "肉", "grain": "谷物"}[w.diet], employer, state_name]
+		entity_details.text = "存活 %.1f 天 · %s\n%s\n%s\n%s" % [w.age_days, stage, game.SKILLS[w.skill], employer, state_name]
 		entity_panel.offset_top = -minf(500, get_viewport().get_visible_rect().size.y - 300)
 		worker_bars["饥饿值"][0].text = "饥饿值  %.1f / %.0f" % [w.hunger, game.MAX_HUNGER]
 		worker_bars["饥饿值"][1].value = w.hunger / game.MAX_HUNGER * 100
@@ -387,11 +387,11 @@ func update_entity_panel() -> void:
 	if game.world.has_building(p, "station"):
 		var bench: Dictionary = game.world.building_state(p, "station")
 		var kind: String = game.building_kind(p)
-		if kind in ["market", "mine", "storage_box"]:
+		if kind in ["market", "storage_box"] + game.EXTRACTIVE_KINDS:
 			entity_title.text = game.building_name(kind)
 			var employee: Dictionary = game.world.worker(bench.employee)
 			entity_details.text = game.operator_name("work", p, "已关闭" if bench.wage == 0 else ("招聘 · " + game.SKILLS[game.work_skill(kind)] if employee.is_empty() else employee.name))
-			if kind == "mine":
+			if kind in game.EXTRACTIVE_KINDS:
 				var deposit = game.mine_deposit(p)
 				entity_details.text += "\n资源耗尽" if deposit == null else "\n" + game.item_name(game.world.terrain[deposit]) + " × %d" % game.world.deposits[deposit]
 			return

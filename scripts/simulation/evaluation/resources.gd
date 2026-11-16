@@ -19,9 +19,9 @@ func prepare() -> void:
 	var g = e.context.game
 	var w: Dictionary = e.context.worker
 	var state: Dictionary = e.state
-	for p in g.world.smart_objects.positions(Slots.Action.SHOP, {"items": g.DIETS[w.diet] + e.context.shopping_items()}):
+	for p in g.world.smart_objects.positions(Slots.Action.SHOP, {"items": g.FOOD_ITEMS + e.context.shopping_items()}):
 		if e.context.path_to(p).is_empty(): continue
-		for item in g.DIETS[w.diet]:
+		for item in g.FOOD_ITEMS:
 			var price: float = g.sale_price(p, item)
 			if price > 0: food_quotes.append({"price": price, "stock": g.stock_at(p, item), "recovery": g.FOOD_RECOVERY[item]})
 		for item in g.shop_goods(p):

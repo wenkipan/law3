@@ -10,6 +10,9 @@ func run(t) -> void:
 	check_finite_mining(t)
 	check_supply(t)
 	check_local_inventory(t)
+	check_regional_sites(t)
+	check_forest_recovery(t)
+	check_oil_discovery(t)
 	check_wild_food_sites(t)
 	check_farming(t)
 	check_barn(t)
@@ -23,9 +26,10 @@ func check_market_stock(t) -> void:
 	t.fixtures.station("market", g.BASE)
 	t.fixtures.station("mill", P)
 	t.fixtures.station("storage_box", Q)
-	t.fixtures.resident("operations", g.BASE, "fruit")
-	t.fixtures.resident("operations", P, "fruit")
-	t.fixtures.resident("building_logistics", Q, "fruit")
+	var market_worker: Dictionary = t.fixtures.resident("operations", g.BASE)
+	var mill_worker: Dictionary = t.fixtures.resident("operations", P)
+	var carrier: Dictionary = t.fixtures.resident("building_logistics", Q)
+	for person in [market_worker, mill_worker, carrier]: person.items.bread = 6
 	var source := Q + Vector2i.DOWN
 	var recipe: Dictionary = g.production_materials("mill")
 	var wheat: int = recipe.wheat
@@ -197,14 +201,17 @@ func check_wild_food_sites(t) -> void:
 	for entry in [["farm", "wheat"], ["hunting_ground", "meat"], ["gathering_garden", "berries"]]:
 		var kind: String = entry[0]
 		var item: String = entry[1]
-		t.fixtures.scenario("Food workplaces require a matching wild cell within the full footprint: " + kind, 0, false, 1020, false)
+		t.fixtures.scenario("Food workplaces require their region and preserve matching natural sources: " + kind, 0, false, 1020, false)
+		t.fixtures.region(Rect2i(P, Vector2i(g.building_size(P, kind) / g.CELL)), g.REGION_BUILDINGS[kind])
+		t.fixtures.region(Rect2i(Q, Vector2i(g.building_size(Q, kind) / g.CELL)), g.REGION_BUILDINGS[kind])
+		t.fixtures.region(Rect2i(P - Vector2i(0, 4), Vector2i(g.building_size(P, kind) / g.CELL)), g.MapGenerator.Biome.MOUNTAIN)
 		t.fixtures.wild(P + Vector2i.ONE, item)
 		t.fixtures.wild(Q, "meat" if item != "meat" else "berries")
 		t.fixtures.wild(Q + Vector2i.ONE, item)
 		t.fixtures.resident("building_logistics", g.BASE)
 		t.fixtures.resident("farming", P + Vector2i(0, 4))
 		t.fixtures.building_materials(kind)
-		t.check(not g.place_building(P - Vector2i(0, 4), kind), "Empty ground is not a food source")
+		t.check(not g.place_building(P - Vector2i(0, 4), kind), "A one-shot food outcrop does not qualify the wrong region")
 		t.check(not g.place_building(Q, kind), "Matching wild food does not authorize covering a different wild resource")
 		t.check(g.place_building(P, kind), "A matching non-origin tile qualifies even before any research")
 		t.advance_until(func(): return g.world.has_building(P, "station"), 190, "The occupied resource cell does not block supplied construction")
@@ -267,3 +274,57 @@ func check_power(t) -> void:
 	g.set_wage(plant, 0)
 	var closed: Dictionary = t.measure_power([plant], 3)
 	t.near(closed.energy, 0, "Closing the generator stops its physical output")
+
+# A matching resource must not bypass a wrong or straddling region.
+func check_regional_sites(t) -> void:
+	var g = t.game
+	for kind in ["farm", "barn", "mine", "logging_camp"]:
+		t.fixtures.scenario("Strict productive regions, including the far footprint edge: " + kind)
+		if kind in g.EXTRACTIVE_KINDS: t.fixtures.deposit(P, 7 if kind == "logging_camp" else 2)
+		var area := Rect2i(P, Vector2i(g.building_size(P, kind) / g.CELL))
+		t.fixtures.region(area, g.REGION_BUILDINGS[kind])
+		t.check(g.building_space_valid(P, kind), "The matching productive region permits an unfunded blueprint")
+		t.fixtures.region(Rect2i(area.end - Vector2i.ONE, Vector2i.ONE), g.MapGenerator.Biome.FOREST if kind == "farm" else g.MapGenerator.Biome.PLAIN)
+		t.check(not g.place_building(P, kind), "A correct source tile cannot authorize a footprint crossing into another region")
+
+# Harvested forest regenerates actual standing stock; loose opening timber does not.
+# Saving partway through recovery must not restart or replay it.
+func check_forest_recovery(t) -> void:
+	var g = t.game
+	t.fixtures.scenario("Forest regrowth resumes after a save without duplicating harvested goods")
+	t.fixtures.station("logging_camp", P)
+	t.fixtures.deposit(P, 7, 1)
+	t.fixtures.resident("mining", P)
+	t.advance_until(func(): return g.stock_at(P, 7) == 1, 100, "A logging worker harvests the actual standing timber")
+	g.set_wage(P, 0)
+	g.simulate(80)
+	var saved: Dictionary = g.capture_snapshot()
+	t.check(saved.ok and g.restore_snapshot(saved.data).ok, "Forest recovery and its productive terrain survive saving")
+	g.simulate(105)
+	t.check(g.mine_deposit(P) != null, "The forest produces harvestable standing timber after the remaining recovery")
+	t.near(g.stock_at(P, 7), 1, "Regrowth does not create goods in the logging camp's warehouse")
+	g.set_wage(P, 1)
+	t.advance_until(func(): return g.stock_at(P, 7) == 2, 100, "Regenerated timber requires another real paid harvest")
+	t.near(g.resource_activity(7, 1).produced, 2, "Only actual extraction is reported as produced timber")
+
+# Research reveals existing oil in sight, including already generated cells;
+# hidden/unseen oil must not leak through clicked details.
+func check_oil_discovery(t) -> void:
+	var g = t.game
+	t.fixtures.scenario("Oil becomes visible only through completed research and current sight", 0, false, 1020, false)
+	t.fixtures.region(Rect2i(P, Vector2i.ONE), g.MapGenerator.Biome.FOREST)
+	g.world.oil_deposits[P] = 240
+	for project in ["tools", "woodworking", "metallurgy", "electricity", "coal_power", "mechanical_mining", "chemistry"]:
+		g.world.research_progress[project] = g.Technology.PROJECTS[project].points
+	g.world.research_progress.oil_survey = g.Technology.PROJECTS.oil_survey.points - 1
+	t.check(not g.tile_details(P).title.contains("石油"), "An unresearched oil deposit exposes only its ordinary surface")
+	t.fixtures.station("research_bench", Q)
+	t.fixtures.resident("operations", Q)
+	t.fixtures.research_materials(Q, "oil_survey")
+	g.assign_research(Q, "oil_survey")
+	t.advance_until(func(): return g.Technology.completed(g.world.research_progress, "oil_survey"), 120, "Real materials and researcher labor complete the discovery technology")
+	t.check(g.tile_details(P).title == "石油", "Finishing research reveals an already generated forest oil deposit")
+	var saved: Dictionary = g.capture_snapshot()
+	t.check(saved.ok and g.restore_snapshot(saved.data).ok and g.tile_details(P).title == "石油", "Restoring preserves oil and its researched visibility")
+	g.cache.visible_tiles.erase(P)
+	t.check(g.tile_details(P).is_empty(), "Research never reveals deposits outside current sight")

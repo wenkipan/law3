@@ -36,9 +36,12 @@ func check_starting_world(t) -> void:
 	t.check(g.world.workers.is_empty(), "A new world has no initial residents")
 	t.near(g.stock_at(g.BASE, "money"), g.STARTING_MONEY, "Opening preserves actual funds without a prebuilt market")
 	t.check(not g.tile_details(g.BASE + Vector2i(18, 0)).is_empty() and g.tile_details(g.BASE + Vector2i(19, 0)).is_empty(), "Starting sight reaches twice the former radius without requiring a building")
+	var starting_point: Vector2i = g.BASE
 	var opening: Dictionary = g.capture_snapshot()
+	g.reset_world(0)
 	t.check(opening.ok and g.restore_snapshot(opening.data).ok, "An unbuilt opening with loose funds can be saved and restored")
 	t.near(g.player_money, g.STARTING_MONEY, "Restoring an unbuilt opening does not duplicate or lose the starting funds")
+	t.check(g.BASE == starting_point and g.stock_at(starting_point, "money") == g.STARTING_MONEY, "Loading another world then restoring returns sight and loose funds to the saved random starting point")
 	g.ensure_region(Rect2i(Vector2i(128, 128), Vector2i(64, 64)))
 	g.simulate(100)
 	t.check(g.world.workers.is_empty(), "Loading terrain or waiting without a recruitment board cannot generate residents")
@@ -63,7 +66,7 @@ func check_recruitment(t) -> void:
 	t.check(g.world.workers.size() == 1, "A restored board attracts one resident after the remaining time, not a restarted interval")
 	if not g.world.workers.is_empty():
 		var newcomer: Dictionary = g.world.workers[0]
-		t.check(not g.is_child(newcomer) and newcomer.skill in g.SKILLS and newcomer.diet in g.DIETS and newcomer.employer == null, "New arrivals use ordinary independent adult residents with a random skill and diet")
+		t.check(not g.is_child(newcomer) and newcomer.skill in g.SKILLS and not newcomer.has("diet") and newcomer.employer == null, "New arrivals use ordinary independent adults without dietary restrictions")
 	t.near(g.stock_at(P, "money"), 2, "The restored recruitment fee is charged exactly once from local stock")
 	t.near(g.resource_inventory().money, g.STARTING_MONEY + 2, "Recruitment consumes coins instead of minting or transferring them")
 	t.near(g.resource_activity("money", g.world.day).consumed, 3, "The resource report records the actual recruitment expense")

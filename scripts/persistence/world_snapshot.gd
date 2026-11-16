@@ -1,10 +1,11 @@
 extends RefCounted
 
-const VERSION := 14
-const RULES_VERSION := 23
+const VERSION := 16
+const RULES_VERSION := 25
 const MAX_NODES := 200000
 const MAX_BYTES := 64 * 1024 * 1024
 const MAGIC := "LAW3SNAP"
+const FOOD_ITEMS := ["berries", "meat", "wheat", "bread"]
 const MapGenerator = preload("res://scripts/map_generator.gd")
 const WorldState = preload("res://scripts/world_state.gd")
 const Building = preload("res://scripts/entities/building.gd")
@@ -27,8 +28,8 @@ const SCRIPTS := {"world": WorldState, "building": Building, "storage": Storage,
 	"economy": Economy, "delivery": Delivery, "mood": Mood, "buffs": Buffs}
 const ACTIVITY_FIELDS := ["record", "source_identity", "handles", "path", "destination", "phase", "elapsed", "age"]
 static var FIELDS := {
-	"world": ["world_seed", "generated_chunks", "terrain", "water_sources", "known_people",
-		"deposits", "wild_resources", "estates",
+	"world": ["world_seed", "starting_point", "generated_chunks", "terrain", "water_sources", "known_people",
+		"deposits", "biomes", "oil_deposits", "forest_regrowth", "wild_resources", "estates",
 		"mining_contracts", "buildings", "next_building_id", "building_map", "ground_items",
 		"belt_cargo", "next_cargo_id", "player_cargo", "delivery_tasks", "next_delivery_task_id", "workers", "next_worker_id", "smart_objects",
 		"delivered", "mined", "day", "day_elapsed", "portal", "wander_rng", "daily_records",
@@ -276,8 +277,15 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 			w.mining_contracts, w.ground_items, w.pollution_operations]:
 		for key in collection:
 			if not key is Vector2i: return invalid("Invalid world coordinate.")
+	if not w.terrain.has(w.starting_point) or w.water_sources.has(w.starting_point): return invalid("Invalid starting point.")
 	for cell in w.terrain:
 		if not w.terrain[cell] is int or w.terrain[cell] < 0 or w.terrain[cell] > 9: return invalid("Invalid terrain.")
+	for cell in w.biomes:
+		if not cell is Vector2i or not w.terrain.has(cell) or not w.biomes[cell] is int or w.biomes[cell] < 0 or w.biomes[cell] > MapGenerator.Biome.WATER: return invalid("Invalid biome.")
+	for cell in w.oil_deposits:
+		if not cell is Vector2i or w.biomes.get(cell) != MapGenerator.Biome.FOREST or not w.oil_deposits[cell] is int or w.oil_deposits[cell] <= 0: return invalid("Invalid oil deposit.")
+	for cell in w.forest_regrowth:
+		if not cell is Vector2i or w.biomes.get(cell) != MapGenerator.Biome.FOREST or not is_number(w.forest_regrowth[cell]) or w.forest_regrowth[cell] < 0 or w.terrain.get(cell, 0) not in [0, 7]: return invalid("Invalid forest growth.")
 	for cell in w.deposits:
 		if not cell is Vector2i or not w.terrain.has(cell) or not w.deposits[cell] is int or w.deposits[cell] < 0 or (w.deposits[cell] > 0 and w.terrain[cell] == 0): return invalid("Invalid finite deposit.")
 	for id in w.known_people:
@@ -371,7 +379,7 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 	for person in w.workers:
 		if not person.get("name") is String or not person.get("pos") is Vector2 or not person.get("activity") is StateTree or not person.get("mood") is Mood or not person.get("buffs") is Buffs:
 			return invalid("Invalid worker.")
-		if not WorkTypes.NAMES.has(person.get("skill")) or person.get("diet") not in ["fruit", "meat", "grain"] or not person.get("meal_item") is String: return invalid("Invalid resident specialization.")
+		if not WorkTypes.NAMES.has(person.get("skill")) or not person.get("meal_item") is String: return invalid("Invalid resident specialization.")
 		if not person.has("employer") or person.get("employer") != employed.get(person.id): return invalid("Missing employment.")
 		var active = person.activity.active
 		if active is Work or active is Delivery:
@@ -383,7 +391,7 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 		for field in ["money", "earned_today", "eaten_today", "hunger", "meal_food", "bed_spent_today", "shop_spent_today", "fatigue", "gun_uses", "backpack_uses", "water", "pollution", "clothes_pollution", "loan_principal", "loan_interest", "loan_day", "unloaded_this_trip", "payroll"]:
 			if not person.get(field) is float and not person.get(field) is int: return invalid("Missing worker balance or condition.")
 			if person[field] < -0.000001: return invalid("Negative worker balance or condition.")
-		if person.meal_food > 0 and person.meal_item not in {"fruit": ["berries"], "meat": ["meat"], "grain": ["wheat", "bread"]}[person.diet]: return invalid("Incompatible reserved food.")
+		if person.meal_food > 0 and person.meal_item not in FOOD_ITEMS: return invalid("Invalid reserved food.")
 		for field in ["items", "equipment"]:
 			if not person.get(field) is Dictionary: return invalid("Missing worker inventory.")
 		if not valid_stock(person.items) or not valid_stock(person.equipment): return invalid("Invalid personal inventory.")

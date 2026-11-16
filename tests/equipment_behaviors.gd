@@ -12,17 +12,14 @@ func run(t) -> void:
 
 func check_diets(t) -> void:
 	var g = t.game
-	for diet in ["fruit", "meat", "grain"]:
-		t.fixtures.scenario("Diet-specific food consumes goods, never currency: " + diet)
-		var resident: Dictionary = t.fixtures.resident("mining", P, diet, {"berries": 2, "meat": 2, "wheat": 2})
+	for item in ["berries", "meat", "wheat", "bread"]:
+		t.fixtures.scenario("Every resident can eat every food: " + item)
+		var resident: Dictionary = t.fixtures.resident("mining", P, "grain", {item: 2})
 		resident.hunger = 40.0
 		resident.money = 10.0
-		var food: String = g.DIETS[diet][0]
-		t.advance_until(func(): return resident.eaten_today > 0, 20, "The resident eats a compatible personal food")
-		for other in ["berries", "meat", "wheat"]:
-			if other != food: t.near(resident.items[other], 2, "An incompatible food is not consumed")
+		t.advance_until(func(): return resident.eaten_today > 0, 20, "The resident eats the available personal food")
 		t.near(resident.money, 10, "Eating cannot consume payment currency")
-		t.check(g.resource_inventory()[food] < 2, "An actual bite reduces physical food")
+		t.check(g.resource_inventory()[item] < 2, "An actual bite reduces physical food")
 
 func market_fixture(t, label: String) -> void:
 	t.fixtures.scenario(label)
@@ -34,7 +31,7 @@ func check_market(t) -> void:
 	var g = t.game
 	market_fixture(t, "A funded market only sells its existing stock")
 	var seller: Dictionary = t.fixtures.resident("mining", Vector2i(26, 15), "meat", {"berries": 8})
-	var buyer: Dictionary = t.fixtures.resident("operations", Vector2i(37, 15), "fruit")
+	var buyer: Dictionary = t.fixtures.resident("operations", Vector2i(37, 15), "fruit", {"bread": 6})
 	buyer.money = 12.0
 	t.fixtures.stock_recipe(g.BASE, {"meat": 8})
 	g.simulate(60)

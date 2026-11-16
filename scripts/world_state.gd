@@ -11,8 +11,13 @@ const BLOCKING_KINDS := ["wall", "fence"]
 # Authoritative simulation state, explicitly encoded by persistence/world_snapshot.gd.
 # This runtime object is not itself a serialized save format.
 var world_seed := 0
+var starting_point := Vector2i.ZERO
 var generated_chunks: Dictionary = {}
 var terrain: Dictionary = {}
+var biomes: Dictionary = {}
+var oil_deposits: Dictionary = {}
+# Absolute next-growth times, only for harvested forest cells.
+var forest_regrowth: Dictionary = {}
 var deposits: Dictionary = {}
 var wild_resources: Dictionary = {}
 var estates: Dictionary = {}
@@ -213,7 +218,8 @@ func clear_buildings() -> void:
 
 func reset(seed_value: int, base: Vector2i, starting_money: float) -> void:
 	world_seed = seed_value
-	for collection in [generated_chunks, terrain, deposits, wild_resources, estates, water_sources, known_people,
+	starting_point = base
+	for collection in [generated_chunks, terrain, biomes, oil_deposits, forest_regrowth, deposits, wild_resources, estates, water_sources, known_people,
 			mining_contracts, belt_cargo, daily_records, daily_mined, resource_flows,
 			pollution_operations, research_progress]:
 		collection.clear()

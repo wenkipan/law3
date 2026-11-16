@@ -74,7 +74,7 @@ func build(controller: Node, layout: CanvasLayer) -> void:
 	detail_cost = label(details, "")
 	prerequisites = label(details, "", 13)
 	details.add_child(HSeparator.new())
-	label(details, "解锁建筑", 16)
+	label(details, "解锁", 16)
 	unlocks = VBoxContainer.new()
 	unlocks.add_theme_constant_override("separation", 8)
 	details.add_child(unlocks)
@@ -84,7 +84,7 @@ func build(controller: Node, layout: CanvasLayer) -> void:
 	tree_scroll.size_flags_stretch_ratio = 0.7
 	columns.add_child(tree_scroll)
 	graph = Control.new()
-	graph.custom_minimum_size = ORIGIN * 2 + Vector2(3, 8) * STEP + NODE_SIZE
+	graph.custom_minimum_size = ORIGIN * 2 + Vector2(4, 8) * STEP + NODE_SIZE
 	tree_scroll.add_child(graph)
 	graph.gui_input.connect(pan_tree)
 	build_graph()
@@ -126,7 +126,7 @@ func build_graph() -> void:
 	for project in Technology.PROJECTS:
 		var definition: Dictionary = Technology.PROJECTS[project]
 		var button: Button = hud.make_button("", definition.name, toggle_project.bind(project))
-		button.icon = Art.texture("res://assets/icons/%s.svg" % definition.unlocks[0])
+		button.icon = Art.texture("res://assets/icons/%s.svg" % (definition.unlocks[0] if not definition.unlocks.is_empty() else "oil"))
 		button.expand_icon = true
 		button.add_theme_constant_override("icon_max_width", 54)
 		button.custom_minimum_size = NODE_SIZE
@@ -155,6 +155,7 @@ func select_project(project: String) -> void:
 	for child in unlocks.get_children():
 		unlocks.remove_child(child)
 		child.queue_free()
+	if Technology.PROJECTS[project].get("reveals", "") == "oil": label(unlocks, "显示当前视野内的森林油藏")
 	for kind in Technology.PROJECTS[project].unlocks:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 10)

@@ -10,7 +10,7 @@ enum Gate { ALWAYS, STAFFED }
 const WorkTypes = preload("res://scripts/simulation/work_types.gd")
 const JOB_TYPES := {
 	"market": WorkTypes.OPERATIONS, "bank": WorkTypes.OPERATIONS, "storage_box": WorkTypes.LOGISTICS,
-	"mine": WorkTypes.MINING, "drill": WorkTypes.MINING,
+	"logging_camp": WorkTypes.MINING, "mine": WorkTypes.MINING, "drill": WorkTypes.MINING,
 	"farm": WorkTypes.FARMING, "barn": WorkTypes.FARMING, "pump": WorkTypes.FARMING,
 	"hunting_ground": WorkTypes.FARMING, "gathering_garden": WorkTypes.FARMING,
 	"power_plant": WorkTypes.OPERATIONS, "manual_generator": WorkTypes.OPERATIONS, "transformer": WorkTypes.OPERATIONS,
@@ -70,10 +70,11 @@ func configure(g) -> void:
 		var definition := ObjectDefinition.new(kind, Domain.BUILDING)
 		definition.materials = g.production_materials(kind)
 		if g.PRODUCTS.has(kind) and kind != "printer": definition.products = [g.product_item(kind)]
-		elif kind == "mine": definition.products = MINERALS.duplicate()
+		elif kind == "mine": definition.products = [1, 2, 3, 4, 8, 9]
+		elif kind == "logging_camp": definition.products = [7]
 		elif kind == "drill": definition.products = [2, 3]
 		if JOB_TYPES.has(kind):
-			var method := "operate" if kind in g.OPERATED_KINDS + g.DUTY_KINDS + ["mine"] else "produce"
+			var method := "operate" if kind in g.OPERATED_KINDS + g.DUTY_KINDS + g.EXTRACTIVE_KINDS else "produce"
 			definition.interactions.append(SlotDefinition.new(JOB_TYPES[kind], &"work", method, false, definition.products))
 		var stored_items: Array = ["money"] if kind == "market" else g.RESOURCE_ITEMS
 		definition.interactions.append(SlotDefinition.new(Action.STORE, &"store", "", true, stored_items))

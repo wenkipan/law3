@@ -9,7 +9,8 @@ signal sight_changed(cells: Dictionary)
 signal presentation_stock_changed(cell: Vector2i)
 
 const CELL := 40.0
-const BASE := Vector2i(32, 13)
+var BASE: Vector2i:
+	get: return world.starting_point
 const VISION_RADIUS := 18
 const DAY_SECONDS := 360.0
 const CHILD_DAYS := 5.0
@@ -90,10 +91,8 @@ const PLAYER_OPERATOR := -2
 const HOLD_DELAY := 0.25
 const WorkTypes = preload("res://scripts/simulation/work_types.gd")
 const SKILLS := WorkTypes.NAMES
-const DIETS := {"fruit": ["berries"], "meat": ["meat"], "grain": ["wheat", "bread"]}
+const FOOD_ITEMS := ["berries", "meat", "wheat", "bread"]
 const FOOD_RECOVERY := {"berries": 20.0, "meat": 20.0, "wheat": 20.0, "bread": 30.0}
-const MINING_DAYS := 10.0
-const MINING_HOURS_PER_DAY := 8.0
 const MARKET_GOODS := ["berries", "meat", "wheat", "bread", 1, 2, 3, 4, 7, 8, "raw_water", "clean_water", "bench", "workbench", "wool", "cloth", "clothes", "ale", "iron", "planks", "tools", "chemicals", "cleaner", "medical"]
 const RESOURCE_ITEMS := ["berries", "bread", 1, 2, 3, 4, 7, 8, "money", "wheat", "raw_water", "clean_water", "bench", "workbench", "wool", "cloth", "clothes", "ale", "iron", "planks", "tools", "meat", "chemicals", "cleaner", "medical", "wastewater"]
 const PROCESSING_KINDS := ["bench", "workbench", "purifier", "mill", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy", "chemical_plant", "soapworks", "pharmacy"]
@@ -115,6 +114,8 @@ const ITEM_USES := {
 	"tools": {"slot": "tools", "uses": 12},
 }
 const FARM_GROWTH_HOURS := 6.0
+const EXTRACTIVE_KINDS := ["mine", "logging_camp"]
+const REGION_BUILDINGS := {"farm": MapGenerator.Biome.PLAIN, "barn": MapGenerator.Biome.GRASSLAND, "hunting_ground": MapGenerator.Biome.GRASSLAND, "gathering_garden": MapGenerator.Biome.FOREST, "mine": MapGenerator.Biome.MOUNTAIN, "logging_camp": MapGenerator.Biome.FOREST}
 const WILD_SITE_ITEMS := {"farm": "wheat", "hunting_ground": "meat", "gathering_garden": "berries"}
 const WILD_ITEM_NAMES := {"wheat": "野生小麦", "meat": "野生动物", "berries": "野生浆果"}
 const EFFECT_RADIUS := 3
@@ -132,6 +133,7 @@ const BARRIER_KINDS := ["wall", "fence", "door"]
 const NEW_BUILDINGS := {
 	"recruitment_board": {"name": "招工木牌", "materials": {7: 3}, "hours": 2.0, "size": Vector2i.ONE},
 	"market": {"name": "市场", "materials": {7: 6, 1: 4}, "hours": 4.0, "size": Vector2i(3, 2)},
+	"logging_camp": {"name": "伐木场", "materials": {7: 4, 1: 4}, "hours": 4.0, "size": Vector2i(2, 2)},
 	"mine": {"name": "矿场", "materials": {7: 4, 1: 4}, "hours": 4.0, "size": Vector2i(2, 2)},
 	"wall": {"name": "墙", "materials": {1: 2}, "hours": 0.5, "size": Vector2i.ONE},
 	"fence": {"name": "栅栏", "materials": {7: 1}, "hours": 0.25, "size": Vector2i.ONE},
@@ -169,7 +171,7 @@ const NEW_BUILDINGS := {
 	"canteen": {"name": "食堂", "materials": {1: 8, 4: 2}, "hours": 4.0, "size": Vector2i(2, 2)},
 }
 const FREIGHT_CAPACITY := 4
-const BUILDING_KINDS := ["recruitment_board", "market", "mine", "bed", "bench", "workbench", "pump", "purifier", "printer", "bank", "belt", "farm", "hunting_ground", "gathering_garden", "power_plant", "high_line", "low_line", "transformer", "grow_light", "fountain", "electric_belt", "drill", "manual_generator", "spotlight", "daylight", "canteen", "mill", "barn", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy", "chemical_plant", "soapworks", "bathhouse", "laundry", "pharmacy", "hospital", "storage_box", "research_bench", "wall", "fence", "door"]
+const BUILDING_KINDS := ["recruitment_board", "market", "mine", "logging_camp", "bed", "bench", "workbench", "pump", "purifier", "printer", "bank", "belt", "farm", "hunting_ground", "gathering_garden", "power_plant", "high_line", "low_line", "transformer", "grow_light", "fountain", "electric_belt", "drill", "manual_generator", "spotlight", "daylight", "canteen", "mill", "barn", "weaver", "tailor", "brewery", "smelter", "sawmill", "smithy", "chemical_plant", "soapworks", "bathhouse", "laundry", "pharmacy", "hospital", "storage_box", "research_bench", "wall", "fence", "door"]
 # 生产批次的产物、工时与售价；原料见 production_materials，建材见 building_materials。
 const PRODUCTS := {
 	"mill": {"name": "面包", "unit": "份", "hours": 2.0, "amount": 8, "item": "bread", "materials": {"wheat": 4}},
@@ -277,8 +279,9 @@ func reset_world(new_seed: int = -1) -> void:
 	alert_targets.clear()
 	world_view.initialized = false
 	world.smart_objects.configure(self)
-	world.reset(randi() if new_seed == -1 else new_seed, BASE, STARTING_MONEY)
-	cache.reset(world.world_seed, Rect2i(BASE - Vector2i(4, 2), Vector2i(9, 5)))
+	var seed_value := randi() if new_seed == -1 else new_seed
+	cache.reset(seed_value)
+	world.reset(seed_value, cache.generator.starting_position(), STARTING_MONEY)
 	interaction.reset()
 	ai_trace.reset(self)
 	hud.reset_screen()
@@ -306,7 +309,7 @@ func restore_snapshot(data: PackedByteArray) -> Dictionary:
 	# Prepare the new simulation in isolation. No activity entry/exit, wages,
 	# exploration or power simulation may run while reconstructing it.
 	var next_cache := WorldCache.new()
-	next_cache.rebuild(restored.world, Rect2i(BASE - Vector2i(4, 2), Vector2i(9, 5)), restored.sample)
+	next_cache.rebuild(restored.world, restored.sample)
 	restored.world.rebuild_interactions(self)
 	restored.world.rebuild_chunk_indexes()
 	world_view.initialized = false
@@ -367,13 +370,16 @@ func ensure_region(area: Rect2i) -> void:
 					if world.terrain.has(cell):
 						continue
 					var material := int(data[dy * MapGenerator.CHUNK_SIZE + dx])
+					world.biomes[cell] = cache.generator.biome_at(cell)
+					var oil: int = cache.generator.oil_at(cell)
+					if oil > 0: world.oil_deposits[cell] = oil
 					world.terrain[cell] = 0 if material == MapGenerator.WATER or MapGenerator.WILD_ITEMS.has(material) else material
 					if material == MapGenerator.WATER:
 						world.water_sources[cell] = true
 					if MapGenerator.WILD_ITEMS.has(material):
 						world.add_wild_resource(cell, wild_resource(MapGenerator.WILD_ITEMS[material]))
 					elif material > 0 and material != MapGenerator.WATER:
-						world.deposits[cell] = maxi(1, floori(MINING_DAYS * MINING_HOURS_PER_DAY / ORES[material].hours))
+						world.deposits[cell] = cache.generator.deposit_stock(cell, material, ORES[material].hours)
 						if material in [5, 6]: has_dense_ore = true
 					if material != MapGenerator.WATER:
 						cache.navigation.set_point_solid(cell, false)
@@ -389,8 +395,7 @@ func create_worker(p: Vector2i, days := CHILD_DAYS, producer := -1) -> Dictionar
 	var id := world.next_worker_id
 	world.next_worker_id += 1
 	var worker := {"id": id, "name": WORKER_NAMES[id] if id < WORKER_NAMES.size() else "居民%d" % (id + 1),
-		"skill": SKILLS.keys()[floori(cache.generator.random_at(Vector2i(id, 0), 110) * SKILLS.size())],
-		"diet": DIETS.keys()[floori(cache.generator.random_at(Vector2i(id, 0), 111) * DIETS.size())], "employer": null,
+		"skill": SKILLS.keys()[floori(cache.generator.random_at(Vector2i(id, 0), 110) * SKILLS.size())], "employer": null,
 		"age_days": days, "producer": producer, "mood_integral": 0.0, "mood_seconds": 0.0, "happy_days": 0,
 		"color": WORKER_COLORS[id % WORKER_COLORS.size()], "pos": Vector2(p), "facing": 1.0,
 		"activity": WorkerStateTree.new(), "carry": 0, "extra_cargo": [], "delivery_tasks": [],
@@ -462,21 +467,29 @@ func building_open(p: Vector2i) -> bool:
 
 func personal_food(w: Dictionary) -> float:
 	var amount := 0.0
-	for item in DIETS[w.diet]: amount += w.items.get(item, 0) * FOOD_RECOVERY[item]
+	for item in FOOD_ITEMS: amount += w.items.get(item, 0) * FOOD_RECOVERY[item]
 	return amount
 
 func eats(w: Dictionary, item) -> bool:
-	return item in DIETS[w.diet]
+	return FOOD_RECOVERY.has(item)
 
 func can_hand_harvest(p: Vector2i) -> bool:
 	return world.wild_resources.get(p, {}).get("stock", 0) > 0 and world.building_map.at_cell(p).is_empty()
 
 func mine_deposit(p: Vector2i):
 	for cell in building_cells(p, building_kind(p)):
-		if world.deposits.get(cell, 0) > 0 and world.terrain.get(cell, 0) not in [5, 6]: return cell
+		if world.deposits.get(cell, 0) > 0 and ((building_kind(p) == "logging_camp" and world.terrain.get(cell, 0) == 7) or (building_kind(p) == "mine" and world.terrain.get(cell, 0) in [1, 2, 3, 4, 8, 9])): return cell
 	return null
 
+func biome_at(p: Vector2i) -> int:
+	return world.biomes.get(p, MapGenerator.Biome.PLAIN)
+
+func oil_visible(p: Vector2i) -> bool:
+	return cache.visible_tiles.has(p) and world.oil_deposits.has(p) and Technology.completed(world.research_progress, "oil_survey")
+
 func deplete_deposit(cell: Vector2i) -> void:
+	if world.terrain.get(cell, 0) == 7 and biome_at(cell) == MapGenerator.Biome.FOREST and not world.forest_regrowth.has(cell):
+		world.forest_regrowth[cell] = (world.day - 1) * DAY_SECONDS + world.day_elapsed + MapGenerator.FOREST_REGROWTH_HOURS * HOUR_SECONDS
 	world.deposits[cell] = maxi(0, world.deposits.get(cell, 0) - 1)
 	if world.deposits[cell] == 0:
 		world.terrain[cell] = 0
@@ -504,9 +517,9 @@ func can_deliver(w: Dictionary, source: Vector2i, target: Vector2i) -> bool:
 func food_cash_shortfall(w: Dictionary) -> float:
 	var recovery := maxf(0, MAX_HUNGER - w.hunger - personal_food(w))
 	var price := INF
-	for p in world.smart_objects.positions(SmartObjects.Action.SHOP, {"items": DIETS[w.diet]}):
+	for p in world.smart_objects.positions(SmartObjects.Action.SHOP, {"items": FOOD_ITEMS}):
 		if route(Vector2i(w.pos.round()), p).is_empty(): continue
-		for item in DIETS[w.diet]:
+		for item in FOOD_ITEMS:
 			if stock_at(p, item) > 0: price = minf(price, sale_price(p, item) / FOOD_RECOVERY[item])
 	return maxf(0, recovery * price - w.money) if is_finite(price) else 0.0
 
@@ -952,7 +965,8 @@ func production_materials(kind: String) -> Dictionary:
 		"printer": return {0: PRINT_WORKER_BLOCKS}
 	return {}
 
-func return_materials(payment: Dictionary, location := BASE) -> void:
+func return_materials(payment: Dictionary, location = null) -> void:
+	if location == null: location = BASE
 	if is_built_market(location): location = market_spill_cell(location)
 	for item in payment:
 		add_stock(location, item, payment[item])
@@ -1055,15 +1069,16 @@ func building_space_valid(p: Vector2i, kind: String, planned_axis := Vector2i.RI
 	if kind == "pump" and not near_water_source(p):
 		return false
 	var required_item: String = WILD_SITE_ITEMS.get(kind, "")
-	var found_source := kind != "mine" and required_item.is_empty()
+	var found_source := kind not in EXTRACTIVE_KINDS and (required_item.is_empty() or kind in ["farm", "barn"])
 	for cell in building_cells(p, kind, planned_axis):
 		if not in_bounds(cell) or not cache.visible_tiles.has(cell) or world.water_sources.has(cell):
 			return false
+		if REGION_BUILDINGS.has(kind) and biome_at(cell) != REGION_BUILDINGS[kind]: return false
 		var resource: Dictionary = world.wild_resources.get(cell, {})
 		if resource.get("stock", 0) > 0:
 			if resource.item != required_item: return false
 			found_source = true
-		if kind == "mine" and world.deposits.get(cell, 0) > 0 and world.terrain.get(cell, 0) not in [5, 6]:
+		if kind in EXTRACTIVE_KINDS and world.deposits.get(cell, 0) > 0 and ((kind == "logging_camp" and world.terrain.get(cell, 0) == 7) or (kind == "mine" and world.terrain.get(cell, 0) in [1, 2, 3, 4, 8, 9])):
 			found_source = true
 		for id in world.building_map.at_cell(cell):
 			var building = world.buildings[id]
@@ -1392,7 +1407,7 @@ func station_materials(p: Vector2i) -> Dictionary:
 
 func station_work_hours(p: Vector2i) -> float:
 	var b: Dictionary = world.building_state(p, "station")
-	if b.kind == "mine":
+	if b.kind in EXTRACTIVE_KINDS:
 		var deposit = mine_deposit(p)
 		return ORES[world.terrain[deposit]].hours if deposit != null else 1.0
 	if b.kind in DUTY_KINDS: return 1.0
@@ -1557,7 +1572,7 @@ func set_wage_filter(value: String) -> void:
 	hud.sync_wage_brush()
 
 func wage_target_kind(p, mining: bool) -> String:
-	return "build" if world.has_building(p, "site") else "mine" if building_kind(p) in ["mine", "drill"] else "station"
+	return "build" if world.has_building(p, "site") else "mine" if building_kind(p) in EXTRACTIVE_KINDS + ["drill"] else "station"
 
 func wage_targets(ids = null) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
@@ -1639,6 +1654,7 @@ func simulate(delta: float) -> void:
 		world.pollution_operations.clear()
 		prepare_player_work()
 		simulate_power(step)
+		simulate_forest_growth(step)
 		simulate_growth(step)
 		simulate_belts(step)
 		simulate_player_work(step)
@@ -1709,6 +1725,25 @@ func simulate_workers(delta: float) -> void:
 	if world.fog_timer >= 0.15:
 		world.fog_timer = 0.0
 		update_fog()
+
+func simulate_forest_growth(delta: float) -> void:
+	var now := (world.day - 1) * DAY_SECONDS + world.day_elapsed + delta
+	for cell in world.forest_regrowth.keys():
+		if now + 0.000001 < world.forest_regrowth[cell]: continue
+		# Construction and ordinary buildings suppress saplings; logging camps
+		# retain their forest floor. No stock is generated into a warehouse.
+		var occupied := false
+		for id in world.building_map.at_cell(cell):
+			var building = world.buildings[id]
+			if building.kind != "logging_camp" or building.phase != Building.Phase.BUILT: occupied = true
+		if occupied: continue
+		world.terrain[cell] = 7
+		world.deposits[cell] = mini(MapGenerator.FOREST_STOCK, world.deposits.get(cell, 0) + 1)
+		terrain_cell_changed.emit(cell)
+		if world.deposits[cell] >= MapGenerator.FOREST_STOCK:
+			world.forest_regrowth.erase(cell)
+		else:
+			world.forest_regrowth[cell] = now + MapGenerator.FOREST_REGROWTH_HOURS * HOUR_SECONDS
 
 func simulate_recruitment(delta: float) -> void:
 	var interval := RECRUITMENT_HOURS * HOUR_SECONDS
@@ -1984,12 +2019,14 @@ func tile_details(p: Vector2i) -> Dictionary:
 		return {}
 	if world.water_sources.has(p):
 		return {"title": "水源", "text": "不可通行\n可供抽水与灌溉"}
+	if oil_visible(p):
+		return {"title": "石油", "text": "森林油藏 × %d\n尚无开采设施" % world.oil_deposits[p]}
 	if world.wild_resources.get(p, {}).get("stock", 0) > 0:
 		var resource: Dictionary = world.wild_resources[p]
 		return {"title": WILD_ITEM_NAMES[resource.item], "text": "%s × %d\n%s · 1h" % [item_name(resource.item), resource.stock, "狩猎" if resource.item == "meat" else "采集"]}
 	var ore: int = world.terrain[p]
 	if ore == 0:
-		return {"title": "空地", "text": "可通行"}
+		return {"title": MapGenerator.BIOME_NAMES[biome_at(p)], "text": {MapGenerator.Biome.PLAIN: "可通行 · 可建农田", MapGenerator.Biome.GRASSLAND: "可通行 · 可建畜棚与猎场", MapGenerator.Biome.FOREST: "可通行 · 可建伐木场与采集园", MapGenerator.Biome.MOUNTAIN: "可通行 · 矿产区"}.get(biome_at(p), "可通行")}
 	return {"title": ORES[ore].name,
 		"text": "%s\n剩余  %d\n每件  %.1fh\n产物  %s" % ["需要矿钻" if ore in [5, 6] else "可开采", world.deposits.get(p, 0), mining_seconds(p) / HOUR_SECONDS, item_name(ORES[ore].get("item", ore))]}
 
@@ -2032,14 +2069,16 @@ func product_recipe_text(kind: String, p = null) -> String:
 		recipe += "\n喂养 1h · 产毛 %.0fh · 剪毛 1h" % SHEEP_GROWTH_HOURS
 	if product.has("recovery_hours"):
 		recipe += " · %s %.0fh" % [product.recovery_name, product.recovery_hours]
-	if WILD_SITE_ITEMS.has(kind):
-		recipe += "\n建于" + WILD_ITEM_NAMES[WILD_SITE_ITEMS[kind]]
+	if REGION_BUILDINGS.has(kind):
+		recipe += "\n建于" + MapGenerator.BIOME_NAMES[REGION_BUILDINGS[kind]]
+		if kind in ["hunting_ground", "gathering_garden"]: recipe += " · 需" + WILD_ITEM_NAMES[WILD_SITE_ITEMS[kind]]
 	return recipe
 
 func building_effects_text(kind: String, p = null, include_fee := true) -> String:
 	if kind == "recruitment_board": return "每 %.0fh 吸引 1 名居民" % RECRUITMENT_HOURS
 	if kind == "market": return ""
-	if kind == "mine": return "建于矿床 · 开采后储量减少"
+	if kind == "mine": return "建于山地矿床 · 储量有限"
+	if kind == "logging_camp": return "建于森林木材 · 每 %.0fh 再生一份" % MapGenerator.FOREST_REGROWTH_HOURS
 	if kind in WorldState.BLOCKING_KINDS: return "阻挡通行"
 	if kind == "door": return "可通行 · 自动开合"
 	if kind == "research_bench": return ""
@@ -2964,7 +3003,7 @@ func power_route(graph: Dictionary, source: String, target: String) -> Array[Str
 
 func operation_needed(p: Vector2i) -> bool:
 	if building_kind(p) in DUTY_KINDS: return true
-	if building_kind(p) == "mine": return mine_deposit(p) != null
+	if building_kind(p) in EXTRACTIVE_KINDS: return mine_deposit(p) != null
 	rebuild_power_graph()
 	if cache.power_graph.source.is_empty(): return false
 	var kind := building_kind(p)
@@ -3190,7 +3229,7 @@ func prepare_work(record: ActivityRecord) -> Dictionary:
 					return {}
 				consume_recipe(p, recipe)
 			bench.task = contract(station_work_hours(p))
-			if bench.kind == "mine": bench.task.deposit = mine_deposit(p)
+			if bench.kind in EXTRACTIVE_KINDS: bench.task.deposit = mine_deposit(p)
 			if bench.kind == "research_bench":
 				bench.task.research = bench.research
 				bench.research_tasks[bench.research] = bench.task
@@ -3264,7 +3303,7 @@ func complete_work(record: ActivityRecord, w: Dictionary) -> void:
 			complete_product(p, w)
 		"operate":
 			var bench: Dictionary = world.building_state(p, "station")
-			if bench.kind == "mine":
+			if bench.kind in EXTRACTIVE_KINDS:
 				var mineral: Vector2i = bench.task.deposit
 				complete_extraction(mineral, p, w, true)
 				bench.task = {}
@@ -3305,6 +3344,8 @@ func complete_product(p: Vector2i, operator: Dictionary) -> void:
 		research_supply_changed()
 		if Technology.completed(world.research_progress, project):
 			alerts.research_completed(self, project)
+			if project == "oil_survey":
+				for cell in world.oil_deposits: terrain_cell_changed.emit(cell)
 	elif bench.kind == "printer":
 		world.newborns.append({"position": p + Vector2i.RIGHT, "producer": operator.get("id", -1), "copy": operator})
 		bench.queue -= 1
@@ -3411,14 +3452,14 @@ func equipped_amount(w: Dictionary, item: String) -> float:
 
 func purchase_capacity(w: Dictionary, item) -> int:
 	if not item is String: return 0
-	if FOOD_RECOVERY.has(item): return maxi(0, 6 - w.items.get(item, 0)) if eats(w, item) else 0
+	if FOOD_RECOVERY.has(item): return maxi(0, 6 - w.items.get(item, 0))
 	if item == "clean_water": return WATER_CAPACITY - w.water
 	if ITEM_USES.has(item) and equipped_amount(w, item) > 0: return 0
 	return maxi(0, (2 if item == "meat" else 1) - w.items.get(item, 0))
 
 func wants_item(w: Dictionary, item) -> bool:
 	if purchase_capacity(w, item) <= 0: return false
-	if FOOD_RECOVERY.has(item): return eats(w, item) and w.hunger + personal_food(w) < MAX_HUNGER
+	if FOOD_RECOVERY.has(item): return w.hunger + personal_food(w) < MAX_HUNGER
 	if item == "clean_water": return w.water == 0 and w.buffs.remaining("hydrated") <= 0
 	if item == "ale": return w.buffs.remaining("tipsy") <= 0 and w.fatigue >= WorkerBuffs.ALE_RECOVERY
 	if item in ["cleaner", "medical", "wastewater"]: return false
@@ -3439,7 +3480,7 @@ func use_item(w: Dictionary, item: String) -> bool:
 		w.buffs.apply("tipsy", WorkerBuffs.ALE_HOURS * HOUR_SECONDS)
 		record_resource_use(item, 1)
 	elif FOOD_RECOVERY.has(item):
-		if not eats(w, item): return false
+		if not FOOD_RECOVERY.has(item): return false
 		w.hunger = minf(MAX_HUNGER, w.hunger + FOOD_RECOVERY[item])
 		w.eaten_today += 1
 		record_resource_use(item, 1)

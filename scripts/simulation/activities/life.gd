@@ -4,7 +4,7 @@ func enter(g, w: Dictionary, proposal) -> bool:
 	if not super.enter(g, w, proposal):
 		return false
 	if record.kind == "eat":
-		if not g.eats(w, record.data.item) or w.items.get(record.data.item, 0) < record.data.amount:
+		if not g.FOOD_RECOVERY.has(record.data.item) or w.items.get(record.data.item, 0) < record.data.amount:
 			return false
 		w.meal_food = record.data.amount
 		w.meal_item = record.data.item

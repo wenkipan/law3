@@ -9,7 +9,7 @@ func preview_seed(t, seed_value: int) -> void:
 	# This opt-in overview is for manual inspection, not content or picking assertions.
 	g.reset_world(seed_value)
 	t.fixtures.scenario_name = "Generated map overview: %d" % seed_value
-	var overview := Rect2i(-64, -64, 256, 192)
+	var overview := Rect2i(g.BASE - Vector2i(128, 96), Vector2i(256, 192))
 	g.ensure_region(overview)
 	for cell in g.world.terrain:
 		if not overview.has_point(cell):

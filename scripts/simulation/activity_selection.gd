@@ -94,7 +94,7 @@ static func life_options(c, e, choices: Array) -> void:
 			add(c, e, choices, "use_item", c.origin, {"item": item})
 		elif item == "ale" and w.buffs.remaining("tipsy") <= 0 and w.fatigue >= g.WorkerBuffs.ALE_RECOVERY:
 			add(c, e, choices, "use_item", c.origin, {"item": item})
-		elif g.eats(w, item) and w.hunger < Parameters.MEAL_HUNGER:
+		elif g.FOOD_RECOVERY.has(item) and w.hunger < Parameters.MEAL_HUNGER:
 			var amount: float = minf(w.items[item], minf(1.0, (g.MAX_HUNGER - w.hunger) / g.FOOD_RECOVERY[item]))
 			add(c, e, choices, "eat", c.origin, {"item": item, "amount": amount})
 			var radius: int = g.CANTEEN_WALK_LIMIT
