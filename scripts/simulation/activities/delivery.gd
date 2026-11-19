@@ -48,6 +48,7 @@ func tick(g, w: Dictionary, delta: float) -> String:
 	if reached == 0:
 		return "running"
 	if phase == "pickup":
+		if not g.pay_for_pickup(w): return "failure"
 		for part in w.delivery_tasks: part.picked = true
 		return "running" if transport_route(g, w) else "failure"
 	phase = "handoff"
@@ -56,7 +57,8 @@ func tick(g, w: Dictionary, delta: float) -> String:
 
 func transport_route(g, w: Dictionary) -> bool:
 	var target: Vector2i = task.target
-	var leg: Dictionary = g.delivery_route(Vector2i(w.pos.round()), target)
+	var start := Vector2i(w.pos.round())
+	var leg: Dictionary = {"stop": target, "path": g.route(start, target)} if task.has("resale_price") else g.delivery_route(start, target)
 	destination = leg.stop
 	path = leg.path
 	receiver = target
@@ -65,6 +67,6 @@ func transport_route(g, w: Dictionary) -> bool:
 
 func exit(g, w: Dictionary, reason: String) -> void:
 	for part in w.delivery_tasks.duplicate():
-		if not part.picked and part.owner == w.id: g.release_delivery_task(part)
+		if part.owner == w.id and (not part.picked or part.has("resale_price")): g.release_delivery_task(part)
 	# Picked cargo remains with its carrier across sleep and other interruptions.
 	super.exit(g, w, reason)

@@ -58,6 +58,7 @@ class ObjectDefinition extends RefCounted:
 
 var buildings: Dictionary = {}
 var blueprints: Dictionary = {}
+var demolitions: Dictionary = {}
 var resources: Dictionary = {}
 var delivery: ObjectDefinition
 var deposit: ObjectDefinition
@@ -80,6 +81,8 @@ func configure(g) -> void:
 		definition.interactions.append(SlotDefinition.new(Action.STORE, &"store", "", true, stored_items))
 		if kind == "market":
 			definition.interactions.append(SlotDefinition.new(Action.SHOP, &"shop", "", true, g.MARKET_GOODS, Gate.STAFFED))
+		elif not definition.products.is_empty():
+			definition.interactions.append(SlotDefinition.new(Action.SHOP, &"shop", "", true, definition.products))
 		elif kind == "bank": definition.interactions.append(SlotDefinition.new(Action.BANK, &"bank", "", true, ["money"], Gate.STAFFED))
 		elif kind == "bed": definition.interactions.append(SlotDefinition.new(Action.BED, &"bed"))
 		elif kind == "canteen":
@@ -96,6 +99,9 @@ func configure(g) -> void:
 		planned.materials = g.building_materials(kind)
 		planned.interactions.append(SlotDefinition.new(WorkTypes.LOGISTICS, &"build", "build"))
 		blueprints[kind] = planned
+		var demolition := ObjectDefinition.new(kind, Domain.BUILDING)
+		demolition.interactions.append(SlotDefinition.new(WorkTypes.LOGISTICS, &"demolish_line" if kind in g.LINE_KINDS else &"demolish", "demolish"))
+		demolitions[kind] = demolition
 	for item in g.MapGenerator.WILD_ITEMS.values():
 		var definition := ObjectDefinition.new("wild_" + item, Domain.RESOURCE)
 		definition.products = [item]
@@ -107,7 +113,7 @@ func configure(g) -> void:
 	deposit.interactions.append(SlotDefinition.new(WorkTypes.MINING, &"mine", "mine"))
 	stock = ObjectDefinition.new(&"stock", Domain.STOCK)
 	stock.interactions.append(SlotDefinition.new(Action.STORE, &"store", "", true, g.RESOURCE_ITEMS))
-	for definition in buildings.values() + blueprints.values() + resources.values() + [delivery, deposit, stock]:
+	for definition in buildings.values() + blueprints.values() + demolitions.values() + resources.values() + [delivery, deposit, stock]:
 		definition.materials.make_read_only()
 		definition.products.make_read_only()
 		definition.interactions.make_read_only()

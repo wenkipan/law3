@@ -1,9 +1,10 @@
 extends RefCounted
 
 const Storage = preload("res://scripts/entities/storage.gd")
-enum Phase { BLUEPRINT, BUILT, RECOVERING }
+enum Phase { BLUEPRINT, BUILT, RECOVERING, DEMOLISHING }
 const BELTS := ["belt", "electric_belt"]
 const LINES := ["high_line", "low_line"]
+const GROUPS := ["site", "station", "bed", "bank", "belt", "line", "growing"]
 
 var id := -1
 var phase: int = Phase.BLUEPRINT
@@ -23,6 +24,9 @@ func in_group(group: String) -> bool:
 		"bank": return kind == "bank"
 		"belt": return kind in BELTS
 		"line": return kind in LINES
+		"growing":
+			var remaining = state.get("growth", 0.0)
+			return (remaining is float or remaining is int) and remaining > 0.0 and in_group("station")
 	return false
 
 func complete(settings: Dictionary) -> void:

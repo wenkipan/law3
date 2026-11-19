@@ -11,7 +11,7 @@ const Economy = preload("res://scripts/simulation/evaluation/economy.gd")
 const Delivery = preload("res://scripts/simulation/evaluation/delivery.gd")
 const WorkTypes = preload("res://scripts/simulation/work_types.gd")
 
-static var ACTIONS = {"eat": Life.meal, "sleep": Life.sleep, "rest": Life.rest,
+static var ACTIONS = {"eat": Life.meal, "sleep": Life.sleep, "rest": Life.rest, "emigrate": Life.emigrate,
 	"use_item": Items.use, "purchase": Economy.purchase, "borrow": Economy.borrow,
 	"payroll": Economy.payroll}
 static var SERVICES = {"hospital": Life.treatment, "bathhouse": Life.bath, "laundry": Life.laundry}
@@ -131,11 +131,11 @@ func work_facts() -> Array[Dictionary]:
 	var g = context.game
 	for endpoint in context.job_slots():
 		var p: Vector2i = endpoint.instance.position
-		if not g.can_take_job(context.worker, p): continue
+		if not g.can_take_job(context.worker, p, int(String(endpoint.instance.id).trim_prefix("building:"))): continue
 		var kind: String = endpoint.instance.definition.kind
 		var offer: Dictionary = g.world.smart_objects.labor_offer(endpoint, context.worker.id)
 		if offer.has("reason"): continue
-		if offer.method == "build":
+		if offer.method in ["build", "demolish"]:
 			var approach: Array[Vector2i] = g.construction_route(context.origin, p) if kind in g.WorldState.BLOCKING_KINDS else context.path_to(p)
 			if approach.is_empty(): continue
 			var site: Dictionary = offer.identity

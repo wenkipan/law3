@@ -1,5 +1,5 @@
 # Design
-read file README.md,扩大系统设计.md, they are how game iterated
+read file README.md,扩大系统设计.md,游戏概览.md, they are how game iterated
 
 # UI conventions
 

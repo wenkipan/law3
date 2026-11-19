@@ -33,7 +33,8 @@ func valid(g, _w: Dictionary) -> bool:
 func matches_option(proposal) -> bool:
 	return (proposal != null and record.kind == proposal.kind and record.target == proposal.target
 		and record.method == proposal.record.method and record.data.get("job") == proposal.data.get("job")
-		and record.data.get("project") == proposal.data.get("project"))
+		and record.data.get("project") == proposal.data.get("project")
+		and record.data.get("building_id") == proposal.data.get("building_id"))
 
 func exit(g, _w: Dictionary, _reason: String) -> void:
 	g.world.smart_objects.release(handles)

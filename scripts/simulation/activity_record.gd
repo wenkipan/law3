@@ -3,7 +3,7 @@ extends RefCounted
 # Concrete action. Scoring, paths and slot claims do not change its work type.
 const WorkTypes = preload("res://scripts/simulation/work_types.gd")
 const PARAMETER_KEYS := {
-	"payroll": ["employer"],
+	"payroll": ["employer", "building_id"],
 	"purchase": ["kind", "item", "amount"],
 	"use_item": ["item"],
 	"service": ["kind"],
@@ -12,7 +12,7 @@ const PARAMETER_KEYS := {
 	"borrow": ["amount"],
 }
 const WORK_PARAMETERS := {
-	"build": [], "produce": ["project"], "operate": ["job"],
+	"demolish": ["building_id"], "build": [], "produce": ["project"], "operate": ["job"],
 	"deliver": ["mined"], "mine": [], "harvest": [],
 }
 

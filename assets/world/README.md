@@ -24,8 +24,6 @@ Original, editable SVG game assets. No remote assets or runtime downloads.
   Default interface shapes live in `assets/cursors/`. Native picking remains
   independent of this visual layer.
 - `portal.svg`: portal illustration.
-- `../icons/recruitment_board.svg` and its blueprint: a one-cell wooden hiring
-  notice with a resident pictogram, shared by the build tray and world entity.
 - `wall-atlas.svg`, `fence-atlas.svg` and their blueprint atlases: sixteen
   single-cell joins shared by persistent enclosure sprites and previews.
   `door-frame.svg` and `door-leaf.svg` keep the opening gate on a separate hinge;

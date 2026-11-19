@@ -75,6 +75,7 @@ func limit_flags(g, w: Dictionary) -> int:
 		| (SEVERE_ILLNESS if w.pollution >= Parameters.ILLNESS_INTERRUPT else 0))
 
 func response_reason(g, w: Dictionary, kind: String, data: Dictionary) -> String:
+	if kind == "emigrate" and limit_flags(g, w) != 0: return "relocation"
 	if w.hunger <= Parameters.STARVATION_INTERRUPT:
 		if kind in ["eat", "borrow"] or (kind in ["use_item", "purchase"] and g.eats(w, data.get("item"))):
 			return "starvation"
@@ -105,6 +106,7 @@ func check_hard_interrupt(g, w: Dictionary) -> void:
 			exit(g, w, response_reason(g, w, choice.kind, choice.data))
 
 func response_available(g, w: Dictionary) -> bool:
+	if g.wants_emigrate(w): return true
 	if w.fatigue >= g.MAX_FATIGUE:
 		return true
 	if w.hunger <= Parameters.STARVATION_INTERRUPT:
@@ -112,7 +114,7 @@ func response_available(g, w: Dictionary) -> bool:
 			return true
 		for item in g.FOOD_ITEMS:
 			for p in g.world.smart_objects.positions(Slots.Action.SHOP, {"item": item}):
-				if g.stock_at(p, item) > 0 and w.money >= g.sale_price(p, item) and not g.route(Vector2i(w.pos.round()), p).is_empty(): return true
+				if item in g.shop_goods(p) and g.stock_at(p, item) > 0 and w.money >= g.sale_price(p, item) and not g.route(Vector2i(w.pos.round()), p).is_empty(): return true
 		if not g.has_debt(w) and w.loan_day != g.world.day:
 			for p in g.world.smart_objects.positions(Slots.Action.BANK):
 				if g.building_open(p) and g.stock_at(p, "money") > 0 and not g.route(Vector2i(w.pos.round()), p).is_empty():
@@ -160,7 +162,7 @@ func select(g, w: Dictionary) -> void:
 			activity = Delivery.new() if option.record.method == "deliver" else Work.new()
 		else:
 			match option.kind:
-				"eat", "sleep", "rest", "use_item", "service": activity = Life.new()
+				"eat", "sleep", "rest", "use_item", "service", "emigrate": activity = Life.new()
 				"purchase", "borrow", "payroll": activity = Economy.new()
 		if activity.enter(g, w, option):
 			active = activity
@@ -192,7 +194,7 @@ func report_action(g) -> String:
 	match record.method if record.method != "" else record.kind:
 		"use_item": return "吃饭" if active.record.data.item in ["ale", "meat"] else "空闲"
 		"service": return "通勤" if active.phase == "approach" else "空闲"
-		"build": return "通勤" if active.phase == "approach" else "工作"
+		"build", "demolish": return "通勤" if active.phase == "approach" else "工作"
 		"produce", "operate":
 			if active.phase == "approach": return "通勤"
 			return "等待" if record.method == "operate" and g.building_kind(record.target) == "drill" and not g.cache.powered_devices.has(record.target) else "工作"
@@ -221,8 +223,8 @@ func presentation(g) -> Dictionary:
 			result.state = "to_service" if a.phase == "approach" else "service"
 			result.service = a.record.data.kind
 			result.station = p
-		"build":
-			result.state = "to_build" if a.phase == "approach" else "build"
+		"build", "demolish":
+			result.state = ("to_demolish" if a.phase == "approach" else "demolish") if a.record.method == "demolish" else ("to_build" if a.phase == "approach" else "build")
 			result.building = p
 		"produce", "operate":
 			result.state = "to_work" if a.phase == "approach" else "work"
@@ -232,6 +234,7 @@ func presentation(g) -> Dictionary:
 			result.state = "to_shop"
 			result.station = p
 			result.item = a.record.data.item
+		"emigrate": result.state = "to_emigrate"
 		"payroll": result.state = "to_payroll"
 		"borrow": result.state = "to_bank"
 		"eat":

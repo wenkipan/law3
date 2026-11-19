@@ -9,13 +9,6 @@ class IconEntry extends Control:
 	var quantity: Label
 	var description := ""
 	var tooltip_label: Label
-	var take_action := Callable()
-
-	func _gui_input(event: InputEvent) -> void:
-		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed and take_action.is_valid():
-			take_action.call()
-			accept_event()
-
 	func configure(with_quantity: bool) -> void:
 		custom_minimum_size = Vector2(72, 54) if with_quantity else Vector2(32, 32)
 		mouse_filter = Control.MOUSE_FILTER_STOP
@@ -37,8 +30,6 @@ class IconEntry extends Control:
 		add_child(quantity)
 
 	func sync(data: Dictionary) -> void:
-		take_action = data.get("take", Callable())
-		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if take_action.is_valid() else Control.CURSOR_ARROW
 		image.texture = data.texture
 		quantity.text = data.get("quantity", "")
 		tooltip_text = data.name

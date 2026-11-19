@@ -64,3 +64,7 @@ static func laundry_effects(e, state: Dictionary, rule: Dictionary) -> Dictionar
 static func rest(e, op: Dictionary) -> Dictionary:
 	# The random wander destination is not known at selection time; it has no promised recovery.
 	return e.result(e.environment.estimate(op, 1.0 / e.context.game.HOUR_SECONDS), {})
+
+# Leaving competes with actual remedies at the same decision boundaries as other life activities.
+static func emigrate(e, op: Dictionary) -> Dictionary:
+	return e.result(e.environment.estimate(op, 0.0), {"relocation": 3.0})

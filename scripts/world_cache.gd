@@ -28,8 +28,10 @@ var belt_destinations: Dictionary = {}
 var receiver_belts: Dictionary = {}
 var supply_receivers: Dictionary = {}
 var mining_drills: Dictionary = {}
+var trade_books: Dictionary = {}
 
 func reset(seed_value: int) -> void:
+	trade_books.clear()
 	generator = MapGenerator.new(seed_value)
 	navigation.clear()
 	for collection in [visible_tiles, powered_devices, ready_drills, power_output,
@@ -92,19 +94,20 @@ func sync_delivery(g) -> void:
 		var building = g.world.buildings[id]
 		var origin: Vector2i = g.world.building_map.origin(id)
 		if building.in_group("site"):
-			if building.state.get("cancelled", false) or building.kind in g.BELT_KINDS or building.kind in g.LINE_KINDS: continue
+			if building.phase == building.Phase.DEMOLISHING or building.state.get("cancelled", false) or building.kind in g.BELT_KINDS or building.kind in g.LINE_KINDS: continue
 		elif building.kind in g.BARRIER_KINDS or building.kind in g.BELT_KINDS or building.kind in g.LINE_KINDS:
 			continue
 		for cell in g.world.building_map.placements[id].cells:
 			if not delivery_receivers.has(cell): delivery_receivers[cell] = origin
-	for p in g.world.building_positions("belt"):
+	var belts: Array = g.world.building_positions("belt")
+	for p in belts:
 		var direction: Vector2i = g.world.building_state(p, "belt").direction
 		if direction == Vector2i.ZERO: continue
 		var next: Vector2i = p + direction
 		if delivery_receivers.has(next) or (g.world.has_building(next, "belt") and -direction in g.world.building_state(next, "belt").inputs):
 			belt_next[p] = next
 	# Resolve each downstream chain once, including dead ends and cycles.
-	for start in g.world.building_positions("belt"):
+	for start in belts:
 		if belt_destinations.has(start): continue
 		var trail: Array[Vector2i] = []
 		var visited: Dictionary = {}
@@ -123,7 +126,7 @@ func sync_delivery(g) -> void:
 				break
 		for cell in trail: belt_destinations[cell] = receiver
 	# Preserve belt iteration order so equal-length loading choices keep their ties.
-	for p in g.world.building_positions("belt"):
+	for p in belts:
 		var receiver = belt_destinations[p]
 		if receiver == null: continue
 		if not receiver_belts.has(receiver): receiver_belts[receiver] = []

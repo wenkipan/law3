@@ -19,10 +19,12 @@ static func purchase(e, op: Dictionary) -> Dictionary:
 
 static func payroll(e, op: Dictionary) -> Dictionary:
 	var g = e.context.game
-	var amount: float = minf(g.PAYROLL_COLLECTION, g.stock_at(op.target, "money"))
 	var best := {"score": -INF, "hours": 0.0, "parts": {}}
 	var bonus: float = e.context.worker.activity.inertia_bonus(op)
 	for option in op.get("work_options", []):
+		var employer: int = option.data.get("building_id", g.delivery_receiver_id(option.target))
+		var amount: float = g.payroll_cash(op.target, employer)
+		if amount <= 0.0: continue
 		var path: Array[Vector2i] = op.path.duplicate()
 		var onward: Array[Vector2i] = g.route(op.target, option.position)
 		if onward.is_empty(): continue
@@ -32,7 +34,7 @@ static func payroll(e, op: Dictionary) -> Dictionary:
 		var result: Dictionary = Labor.evaluate(e, work)
 		if result.score + bonus > best.score + bonus and not is_equal_approx(result.score + bonus, best.score + bonus):
 			best = result
-			best.data = {"employer": option.target}
+			best.data = {"employer": option.target, "building_id": employer}
 	return best
 
 static func borrow(e, op: Dictionary) -> Dictionary:

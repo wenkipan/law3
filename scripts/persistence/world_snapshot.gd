@@ -1,7 +1,7 @@
 extends RefCounted
 
-const VERSION := 16
-const RULES_VERSION := 25
+const VERSION := 22
+const RULES_VERSION := 31
 const MAX_NODES := 200000
 const MAX_BYTES := 64 * 1024 * 1024
 const MAGIC := "LAW3SNAP"
@@ -31,10 +31,11 @@ static var FIELDS := {
 	"world": ["world_seed", "starting_point", "generated_chunks", "terrain", "water_sources", "known_people",
 		"deposits", "biomes", "oil_deposits", "forest_regrowth", "wild_resources", "estates",
 		"mining_contracts", "buildings", "next_building_id", "building_map", "ground_items",
-		"belt_cargo", "next_cargo_id", "player_cargo", "delivery_tasks", "next_delivery_task_id", "workers", "next_worker_id", "smart_objects",
+		"belt_cargo", "next_cargo_id", "delivery_tasks", "next_delivery_task_id", "workers", "next_worker_id", "smart_objects",
 		"delivered", "mined", "day", "day_elapsed", "portal", "wander_rng", "daily_records",
 		"daily_mined", "resource_flows", "inventory_history", "inventory_sample_time",
-		"fog_timer", "recovery_timer", "pollution_operations", "research_progress"],
+		"fog_timer", "recovery_timer", "pollution_operations", "research_progress",
+		"migration_entry", "living_quality", "migration_rng", "migration_goods", "transactions"],
 	"building": ["id", "phase", "inventory", "state"],
 	"storage": ["items", "wastewater_load"],
 	"building_map": ["placements"],
@@ -55,7 +56,7 @@ var identities: Array = []
 var instances: Array = []
 
 static func capture(world: WorldState, sample: Dictionary) -> Dictionary:
-	if not world.newborns.is_empty():
+	if not world.newborns.is_empty() or not world.emigrants.is_empty():
 		return failure("World is not at a completed simulation step.")
 	var codec = load("res://scripts/persistence/world_snapshot.gd").new()
 	var root = codec.pack({"world": world, "sample": sample})
@@ -85,10 +86,22 @@ static func decode(data: PackedByteArray, building_kinds: Array, day_seconds: fl
 	if digest(encoded) != data.slice(8, 40): return failure("Snapshot checksum failed.")
 	var payload = bytes_to_var(encoded)
 	if not payload is Dictionary: return failure("Invalid snapshot data.")
-	if payload.get("version") != VERSION or payload.get("rules") != RULES_VERSION or payload.get("map") != MapGenerator.VERSION:
+	var version = payload.get("version")
+	if version not in [20, 21, VERSION] or payload.get("rules") != RULES_VERSION or payload.get("map") != MapGenerator.VERSION:
 		return failure("Incompatible snapshot or game rules version.", "version")
 	if not payload.get("nodes") is Array or payload.nodes.size() > MAX_NODES:
 		return failure("Invalid snapshot object table.")
+	if version == 20:
+		var timer_index: int = FIELDS.world.find("living_quality")
+		for entry in payload.nodes:
+			if not entry is Dictionary or entry.get("kind") != "world": continue
+			# Version 20 stored the arrival timer immediately before living quality.
+			if not entry.get("values") is Array or entry.values.size() not in [FIELDS.world.size(), FIELDS.world.size() + 1]:
+				return failure("Invalid version 20 world state.")
+			var timer = entry.values[timer_index]
+			if not (timer is float or timer is int) or not is_finite(timer) or timer < 0 or timer > day_seconds / 4.0:
+				return failure("Invalid version 20 arrival timer.")
+			entry.values.remove_at(timer_index)
 	var codec = load("res://scripts/persistence/world_snapshot.gd").new()
 	codec.nodes = payload.nodes
 	if not codec.check_graph(payload.get("root")): return failure(codec.error)
@@ -97,9 +110,12 @@ static func decode(data: PackedByteArray, building_kinds: Array, day_seconds: fl
 	if codec.error != "": return failure(codec.error)
 	var root = codec.unpack(payload.root)
 	if not codec.validate(root, building_kinds, day_seconds): return failure(codec.error)
-	# The old cursor position never determined where held goods were returned.
-	root.world.player_cargo.erase("position")
 	codec.finish()
+	for person in root.world.workers:
+		# Discard departure pressure accrued under the previous employment-based rule.
+		if person.erase("migration_job_advantage"):
+			person.discontent_seconds = 0.0
+		person.erase("last_wage_at")
 	return {"ok": true, "world": root.world, "sample": root.sample}
 
 static func failure(message: String, code := "invalid") -> Dictionary:
@@ -166,7 +182,7 @@ func check_graph(root) -> bool:
 		if kind == "array" and entry.get("builtin") not in [TYPE_NIL, TYPE_INT, TYPE_FLOAT, TYPE_STRING, TYPE_VECTOR2I, TYPE_DICTIONARY]:
 			error = "Invalid snapshot array type."
 			return false
-		if FIELDS.has(kind) and entry.values.size() != FIELDS[kind].size():
+		if FIELDS.has(kind) and entry.values.size() != FIELDS[kind].size() and not (kind == "world" and entry.values.size() == FIELDS[kind].size() - 1):
 			error = "Incomplete snapshot object."
 			return false
 		var refs: Array = []
@@ -238,7 +254,7 @@ func fill() -> void:
 		var target: Object = instances[i]
 		var properties: Dictionary = {}
 		for property in target.get_property_list(): properties[property.name] = property
-		for j in FIELDS[entry.kind].size():
+		for j in entry.values.size():
 			var field: String = FIELDS[entry.kind][j]
 			var value = unpack(entry.values[j])
 			var expected: int = properties[field].type
@@ -263,6 +279,16 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 	var w: WorldState = root.world
 	if not validate_buildings(w, building_kinds): return false
 	if w.next_worker_id < 0: return invalid("Invalid population sequence.")
+	if not w.migration_entry is Vector2i or not w.terrain.has(w.migration_entry) or not w.migration_rng is RandomNumberGenerator or w.living_quality < 0 or w.living_quality > 1: return invalid("Invalid migration history.")
+	for item in w.migration_goods:
+		var flow = w.migration_goods[item]
+		if not (item is String or item is int) or not flow is Dictionary or not numeric_fields(flow, ["arrived", "departed"]) or flow.arrived < 0 or flow.departed < 0: return invalid("Invalid migration goods.")
+	if w.transactions.size() > 256: return invalid("Too many trade records.")
+	for trade in w.transactions:
+		if not trade is Dictionary or not numeric_fields(trade, ["units", "amount", "day"]) or trade.units <= 0 or trade.amount <= 0 or trade.day < 1 or trade.day > w.day:
+			return invalid("Invalid trade record.")
+		if not (trade.get("subject") is int or trade.get("subject") is String) or not trade.get("seller") is Vector2i or not trade.get("buyer") is Vector2i:
+			return invalid("Invalid trade parties or subject.")
 	var people: Dictionary = {}
 	var previous_id := -1
 	for person in w.workers:
@@ -294,61 +320,72 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 		var resource = w.wild_resources[cell]
 		if not cell is Vector2i or not w.terrain.has(cell) or not resource is Dictionary or resource.get("item") not in ["berries", "wheat", "meat"] or not resource.get("stock") is int or resource.stock not in [0, 1] or not resource.get("task") is Dictionary: return invalid("Invalid wild resource.")
 		if not resource.task.is_empty() and not valid_task(resource.task): return invalid("Invalid harvesting progress.")
-	for estate in w.estates.values():
+	for id in w.estates:
+		var estate = w.estates[id]
+		if not id is int or id < 0 or id >= w.next_worker_id or people.has(id): return invalid("Invalid estate owner.")
 		if not estate is Dictionary or not estate.get("position") is Vector2i or not valid_stock(estate.get("items")): return invalid("Invalid personal estate.")
 	var employed: Dictionary = {}
 	for building in w.buildings.values():
 		var settings: Dictionary = building.state
-		if settings.get("owner", "player") != "player" or not valid_owner(settings.get("employee", -1), people): return invalid("Invalid building ownership.")
+		var proprietor = settings.get("owner", "player")
+		if not is_same(proprietor, "player") and (not proprietor is int or not (people.has(proprietor) or w.estates.has(proprietor))): return invalid("Invalid building owner.")
+		if not valid_owner(settings.get("employee", -1), people): return invalid("Invalid employee.")
 		var employee: int = settings.get("employee", -1)
 		if employee >= 0:
 			if employed.has(employee) or people[employee].get("employer") != building.id or settings.get("wage", 1.0) <= 0 or settings.get("cancelled", false): return invalid("Conflicting employment.")
 			employed[employee] = building.id
 		if settings.has("wage") and not valid_wage(settings.wage): return invalid("Invalid labor wage.")
 		if settings.has("fee") and (not valid_wage(settings.fee) or settings.fee < 1): return invalid("Invalid building fee.")
+		if settings.has("sale_sample") or settings.has("sale_sample_day"):
+			var sample_day = settings.get("sale_sample_day")
+			var sample = settings.get("sale_sample")
+			if not sample_day is int or sample_day < 1 or sample_day > w.day or not sample is Dictionary: return invalid("Invalid facility sales sample.")
+			for client in sample:
+				if not client is int or client < 0 or client >= w.next_worker_id or not sample[client] is int or sample[client] <= 0: return invalid("Invalid facility receipt.")
+		if settings.has("trade_day") or settings.has("trade_volume"):
+			var trade_day = settings.get("trade_day")
+			var trade = settings.get("trade_volume")
+			if building.kind != "market" or not trade_day is int or trade_day < 1 or trade_day > w.day or not trade is Dictionary:
+				return invalid("Invalid market trade sample.")
+			if not valid_stock(trade.get("restock")) or not valid_stock(trade.get("retail")):
+				return invalid("Invalid market trade volume.")
+	w.rebuild_building_indexes()
 	for field in ["powered_devices", "ready_drills", "power_output", "visible_tiles"]:
 		for key in root.sample[field]:
 			if not key is Vector2i: return invalid("Invalid step sample position.")
 	for storage in w.inventories():
 		if not storage is Storage or not valid_stock(storage.items) or not is_number(storage.wastewater_load) or storage.wastewater_load < 0:
 			return invalid("Invalid container inventory.")
-	if not w.player_cargo is Dictionary: return invalid("Invalid player cargo.")
-	if not w.player_cargo.is_empty():
-		var goods: Dictionary = w.player_cargo
-		if not (goods.get("item") is int or goods.get("item") is String) or not numeric_fields(goods, ["amount", "pollution"]) or goods.amount <= 0 or goods.pollution < 0 or not goods.get("origin") is Vector2i or not w.terrain.has(goods.origin): return invalid("Invalid held goods.")
 	for cell in w.mining_contracts:
 		var task = w.mining_contracts[cell]
 		if not w.terrain.has(cell) or not valid_task(task) or (task.has("wage") and not valid_wage(task.wage)): return invalid("Invalid mining task.")
 	for building in w.buildings_in("site"):
 		var site: Dictionary = building.state
 		if not valid_task(site) or not valid_stock(site.get("materials")): return invalid("Invalid blueprint.")
-	for building in w.buildings_in("station"):
+	for building in built_buildings(w, "station"):
 		var bench: Dictionary = building.state
 		if not bench is Dictionary or bench.get("kind") not in building_kinds or not bench.get("task") is Dictionary:
 			return invalid("Invalid production facility.")
 		if not bench.task.is_empty() and not valid_task(bench.task): return invalid("Invalid production task.")
 		if bench.kind == "mine" and not bench.task.is_empty() and (not bench.task.get("deposit") is Vector2i or w.deposits.get(bench.task.deposit, 0) <= 0): return invalid("Invalid mine extraction batch.")
 		if bench.has("stock"): return invalid("Production goods must use local inventory.")
-		if not numeric_fields(bench, ["queue", "daily_output", "produced_today", "growth", "water_day"]) or not bench.get("harvest") is bool:
+		if not numeric_fields(bench, ["queue", "growth", "water_day"]) or not bench.get("harvest") is bool:
 			return invalid("Incomplete production facility.")
-		if bench.kind == "recruitment_board":
-			if not valid_wage(bench.get("recruitment_cost")) or not numeric_fields(bench, ["recruitment_elapsed"]) or bench.recruitment_elapsed < 0 or bench.recruitment_elapsed > day_seconds / 4.0 or bench.employee != -1:
-				return invalid("Invalid recruitment board.")
 		if bench.kind == "market":
 			if not bench.get("sell_prices") is Dictionary: return invalid("Missing market prices.")
 			for price in bench.sell_prices.values():
-				if not valid_wage(price) or price <= 0: return invalid("Invalid market price.")
+				if not valid_wage(price): return invalid("Invalid market price.")
 	if not validate_research(w, day_seconds): return false
-	for building in w.buildings_in("bed"):
+	for building in built_buildings(w, "bed"):
 		var bed: Dictionary = building.state
 		if not bed is Dictionary or not numeric_fields(bed, ["remaining", "assigned"]) or not valid_owner(bed.assigned, people): return invalid("Invalid bed.")
-	for building in w.buildings_in("bank"):
+	for building in built_buildings(w, "bank"):
 		var bank: Dictionary = building.state
 		if not bank is Dictionary or not numeric_fields(bank, ["interest_received"]): return invalid("Invalid bank.")
-	for building in w.buildings_in("line"):
+	for building in built_buildings(w, "line"):
 		var line: Dictionary = building.state
 		if not line is Dictionary or line.get("kind") not in ["high_line", "low_line"] or not line.get("axis") is Vector2i or not valid_stock(line.get("materials")): return invalid("Invalid power line.")
-	for building in w.buildings_in("belt"):
+	for building in built_buildings(w, "belt"):
 		var belt: Dictionary = building.state
 		if not belt is Dictionary or not belt.get("direction") is Vector2i or not belt.get("inputs") is Array or not belt.get("last_input") is int or not valid_stock(belt.get("materials")): return invalid("Invalid conveyor.")
 	var task_ids: Dictionary = {}
@@ -358,6 +395,22 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 		task_ids[shipment.id] = true
 		if shipment.receiver_id >= 0 and shipment.amount != 1.0: return invalid("Supply requests must contain exactly one item.")
 		if shipment.receiver_id >= 0 and (not w.buildings.has(shipment.receiver_id) or w.building_map.origin(shipment.receiver_id) != shipment.target): return invalid("Invalid delivery receiver.")
+		if shipment.has("purchase_price"):
+			if not shipment.bound or shipment.receiver_id < 0 or not is_number(shipment.purchase_price) or shipment.purchase_price <= 0.0: return invalid("Invalid commercial delivery quote.")
+		if shipment.has("freight"):
+			var freight = shipment.freight
+			if not shipment.has("purchase_price") or not freight is Dictionary or not numeric_fields(freight, ["amount", "hours"]) or freight.amount < 0.0 or freight.hours < 0.0:
+				return invalid("Invalid freight wage.")
+			if not freight.get("worker") is int or (not people.has(freight.worker) and not w.estates.has(freight.worker)):
+				return invalid("Invalid freight wage recipient.")
+		if shipment.has("payment"):
+			var payment = shipment.payment
+			if not shipment.picked or not shipment.has("purchase_price") or not payment is Dictionary or not numeric_fields(payment, ["amount"]) or payment.amount <= 0.0:
+				return invalid("Invalid unsettled trade.")
+			for party in ["buyer", "seller"]:
+				var owner = payment.get(party)
+				if not is_same(owner, "player") and (not owner is int or (not people.has(owner) and not w.estates.has(owner))):
+					return invalid("Invalid unsettled trade account.")
 		if not shipment.bound and (shipment.owner != -1 or shipment.picked or not shipment.handle.is_empty() or shipment.receiver_id < 0): return invalid("Unbound delivery request contains goods or an owner.")
 		if shipment.owner >= 0:
 			var handle: Dictionary = shipment.handle
@@ -385,8 +438,8 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 		if active is Work or active is Delivery:
 			if not active.record is Record or active.record._values.get("kind") != person.skill:
 				return invalid("Active task does not match resident work type.")
-		if person.get("loan_bank") != null and (not person.loan_bank is int or not w.buildings.has(person.loan_bank) or not w.buildings[person.loan_bank].in_group("bank")): return invalid("Invalid creditor building.")
-		if not numeric_fields(person, ["age_days", "mood_integral", "mood_seconds"]) or person.age_days < 0 or person.age_days >= 45 or person.mood_seconds < 0 or person.mood_seconds > day_seconds + 0.000001 or not person.get("happy_days") is int or person.happy_days < 0 or person.happy_days >= 3 or not person.get("producer") is int or person.producer < -1 or person.producer >= w.next_worker_id or person.producer == person.id:
+		if person.get("loan_bank") != null and (not person.loan_bank is int or not w.buildings.has(person.loan_bank) or not (w.buildings[person.loan_bank].in_group("bank") or (w.buildings[person.loan_bank].phase == Building.Phase.DEMOLISHING and w.buildings[person.loan_bank].kind == "bank"))): return invalid("Invalid creditor building.")
+		if not numeric_fields(person, ["age_days", "mood_integral", "mood_seconds", "residence_seconds", "discontent_seconds"]) or person.residence_seconds < 0 or person.discontent_seconds < 0 or person.discontent_seconds > day_seconds * 4.0 + 0.000001 or person.age_days < 0 or person.age_days >= 45 or person.mood_seconds < 0 or person.mood_seconds > day_seconds + 0.000001 or not person.get("happy_days") is int or person.happy_days < 0 or person.happy_days >= 3 or not person.get("producer") is int or person.producer < -1 or person.producer >= w.next_worker_id or person.producer == person.id:
 			return invalid("Invalid worker life history.")
 		for field in ["money", "earned_today", "eaten_today", "hunger", "meal_food", "bed_spent_today", "shop_spent_today", "fatigue", "gun_uses", "backpack_uses", "water", "pollution", "clothes_pollution", "loan_principal", "loan_interest", "loan_day", "unloaded_this_trip", "payroll"]:
 			if not person.get(field) is float and not person.get(field) is int: return invalid("Missing worker balance or condition.")
@@ -395,6 +448,14 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 		for field in ["items", "equipment"]:
 			if not person.get(field) is Dictionary: return invalid("Missing worker inventory.")
 		if not valid_stock(person.items) or not valid_stock(person.equipment): return invalid("Invalid personal inventory.")
+		var trade_cargo = person.get("trade_cargo", [])
+		if not trade_cargo is Array or trade_cargo.size() > 4 or (not trade_cargo.is_empty() and person.skill != WorkTypes.LOGISTICS):
+			return invalid("Invalid personal trade cargo.")
+		for goods in trade_cargo:
+			if not goods is Dictionary or not numeric_fields(goods, ["amount", "pollution"]) or goods.amount != 1.0 or goods.pollution < 0.0:
+				return invalid("Invalid personal trade cargo.")
+			var item = goods.get("item")
+			if not (item is int or item is String) or is_same(item, "money"): return invalid("Invalid personal trade good.")
 		if person.activity.previous_limits < 0 or person.activity.previous_limits > 7:
 			return invalid("Invalid worker need limits.")
 		if not person.get("delivery_tasks") is Array: return invalid("Missing worker delivery tasks.")
@@ -403,6 +464,15 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 			if person.skill != WorkTypes.LOGISTICS or not valid_delivery_task(task, people): return invalid("Invalid carried freight.")
 			if not task.bound or task.owner != person.id or task.get("on_belt", false) or not w.delivery_tasks.any(func(other): return is_same(other, task)) or carried_ids.has(task.id): return invalid("Carried goods are not bound to their worker's task.")
 			carried_ids[task.id] = true
+		var trade_lot: Array = person.delivery_tasks.filter(func(task): return task.has("resale_price"))
+		if not trade_lot.is_empty():
+			var first: Dictionary = trade_lot[0]
+			if trade_lot.size() != person.delivery_tasks.size() or trade_lot.size() + trade_cargo.size() > 4:
+				return invalid("Invalid carried trade lot.")
+			for task in trade_lot:
+				if (task.source != first.source or task.target != first.target or not is_same(task.item, first.item)
+						or task.resale_price != first.resale_price or task.picked != first.picked):
+					return invalid("Inconsistent carried trade lot.")
 		if not person.get("extra_cargo") is Array or not (is_same(person.get("carry"), 0) or valid_mined_item(person.get("carry"))) or not person.get("color") is Color or not person.get("facing") is float or not person.has("loan_bank"):
 			return invalid("Incomplete worker state.")
 		for item in person.extra_cargo:
@@ -424,17 +494,27 @@ func validate(root, building_kinds: Array, day_seconds: float) -> bool:
 				return invalid("Invalid chosen activity.")
 			if WorkTypes.NAMES.has(values.get("kind")):
 				var method = values.data.get("method")
-				if method not in ["build", "produce", "operate", "deliver"]: return invalid("Invalid work method.")
-				if method in ["build", "deliver"] and values.kind != WorkTypes.LOGISTICS: return invalid("Invalid logistics work type.")
+				if method not in ["build", "demolish", "produce", "operate", "deliver"]: return invalid("Invalid work method.")
+				if method in ["build", "demolish", "deliver"] and values.kind != WorkTypes.LOGISTICS: return invalid("Invalid logistics work type.")
+				if method == "demolish" and (not values.data.get("building_id") is int or values.data.building_id < 0): return invalid("Invalid demolition target.")
 				if method == "operate" and (not values.data.has("job") or (values.data.job != null and not values.data.job is Vector2i)): return invalid("Invalid operation target.")
 				if values.data.has("project") and not Technology.PROJECTS.has(values.data.project): return invalid("Invalid research target.")
 				continue
-			if values.get("kind") not in ["eat", "sleep", "rest", "use_item", "service", "purchase", "borrow", "payroll"]:
+			if values.get("kind") not in ["eat", "sleep", "rest", "use_item", "service", "purchase", "borrow", "payroll", "emigrate"]:
 				return invalid("Invalid chosen activity.")
 			var required: Array = Record.PARAMETER_KEYS.get(values.kind, [])
 			for field in required:
 				if field not in ["canteen", "mined"] and not values.data.has(field): return invalid("Missing activity parameter.")
 	return true
+
+func built_buildings(w: WorldState, group: String) -> Array:
+	var result: Array = w.buildings_in(group)
+	for building in w.buildings_in("site"):
+		if building.phase != Building.Phase.DEMOLISHING: continue
+		var original := Building.new()
+		original.complete(building.state.original)
+		if original.in_group(group): result.append(original)
+	return result
 
 func validate_buildings(w: WorldState, building_kinds: Array) -> bool:
 	if not w.building_map is BuildingMap or w.next_building_id < 0 or w.building_map.placements.size() != w.buildings.size():
@@ -442,11 +522,16 @@ func validate_buildings(w: WorldState, building_kinds: Array) -> bool:
 	var containers: Dictionary = {}
 	for id in w.buildings:
 		var building = w.buildings[id]
-		if not id is int or id < 0 or id >= w.next_building_id or not building is Building or building.id != id or not building.state is Dictionary or building.kind not in building_kinds or building.phase not in [Building.Phase.BLUEPRINT, Building.Phase.BUILT, Building.Phase.RECOVERING]:
+		if not id is int or id < 0 or id >= w.next_building_id or not building is Building or building.id != id or not building.state is Dictionary or building.kind not in building_kinds or building.phase not in [Building.Phase.BLUEPRINT, Building.Phase.BUILT, Building.Phase.RECOVERING, Building.Phase.DEMOLISHING]:
 			return invalid("Invalid building entity.")
 		if not building.inventory is Storage or containers.has(building.inventory.get_instance_id()): return invalid("Shared building inventory.")
 		containers[building.inventory.get_instance_id()] = true
 		if building.phase == Building.Phase.RECOVERING and not building.state.get("cancelled", false): return invalid("Invalid building recovery phase.")
+		if building.phase == Building.Phase.DEMOLISHING:
+			var original = building.state.get("original")
+			if not original is Dictionary or original.get("kind") != building.kind or original.has("original") or original.get("employee", -1) != -1 or original.get("cancelled", false) or not valid_task(building.state) or not building.state.get("materials") is Dictionary or not building.state.materials.is_empty(): return invalid("Invalid demolition task.")
+			if original.has("wage") and not valid_wage(original.wage): return invalid("Invalid original wage.")
+			if original.has("fee") and (not valid_wage(original.fee) or original.fee < 1): return invalid("Invalid original fee.")
 		var placement = w.building_map.placements.get(id)
 		if not placement is Dictionary or not placement.get("origin") is Vector2i or not placement.get("cells") is Array or placement.cells.is_empty() or not placement.cells.has(placement.origin):
 			return invalid("Invalid building placement.")
@@ -470,7 +555,7 @@ func validate_research(w: WorldState, day_seconds: float) -> bool:
 		if points > 0:
 			for required in Technology.PROJECTS[project].requires:
 				if not Technology.completed(w.research_progress, required): return invalid("Missing research prerequisite.")
-	for building in w.buildings_in("station"):
+	for building in built_buildings(w, "station"):
 		var bench: Dictionary = building.state
 		if bench.kind != "research_bench": continue
 		if not bench.get("research") is String or not bench.get("research_tasks") is Dictionary:
@@ -512,7 +597,7 @@ func valid_stock(value) -> bool:
 	return true
 
 func valid_task(value) -> bool:
-	return value is Dictionary and numeric_fields(value, ["progress", "seconds"]) and value.seconds > 0 and value.progress >= 0 and (not value.has("volunteer_work") or (is_number(value.volunteer_work) and value.volunteer_work >= 0 and value.volunteer_work <= value.progress + 0.000001)) and (not value.has("reward") or (numeric_fields(value, ["reward", "paid"]) and value.reward > 0))
+	return value is Dictionary and numeric_fields(value, ["progress", "seconds"]) and value.seconds > 0 and value.progress >= 0 and (not value.has("reward") or (numeric_fields(value, ["reward", "paid"]) and value.reward > 0))
 
 func valid_owner(value, people: Dictionary) -> bool:
 	return value is int and (value == -1 or people.has(value))
@@ -528,6 +613,10 @@ func valid_delivery_task(value, people: Dictionary) -> bool:
 	if not value.get("bound") is bool or not value.get("picked") is bool or (value.picked and not value.bound):
 		return false
 	if (value.bound and not value.get("source") is Vector2i) or (not value.bound and value.get("source") != null):
+		return false
+	if value.has("resale_price") and (not is_number(value.resale_price) or value.resale_price <= 0 or not value.bound
+			or value.owner < 0 or value.get("receiver_id", -1) < 0 or value.has("purchase_price")
+			or value.has("payment") or value.has("freight") or value.get("on_belt", false)):
 		return false
 	return value.get("receiver_id") is int and value.receiver_id >= -1 and value.get("handle") is Dictionary and (not value.has("pollution") or is_number(value.pollution))
 

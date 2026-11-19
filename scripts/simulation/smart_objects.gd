@@ -70,7 +70,7 @@ func register_building(entity, p: Vector2i, primary: bool) -> void:
 		unregister(id)
 		return
 	var blueprint: bool = entity.in_group("site")
-	var definition = definitions.blueprints[entity.kind] if blueprint else definitions.buildings[entity.kind]
+	var definition = definitions.demolitions[entity.kind] if entity.phase == entity.Phase.DEMOLISHING else definitions.blueprints[entity.kind] if blueprint else definitions.buildings[entity.kind]
 	var object = bind_instance(id, definition, entity.state, p)
 	var present: Dictionary = {}
 	for interaction in definition.interactions:

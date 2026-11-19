@@ -8,6 +8,7 @@ static func task(e, op: Dictionary) -> Dictionary:
 	match op.data.method:
 		"mine": return g.world.mining_contracts[op.target]
 		"build": return g.world.building_state(op.target, "site")
+		"demolish": return op.data.identity
 		"operate":
 			if op.data.get("job") != null: return g.world.mining_contracts[op.data.job]
 	return g.world.building_state(op.target, "station").task
@@ -25,7 +26,7 @@ static func profile(e, op: Dictionary) -> Dictionary:
 	var rate: float = maxf(0.001, w.buffs.work_rate(g, w, method, kind))
 	var reward: float = seconds / g.HOUR_SECONDS * g.labor_wage(method, op.target, contract)
 	var funding: float = op.get("funding", w.payroll if w.payroll > 0.000001 else g.PAYROLL_COLLECTION)
-	var goal: float = minf(seconds, (contract.get("paid", 0.0) + funding) / reward * seconds + contract.get("volunteer_work", 0.0)) if reward > 0 else seconds
+	var goal: float = minf(seconds, (contract.get("paid", 0.0) + funding) / reward * seconds) if reward > 0 else seconds
 	# Bound the estimate without imposing an execution or interruption timer.
 	var remaining: float = minf(maxf(0, goal - progress), P.LABOR_EVALUATION_HOURS * g.HOUR_SECONDS * rate)
 	return {"hours": remaining / rate / g.HOUR_SECONDS, "wage": reward * remaining / seconds,

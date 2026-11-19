@@ -12,12 +12,13 @@ const BUILD_CATEGORIES := {
 	"power": {"name": "电力", "icon": "electricity", "kinds": ["manual_generator", "power_plant", "low_line", "high_line", "transformer"]},
 	"logistics": {"name": "物流", "icon": "freight", "kinds": ["market", "storage_box", "belt", "electric_belt"]},
 	"life": {"name": "生活与环境", "icon": "furniture", "kinds": ["wall", "fence", "door", "bed", "canteen", "fountain", "spotlight", "daylight", "bathhouse", "laundry", "hospital"]},
-	"society": {"name": "人口金融与科研", "icon": "population-finance", "kinds": ["recruitment_board", "research_bench", "printer", "bank"]},
+	"society": {"name": "人口金融与科研", "icon": "population-finance", "kinds": ["research_bench", "printer", "bank"]},
 }
 
 var game: Node
-@onready var market_controls: VBoxContainer = %MarketControls
+@onready var market_controls: GridContainer = %MarketControls
 var market_inputs: Dictionary = {}
+var market_items: Dictionary = {}
 var market_target = null
 var report_window: Window
 @onready var day_clock: Control = %DayClock
@@ -231,13 +232,22 @@ func update_entity_panel() -> void:
 		if focused != null and market_controls.is_ancestor_of(focused): focused.release_focus()
 		market_target = next_market
 	if market_controls.visible:
+		var editable := is_same(game.proprietor_at(p), "player")
+		var owned: Dictionary = game.player_inventory() if editable else game.storage_contents(p)
 		for item in market_inputs:
 			var input: SpinBox = market_inputs[item]
+			var row: HBoxContainer = market_items[item]
 			var price: float = game.market_price(p, item)
-			if not input.get_line_edit().has_focus() and not is_equal_approx(input.value, price): input.set_value_no_signal(price)
-	fee_details.text = game.building_fee_text(game.building_kind(p), p) if game.interaction.selected_worker < 0 and game.interaction.selected_tile == null else ""
+			input.step = 1.0 if editable else 0.05
+			var listed: bool = owned.get(item, 0.0) > 0.000001 or (not editable and price > 0.0)
+			row.visible = listed
+			input.visible = listed
+			input.editable = editable
+			row.get_node("Quantity").text = InspectorIcons.quantity_text(game.stock_at(p, item))
+			if (not editable or not input.get_line_edit().has_focus()) and not is_equal_approx(input.value, price): input.set_value_no_signal(price)
+	fee_details.text = game.building_fee_text(game.building_kind(p), p) if game.interaction.selected_worker < 0 and game.interaction.selected_tile == null and (game.selected_building() == null or game.selected_building().phase != game.WorldState.Building.Phase.DEMOLISHING) else ""
 	fee_controls.visible = not fee_details.text.is_empty()
-	fee_selector.visible = fee_controls.visible and not game.fee_settings(p).is_empty()
+	fee_selector.visible = fee_controls.visible and not game.fee_settings(p).is_empty() and is_same(game.proprietor_at(p), "player")
 	if fee_selector.visible:
 		var kind: String = game.building_kind(p)
 		fee_details.text = {"bed": "床费", "service": "服务费", "goods": "售价"}[game.fee_kind(kind)]
@@ -246,22 +256,17 @@ func update_entity_panel() -> void:
 			for button in fee_selector.buttons.values():
 				button.tooltip_text += "\n当前售价  %s 货币" % String.num(game.sale_price(p), 2)
 	var settings: Dictionary = game.selected_wage_settings()
-	var recruitment: Dictionary = game.recruitment_settings(p) if game.interaction.selected_worker < 0 and game.interaction.selected_tile == null else {}
-	wage_controls.visible = not settings.is_empty() or not recruitment.is_empty()
-	if not recruitment.is_empty():
-		wage_caption.text = "招募费用"
-		wage_selector.sync(recruitment.recruitment_cost, "居民到达时扣除木牌库存中的金币", "金币 / 人")
-		wage_selector.buttons[0].tooltip_text = "关闭招募"
-	elif not settings.is_empty():
-		wage_caption.text = "建造时薪" if game.world.has_building(p, "site") else ("挖掘时薪" if game.interaction.selected_tile != null else "时薪")
+	wage_controls.visible = not settings.is_empty()
+	if not settings.is_empty():
+		wage_caption.text = "拆除时薪" if game.selected_building() != null and game.selected_building().phase == game.WorldState.Building.Phase.DEMOLISHING else "建造时薪" if game.world.has_building(p, "site") else ("挖掘时薪" if game.interaction.selected_tile != null else "时薪")
 		wage_selector.sync(settings.get("wage", game.WAGE_PER_HOUR), game.selected_wage_tooltip())
 	update_entity_icons()
 	entity_details.visible = true
 	move_drill.visible = game.interaction.selected_worker < 0 and game.world.has_building(p, "station") and game.building_kind(p) == "drill"
-	production_controls.visible = game.interaction.selected_worker < 0 and game.world.has_building(p, "station") and game.PRODUCTS.has(game.building_kind(p))
+	production_controls.visible = game.interaction.selected_worker < 0 and game.world.has_building(p, "station") and game.building_kind(p) == "printer"
 	research_choice.visible = game.interaction.selected_worker < 0 and game.world.has_building(p, "station") and game.building_kind(p) == "research_bench"
 	if research_choice.visible: sync_research_choice(p)
-	bed_assignment.visible = game.interaction.selected_worker < 0 and game.world.has_building(p, "bed")
+	bed_assignment.visible = game.interaction.selected_worker < 0 and game.world.has_building(p, "bed") and is_same(game.proprietor_at(p), "player")
 	if bed_assignment.visible:
 		var people: Array = game.known_workers()
 		if bed_assignment.item_count != people.size() + 1 or people.any(func(w): return bed_assignment.get_item_index(w.id + 1) < 0):
@@ -295,8 +300,14 @@ func update_entity_panel() -> void:
 		var state_name: String = game.action_for(w)
 		if w.state == "rest":
 			state_name = "闲逛"
+		elif w.state == "to_emigrate":
+			state_name = "离开地区"
 		elif w.state == "to_bed":
 			state_name = "前往床位"
+		elif w.state == "to_demolish":
+			state_name = "前往拆除"
+		elif w.state == "demolish":
+			state_name = "拆除"
 		elif w.state == "to_build":
 			state_name = "前往工地"
 		elif w.state == "build":
@@ -341,7 +352,7 @@ func update_entity_panel() -> void:
 			progress = w.progress / game.mining_seconds(w.job)
 		elif w.state in ["gather", "hunt"]:
 			progress = w.progress / game.HOUR_SECONDS
-		elif w.state == "build" and game.world.has_building(w.building, "site"):
+		elif w.state in ["build", "demolish"] and game.world.has_building(w.building, "site"):
 			progress = game.world.building_state(w.building, "site").progress / game.world.building_state(w.building, "site").seconds
 		elif w.state == "eat":
 			progress = w.progress / game.MEAL_SECONDS
@@ -364,12 +375,18 @@ func update_entity_panel() -> void:
 	if not entity_panel.visible:
 		game.interaction.selected_entity = null
 		return
-	if game.interaction.selected_line and game.world.has_building(p, "line") and not game.world.has_building(p, "site"):
+	var selected = game.selected_building()
+	if selected != null and selected.phase == game.WorldState.Building.Phase.DEMOLISHING:
+		var task: Dictionary = selected.state
+		entity_title.text = game.building_name(selected.kind) + (" · 待拆除" if task.progress <= 0 else " · 拆除中")
+		entity_details.text = "%s\n工时  %s / %sh" % [game.operator_name("demolish_line" if game.interaction.selected_line else "demolish", p, "等待工人"), String.num(task.progress / game.HOUR_SECONDS, 2), String.num(task.seconds / game.HOUR_SECONDS, 2)]
+		return
+	if game.interaction.selected_line and game.world.has_building(p, "line"):
 		var kind: String = game.world.building_state(p, "line").kind
 		entity_title.text = game.building_name(kind)
 		entity_details.text = game.building_effects_text(kind, p, false)
 		return
-	if game.world.has_building(p, "belt") and not game.world.has_building(p, "site"):
+	if selected != null and selected.kind in game.BELT_KINDS and selected.phase == game.WorldState.Building.Phase.BUILT:
 		var belt_kind: String = game.building_kind(p)
 		entity_title.text = game.building_name(belt_kind)
 		var destination = game.belt_destination(p)
@@ -420,11 +437,6 @@ func update_entity_panel() -> void:
 				status += "\n输出  %.0fW" % game.cache.power_output.get(p, 0.0)
 			elif kind == "canteen":
 				status = "用餐中" if game.world.workers.any(func(w): return game.worker_display(w).canteen == p) else "空闲"
-			elif kind == "recruitment_board":
-				if bench.recruitment_cost == 0:
-					status = "已关闭"
-				else:
-					status = "金币不足" if game.stock_at(p, "money") < bench.recruitment_cost else "招工中"
 			elif kind == "storage_box" or kind in game.BARRIER_KINDS:
 				status = ""
 			elif game.SERVICES.has(kind):
@@ -437,8 +449,7 @@ func update_entity_panel() -> void:
 		var product: Dictionary = game.PRODUCTS[kind]
 		entity_title.text = game.building_name(kind)
 		var status := "空闲"
-		if game.uses_daily_output(kind) and bench.task.is_empty() and not game.has_production_order(p):
-			status = "已停产" if bench.daily_output == 0 else "今日已完成"
+		if bench.wage == 0: status = "已停产"
 		if game.has_production_order(p) and bench.task.is_empty() and bench.growth <= 0 and not game.recipe_ready(p, game.production_materials(kind)):
 			var missing: Array[String] = []
 			for item in game.production_materials(kind):
@@ -464,12 +475,7 @@ func update_entity_panel() -> void:
 		if effects != "":
 			entity_details.text += "\n\n" + effects
 		add_order.disabled = false
-		if game.uses_daily_output(kind):
-			queue_count.text = "每日产出 %d%s" % [bench.daily_output, product.unit]
-			remove_order.disabled = bench.daily_output == 0
-			remove_order.tooltip_text = "每日产出 −%d%s" % [product.get("amount", 1), product.unit]
-			add_order.tooltip_text = "每日产出 +%d%s" % [product.get("amount", 1), product.unit]
-		else:
+		if kind == "printer":
 			queue_count.text = "待制  %d" % bench.queue
 			remove_order.disabled = bench.queue <= (0 if bench.task.is_empty() else 1)
 			remove_order.tooltip_text = "减少一%s%s" % [product.unit, product.name]
@@ -564,10 +570,8 @@ func update_entity_icons() -> void:
 	elif game.interaction.selected_tile != null:
 		p = game.interaction.selected_tile
 		items = inventory_entries(game.storage_contents(p), {})
-	if game.interaction.selected_worker < 0 and p != null:
-		for entry in items:
-			if game.player_pickup_amount(p, entry.id) > 0:
-				entry.take = game.begin_player_drag.bind(p, entry.id)
+	if market_controls.visible:
+		items = items.filter(func(entry): return is_same(entry.id, "money"))
 	inventory_icons.sync(items)
 	effect_icons.sync(effects)
 	effect_separator.visible = not items.is_empty() and not effects.is_empty()
@@ -708,16 +712,22 @@ func build_ui(controller: Node) -> void:
 		icon.tooltip_text = game.item_name(item)
 		row.add_child(icon)
 		var price := SpinBox.new()
-		price.min_value = 1
+		price.min_value = 0
 		price.max_value = game.MAX_WAGE
 		price.step = 1
 		price.custom_minimum_size.x = 88
 		price.prefix = "↑"
-		price.tooltip_text = "出售价"
+		price.tooltip_text = "出售价 · 0 不出售"
 		price.value_changed.connect(func(value: float):
 			if market_target != null: game.set_market_price(market_target, item, value))
-		row.add_child(price)
+		var quantity := Label.new()
+		quantity.name = "Quantity"
+		quantity.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(quantity)
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		market_controls.add_child(row)
+		market_controls.add_child(price)
+		market_items[item] = row
 		market_inputs[item] = price
 	effect_icons.show_quantities = false
 	%InspectorClose.pressed.connect(game.clear_entity_selection)

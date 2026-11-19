@@ -246,7 +246,7 @@ expand_icon = true
 unique_name_in_owner = true
 custom_minimum_size = Vector2(46, 40)
 layout_mode = 2
-tooltip_text = "取消（C）"
+tooltip_text = "取消蓝图或未开工的拆除（C）"
 focus_mode = 0
 theme_override_constants/icon_max_width = 28
 toggle_mode = true
@@ -257,7 +257,7 @@ expand_icon = true
 unique_name_in_owner = true
 custom_minimum_size = Vector2(46, 40)
 layout_mode = 2
-tooltip_text = "拆除（X）"
+tooltip_text = "标记拆除（X）"
 focus_mode = 0
 theme_override_constants/icon_max_width = 28
 toggle_mode = true
@@ -493,11 +493,13 @@ theme_override_constants/h_separation = 8
 theme_override_constants/v_separation = 8
 script = ExtResource("19_flipt")
 
-[node name="MarketControls" type="VBoxContainer" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails" unique_id=133682256]
+[node name="MarketControls" type="GridContainer" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails" unique_id=133682256]
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
-theme_override_constants/separation = 4
+theme_override_constants/h_separation = 16
+theme_override_constants/v_separation = 6
+columns = 2
 
 [node name="EffectSeparator" type="HSeparator" parent="Screen/EntityPanel/VBoxContainer0/ScrollContainer2/InspectorDetails" unique_id=1018027371]
 unique_name_in_owner = true

@@ -6,7 +6,7 @@ var fatigue_factor := 1.0
 func enter(g, w: Dictionary, proposal) -> bool:
 	if w.skill != proposal.kind: return false
 	if not super.enter(g, w, proposal): return false
-	return g.employ(w, record.target)
+	return g.employ(w, record.target, record.data.get("building_id", -1))
 
 func exit(g, w: Dictionary, reason: String) -> void:
 	g.settle_labor(w, segment, reason)

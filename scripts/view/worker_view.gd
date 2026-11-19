@@ -1,8 +1,8 @@
 extends Area2D
 
 const Art = preload("res://scripts/view/art.gd")
-const WALK_STATES := ["walk", "haul", "to_build", "to_bed", "to_meal", "to_work", "to_shop",
-	"freight_pickup", "freight_dropoff", "to_payroll", "to_bank", "to_service"]
+const WALK_STATES := ["walk", "haul", "to_build", "to_demolish", "to_bed", "to_meal", "to_work", "to_shop",
+	"freight_pickup", "freight_dropoff", "to_payroll", "to_bank", "to_service", "to_emigrate"]
 const FOOD := ["berries", "meat", "wheat", "bread"]
 var trading := false
 var trade_item = null
@@ -65,7 +65,7 @@ func select_action(w: Dictionary, work_active: bool, walking: bool) -> StringNam
 	if trading: return &"trade_buy" if trade_buying else &"trade_sell"
 	match w.state:
 		"sleep": return &"sleep"
-		"build": return &"build"
+		"build", "demolish": return &"build"
 		"work":
 			if not work_active: return &"idle"
 			match w.get("work_kind", ""):

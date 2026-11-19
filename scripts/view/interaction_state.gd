@@ -29,8 +29,6 @@ var selected_entity = null
 var selected_tile = null
 var selected_worker := -1
 var demolition_pick: Dictionary = {}
-var action_press: Dictionary = {}
-var item_dragging := false
 
 func reset() -> void:
 	view_origin = Vector2i.ZERO
@@ -61,5 +59,3 @@ func reset() -> void:
 	selected_tile = null
 	selected_worker = -1
 	demolition_pick.clear()
-	action_press.clear()
-	item_dragging = false

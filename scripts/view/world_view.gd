@@ -68,22 +68,6 @@ func pointer_texture() -> Texture2D:
 	var tool: String = game.interaction.tool
 	if tool in ["cancel", "demolish", "wage", "fee"]:
 		return Art.texture("res://assets/icons/%s.svg" % tool)
-	if tool != "dig" or not is_instance_valid(hovered) or not hovered.input_pickable or hovered.get_meta("worker_id", -1) >= 0 or not game.cache.visible_tiles.has(game.mouse_tile()):
-		return null
-	var p = hovered.get_meta("entity", game.mouse_tile())
-	var kind: String = game.building_kind(p)
-	if item_nodes.get(p) == hovered:
-		return Art.texture("res://assets/cursors/hand.svg")
-	elif game.world.has_building(p, "site"):
-		return null if game.world.building_state(p, "site").get("cancelled", false) else Art.texture("res://assets/icons/tools.svg")
-	elif game.has_job(kind):
-		var icon := "pickaxe" if kind in ["mine", "drill"] else "tools"
-		return Art.texture("res://assets/icons/%s.svg" % icon)
-	elif hovered == $GroundInput:
-		if game.can_hand_harvest(p):
-			return Art.texture("res://assets/cursors/hand.svg")
-		elif game.world.deposits.get(p, 0) > 0 and game.world.terrain.get(p, 0) in game.SmartObjectDefinitions.MINERALS:
-			return Art.texture("res://assets/icons/pickaxe.svg")
 	return null
 
 func _process(delta: float) -> void:
@@ -476,7 +460,7 @@ func sync_buildings(nearby_workers: Array[Dictionary]) -> void:
 		shown[id] = true
 		var node: Area2D = nodes[id]
 		var can_pick: bool = game.cache.visible_tiles.has(p)
-		var progress: float = entity.state.progress / entity.state.seconds if entity.in_group("site") else 1.0
+		var progress: float = entity.state.progress / entity.state.seconds if entity.phase in [game.WorldState.Building.Phase.BLUEPRINT, game.WorldState.Building.Phase.RECOVERING] else 1.0
 		node.set_progress(progress)
 		var moved: bool = node.get_meta("entity", null) != p
 		if fresh or moved:
@@ -513,7 +497,7 @@ func sync_demands(node: Area2D, entity, deliveries: Dictionary, can_pick: bool) 
 			if entity.in_group("site"): amounts[item] = ceili(deliveries[item] - 0.000001)
 		var work_type: String = game.world.smart_objects.building_labor_demand(entity.id)
 		if work_type != "":
-			var icon: String = "tools" if entity.in_group("site") else FACILITY_LABOR_ICONS.get(entity.kind, LABOR_ICONS[work_type])
+			var icon: String = "demolish" if entity.phase == game.WorldState.Building.Phase.DEMOLISHING else "tools" if entity.in_group("site") else FACILITY_LABOR_ICONS.get(entity.kind, LABOR_ICONS[work_type])
 			entries.append(StringName(icon))
 	node.set_shortages(entries, amounts)
 
@@ -607,9 +591,9 @@ func sync_dynamic() -> void:
 			selection_frame.size = selected_bounds.size
 		else:
 			selection_frame.hide()
-	elif game.interaction.selected_line and game.world.has_building(p, "line"):
+	elif game.interaction.selected_line and game.building_on_layer(p, true) != null:
 		selection_frame.position = game.tile_corner(p)
-		selection_frame.size = game.building_size(p, game.world.building_state(p, "line", game.world.building_state(p, "site", {})).kind)
+		selection_frame.size = game.building_size(p, game.building_on_layer(p, true).kind)
 	elif game.world.has_building(p, "bed") or game.world.has_building(p, "site") or game.world.has_building(p, "station") or game.world.has_building(p, "bank") or game.world.has_building(p, "belt"):
 		selection_frame.position = game.tile_corner(p)
 		selection_frame.size = game.building_size(p, game.building_kind(p))

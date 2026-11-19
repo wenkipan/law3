@@ -104,12 +104,7 @@ func hold_world(point: Vector2, seconds: float) -> void:
 
 func begin_hold_world(point: Vector2) -> void:
 	await press_world(point)
-	var ready_at := Time.get_ticks_usec() + int(game.HOLD_DELAY * 1000000) + 1000
-	await tree.create_timer(game.HOLD_DELAY, true, false, true).timeout
-	# A timer may expire on the frame containing its deadline, before the OS clock
-	# crosses it. The actual gesture threshold uses that clock, not scaled delta.
-	while Time.get_ticks_usec() < ready_at:
-		await tree.process_frame
+	await tree.create_timer(0.3, true, false, true).timeout
 
 func press_key(code: Key) -> void:
 	var event := InputEventKey.new()

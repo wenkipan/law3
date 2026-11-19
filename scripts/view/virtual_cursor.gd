@@ -7,7 +7,6 @@ const Art = preload("res://scripts/view/art.gd")
 @onready var hud: CanvasLayer = game.get_node("UI")
 @onready var pointer: Node2D = $Pointer
 @onready var icon: Sprite2D = $Pointer/Icon
-@onready var motion: AnimationPlayer = $Pointer/AnimationPlayer
 var previous_mouse_mode := Input.MOUSE_MODE_VISIBLE
 var inside_window := true
 
@@ -30,11 +29,8 @@ func sync_cursor() -> void:
 	pointer.position = mouse
 	var texture: Texture2D
 	var hotspot := Vector2(16, 16)
-	var working := false
 	var control := get_viewport().gui_get_hovered_control()
-	if not game.world.player_cargo.is_empty():
-		texture = Art.item_texture(game.world.player_cargo.item)
-	elif control != null or hud.blocks_simulation():
+	if control != null or hud.blocks_simulation():
 		var shape: int = control.get_cursor_shape(control.get_local_mouse_position()) if control != null else Input.get_current_cursor_shape()
 		match shape:
 			Input.CURSOR_IBEAM:
@@ -49,17 +45,9 @@ func sync_cursor() -> void:
 	else:
 		texture = world_view.pointer_texture()
 		if texture == Art.texture("res://assets/cursors/hand.svg"): hotspot = Vector2(11, 3)
-		working = texture != null and not game.player_work.is_empty() and not get_tree().paused
 	if texture == null:
 		texture = Art.texture("res://assets/cursors/arrow.svg")
 		hotspot = Vector2(3, 2)
 	icon.texture = texture
 	icon.scale = Vector2.ONE * 32.0 / maxf(texture.get_width(), texture.get_height())
 	icon.position = -hotspot
-	# The clip only animates the pointer transform, never input or labor progress.
-	motion.speed_scale = 1.0 / Engine.time_scale
-	if working and pointer.visible:
-		if not motion.is_playing(): motion.play(&"work")
-	else:
-		if motion.is_playing(): motion.stop()
-		pointer.rotation = 0.0

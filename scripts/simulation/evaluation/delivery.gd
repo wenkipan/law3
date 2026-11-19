@@ -24,6 +24,8 @@ static func evaluate(e, op: Dictionary) -> Dictionary:
 	travel.path = route
 	travel.position = route.back() if not route.is_empty() else op.position
 	var f: Dictionary = e.environment.estimate(travel, 0.6 * items.size() / g.HOUR_SECONDS if mined else 0.0)
+	if op.data.get("trade", false):
+		return e.result(f, {"income": op.data.income})
 	var required: Dictionary = g.delivery_requirements(target)
 	var coverage := 0.0
 	var generic_amount := 0.0

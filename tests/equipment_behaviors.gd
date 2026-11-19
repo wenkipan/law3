@@ -67,6 +67,7 @@ func check_loans(t) -> void:
 	var g = t.game
 	market_fixture(t, "A staffed bank funds an actual compatible-food purchase without minting money")
 	t.fixtures.stock_recipe(g.BASE, {"wheat": 8})
+	g.set_market_price(g.BASE, "wheat", 2)
 	t.fixtures.station("bank", P)
 	t.fixtures.resident("operations", P)
 	t.fixtures.stock_recipe(g.BASE, {"money": -g.LOAN_LIMIT})
@@ -107,6 +108,7 @@ func check_equipment(t) -> void:
 	var customer: Dictionary = t.fixtures.resident("operations", P)
 	customer.money = 12.0
 	t.fixtures.stock_recipe(g.BASE, {"clothes": 1})
+	g.set_market_price(g.BASE, "clothes", 2)
 	var starting: float = g.resource_inventory().money
 	t.advance_until(func(): return customer.equipment.get("clothes", 0) > 0, 100, "A resident buys real clothing and autonomously wears it")
 	t.near(g.stock_at(g.BASE, "clothes"), 0, "Equipment is removed from the market once")

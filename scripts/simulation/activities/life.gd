@@ -14,6 +14,9 @@ func enter(g, w: Dictionary, proposal) -> bool:
 		path.clear()
 	return true
 
+func valid(g, w: Dictionary) -> bool:
+	return super.valid(g, w) and (record.kind != "emigrate" or g.wants_emigrate(w))
+
 func tick(g, w: Dictionary, delta: float) -> String:
 	if phase == "approach":
 		var reached := navigate(g, w, delta)
@@ -29,6 +32,9 @@ func tick(g, w: Dictionary, delta: float) -> String:
 			phase = "use"
 		return "running"
 	match record.kind:
+		"emigrate":
+			g.world.emigrants.append(w.id)
+			return "success"
 		"use_item":
 			elapsed += delta
 			if elapsed < g.item_use_hours(record.data.item) * g.HOUR_SECONDS: return "running"
